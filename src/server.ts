@@ -1,7 +1,9 @@
 import http from 'http';
 import { createApp } from './app';
 import { closePool, getPool } from './config/database';
-import { env } from './config/env';
+import { env, isProduction } from './config/env';
+import { isMailConfigured } from './utils/mailer';
+import { isWhatsappConfigured } from './utils/whatsapp';
 
 const app = createApp();
 const server = http.createServer(app);
@@ -17,8 +19,30 @@ const checkDatabaseConnection = async (): Promise<void> => {
   }
 };
 
+/**
+ * Delivery config is reported at boot. Without this, a missing credential looks
+ * identical to a working setup until someone fails to receive a code — the
+ * fallback quietly prints to the console instead.
+ */
+const reportDeliveryChannels = (): void => {
+  const email = isMailConfigured();
+  const whatsapp = isWhatsappConfigured();
+
+  console.log(`OTP delivery — email: ${email ? `on (${env.mail.from})` : 'OFF'}` +
+    ` · whatsapp: ${whatsapp ? 'on' : 'OFF'}`);
+
+  if (!email && !whatsapp) {
+    console.warn(
+      isProduction
+        ? '  !! No delivery channel configured. Nobody can sign in.'
+        : '  Codes will be printed to this console (development fallback).',
+    );
+  }
+};
+
 server.listen(env.port, () => {
   console.log(`HRMS API listening on http://localhost:${env.port}`);
+  reportDeliveryChannels();
   void checkDatabaseConnection();
 });
 
