@@ -5,6 +5,7 @@ import {
   StoredLeaveRequest,
 } from '../interfaces/repositories/leave.repository.interface';
 import { ApplyLeaveDto, HolidayRecord, LeaveContext, LeaveYearConfig } from '../models/leave.model';
+import { REPORTING_TREE_CTE, reportingTreeParams } from './sql/reporting-tree';
 
 interface LeaveYearRow extends RowDataPacket {
   leave_year: number;
@@ -55,9 +56,6 @@ interface TreeRow extends RowDataPacket {
   full_name: string;
   designation: string | null;
 }
-
-/** Deepest reporting chain we will walk. Also the backstop against a cycle. */
-const MAX_REPORTING_DEPTH = 10;
 
 const REQUEST_COLUMNS = `l.id, l.employee_id, l.ref, l.leave_type, l.from_date, l.to_date,
   l.days, l.unpaid_days, l.is_half_day, l.half_day_session,
@@ -231,30 +229,16 @@ export class LeaveRepository implements ILeaveRepository {
     managerId: number,
   ): Promise<{ id: number; employeeCode: string; fullName: string; designation: string | null }[]> {
     // Recursive CTE so a skip-level manager also sees their reports' reports.
-    //
-    // Two guards, because a reporting line is user-entered data and a cycle
-    // (someone set as their own manager, or A→B→A) would otherwise recurse
-    // without end and hang the request:
-    //   · the manager is excluded from their own tree — nobody approves their
-    //     own leave, and a self-reference cannot seed the walk
-    //   · depth is capped, so any remaining loop terminates
+    // The clause itself — and the cycle guards it carries — is shared with the
+    // profile repository, so the two can never disagree about who reports to whom.
     const [rows] = await this.pool.execute<TreeRow[]>(
-      `WITH RECURSIVE tree AS (
-         SELECT id, 1 AS depth
-           FROM hrms_employees
-          WHERE manager_id = ? AND id <> ?
-         UNION ALL
-         SELECT e.id, t.depth + 1
-           FROM hrms_employees e
-           JOIN tree t ON e.manager_id = t.id
-          WHERE t.depth < ${MAX_REPORTING_DEPTH} AND e.id <> ?
-       )
+      `${REPORTING_TREE_CTE}
        SELECT DISTINCT e.id, e.employee_code, e.full_name, e.designation
          FROM hrms_employees e
          JOIN tree ON tree.id = e.id
         WHERE e.date_of_leaving IS NULL OR e.date_of_leaving >= CURDATE()
         ORDER BY e.full_name`,
-      [managerId, managerId, managerId],
+      reportingTreeParams(managerId),
     );
     return rows.map((r) => ({
       id: r.id,
