@@ -12,8 +12,7 @@ import { ApiError } from '../utils/api-error';
  * kept here rather than in React so the reason stays true as each phase lands.
  */
 const PENDING_BLOCKS: { block: string; reason: string }[] = [
-  { block: 'today', reason: 'Attendance is not being recorded yet.' },
-  { block: 'week', reason: 'Attendance is not being recorded yet.' },
+  { block: 'week', reason: 'Attendance is shown on each person’s own page.' },
   { block: 'compensation', reason: 'Salary details have not been loaded into HRMS yet.' },
   { block: 'goals', reason: 'Goals have not been set up yet.' },
   { block: 'projects', reason: 'Projects are not being tracked yet.' },

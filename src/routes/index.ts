@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { Container } from '../container';
+import { createAttendanceRouter } from './attendance.routes';
 import { createAuthRouter } from './auth.routes';
 import { createEmployeeRouter } from './employee.routes';
 import { createLeaveRouter } from './leave.routes';
@@ -12,6 +13,7 @@ export const createApiRouter = (container: Container): Router => {
   router.use('/leave', createLeaveRouter(container.leaveController));
   router.use('/employees', createEmployeeRouter(container.employeeController));
   router.use('/profile', createProfileRouter(container.profileController));
+  router.use('/attendance', createAttendanceRouter(container.attendanceController));
 
   return router;
 };

@@ -5,6 +5,7 @@ import {
   StoredLeaveRequest,
 } from '../interfaces/repositories/leave.repository.interface';
 import { ApplyLeaveDto, HolidayRecord, LeaveContext, LeaveYearConfig } from '../models/leave.model';
+import { recordAudit } from './sql/audit';
 import { REPORTING_TREE_CTE, reportingTreeParams } from './sql/reporting-tree';
 
 interface LeaveYearRow extends RowDataPacket {
@@ -312,17 +313,13 @@ export class LeaveRepository implements ILeaveRepository {
     before: unknown,
     after: unknown,
   ): Promise<void> {
-    await this.pool.execute(
-      `INSERT INTO hrms_audit_log
-         (actor_employee_id, action, entity_type, entity_id, before_json, after_json)
-       VALUES (?, ?, 'hrms_leave_requests', ?, ?, ?)`,
-      [
-        actorEmployeeId,
-        action,
-        entityId,
-        before === null ? null : JSON.stringify(before),
-        after === null ? null : JSON.stringify(after),
-      ],
-    );
+    await recordAudit(this.pool, {
+      actorEmployeeId,
+      action,
+      entityType: 'hrms_leave_requests',
+      entityId,
+      before,
+      after,
+    });
   }
 }
