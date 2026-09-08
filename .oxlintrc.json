@@ -1,0 +1,26 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "oxc", "import"],
+  "rules": {
+    "import/no-cycle": "error",
+
+    "no-restricted-imports": [
+      "error",
+      {
+        "patterns": [
+          {
+            "group": [
+              "../*/*.service",
+              "../*/*.repository",
+              "../*/*.controller",
+              "../*/*.routes",
+              "../*/*.sql"
+            ],
+            "message": "A module may use another module's CONTRACT, not its internals. Import '<module>.service.interface' or '<module>.repository.interface' and take it by constructor injection — container.ts supplies the implementation. Reaching for the implementation directly bypasses that module's rules."
+          }
+        ]
+      }
+    ]
+  },
+  "ignorePatterns": ["dist", "node_modules"]
+}
