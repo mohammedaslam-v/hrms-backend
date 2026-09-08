@@ -55,6 +55,25 @@ export interface ProfileRecord {
   documents: ProfileDocument[];
 }
 
+/**
+ * The pay figures My page shows, for a viewer entitled to see them.
+ *
+ * A separate object rather than loose fields on the view, so "may this person
+ * see pay at all" is one null check in the UI instead of six — and so a new pay
+ * field cannot be added without passing through the gate that builds this.
+ */
+export interface CompensationView {
+  effectiveFrom: string;
+  ctc: number;
+  variablePay: number;
+  bonus: number;
+  esopUnits: number;
+  esopVestedPct: number;
+  /** Units actually held today, derived from the grant and the vested share. */
+  esopVestedUnits: number;
+  revisionNote: string | null;
+}
+
 // ---------------------------------------------------------------- the view
 
 /**
@@ -92,6 +111,17 @@ export interface ProfileView {
 
   /** Days available today, from the leave engine — never recomputed here. */
   leaveBalance: number;
+
+  /**
+   * Pay, or null.
+   *
+   * Null carries two different meanings, and `canSeeCompensation` tells them
+   * apart for the UI: the viewer is not entitled to see it, or nobody has loaded
+   * it yet. A manager viewing a report gets null here NOT because the card is
+   * hidden in the browser, but because the figures never left the server.
+   */
+  compensation: CompensationView | null;
+  canSeeCompensation: boolean;
 
   /**
    * Blocks the page renders but cannot fill yet, with the reason. The design has
