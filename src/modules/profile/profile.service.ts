@@ -1,11 +1,26 @@
-import { canSeePersonalDetails, resolveProfileAccess } from './profile.domain';
+import { canSeeCompensation, canSeePersonalDetails, resolveProfileAccess } from './profile.domain';
+import { vestedUnits } from '../compensation/compensation.domain';
+import { ICompensationService } from '../compensation/compensation.service.interface';
 import { IOrgRepository } from '../org/org.repository.interface';
 import { IProfileRepository } from './profile.repository.interface';
 import { IAuthService } from '../auth/auth.service.interface';
 import { ILeaveService } from '../leave/leave.service.interface';
 import { IProfileService } from './profile.service.interface';
-import { ProfileRecord, ProfileView } from './profile.model';
+import { CompensationView, ProfileRecord, ProfileView } from './profile.model';
 import { ApiError } from '../../utils/api-error';
+
+const toCompensationView = (
+  record: NonNullable<Awaited<ReturnType<ICompensationService['getCurrent']>>>,
+): CompensationView => ({
+  effectiveFrom: record.effectiveFrom,
+  ctc: record.ctc,
+  variablePay: record.variablePay,
+  bonus: record.bonus,
+  esopUnits: record.esopUnits,
+  esopVestedPct: record.esopVestedPct,
+  esopVestedUnits: vestedUnits(record),
+  revisionNote: record.revisionNote,
+});
 
 /**
  * Blocks the design shows that have no data behind them yet. Sent to the client
@@ -14,7 +29,6 @@ import { ApiError } from '../../utils/api-error';
  */
 const PENDING_BLOCKS: { block: string; reason: string }[] = [
   { block: 'week', reason: 'Attendance is shown on each person’s own page.' },
-  { block: 'compensation', reason: 'Salary details have not been loaded into HRMS yet.' },
   { block: 'goals', reason: 'Goals have not been set up yet.' },
   { block: 'projects', reason: 'Projects are not being tracked yet.' },
   { block: 'feedback', reason: 'No feedback has been recorded yet.' },
@@ -26,6 +40,7 @@ export class ProfileService implements IProfileService {
     private readonly orgRepository: IOrgRepository,
     private readonly authService: IAuthService,
     private readonly leaveService: ILeaveService,
+    private readonly compensationService: ICompensationService,
   ) {}
 
   async getProfile(viewerId: number, subjectId: number): Promise<ProfileView> {
@@ -58,7 +73,15 @@ export class ProfileService implements IProfileService {
       throw new ApiError(403, 'You do not have access to this profile.');
     }
 
-    return this.toView(record, access, await this.leaveBalanceOf(subjectId));
+    // Only ask for pay when this viewer could actually be shown it. A manager
+    // opening a report must not cause the figures to be read at all, let alone
+    // serialised — the cheapest way to keep a secret is not to fetch it.
+    const [leaveBalance, compensation] = await Promise.all([
+      this.leaveBalanceOf(subjectId),
+      canSeeCompensation(access) ? this.compensationService.getCurrent(subjectId) : null,
+    ]);
+
+    return this.toView(record, access, leaveBalance, compensation);
   }
 
   /**
@@ -76,6 +99,7 @@ export class ProfileService implements IProfileService {
     record: ProfileRecord,
     access: 'self' | 'manager' | 'admin',
     leaveBalance: number,
+    compensation: Awaited<ReturnType<ICompensationService['getCurrent']>>,
   ): ProfileView {
     // A manager opening a report's profile gets the work-facing record — the
     // Personal details card as the design draws it. Date of birth, personal
@@ -113,6 +137,12 @@ export class ProfileService implements IProfileService {
       linkedinProfile: personal ? record.linkedinProfile : null,
       documents: personal ? record.documents : [],
       leaveBalance,
+
+      // Pay is between the employee, HR and the founder. The fields are absent
+      // from the response for anyone else — hiding the card in React would be a
+      // convenience for the reader, not access control.
+      canSeeCompensation: canSeeCompensation(access),
+      compensation: compensation ? toCompensationView(compensation) : null,
       pending: PENDING_BLOCKS,
     };
   }

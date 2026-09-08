@@ -82,6 +82,7 @@ export const createContainer = () => {
     orgRepository,
     authService,
     leaveService,
+    compensationService,
   );
   const profileController = new ProfileController(profileService);
 
