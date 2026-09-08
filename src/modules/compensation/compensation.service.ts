@@ -1,3 +1,4 @@
+import { IClock } from '../../shared/clock';
 import { compensationOn } from './compensation.domain';
 import { ICompensationRepository } from './compensation.repository.interface';
 import { ICompensationService } from './compensation.service.interface';
@@ -12,10 +13,15 @@ import { CompensationRecord } from './compensation.model';
  * ORDER BY and drifting.
  */
 export class CompensationService implements ICompensationService {
-  constructor(private readonly compensationRepository: ICompensationRepository) {}
+  constructor(
+    private readonly compensationRepository: ICompensationRepository,
+    private readonly clock: IClock,
+  ) {}
 
   async getCurrent(employeeId: number): Promise<CompensationRecord | null> {
     const history = await this.compensationRepository.findHistory(employeeId);
-    return compensationOn(history, new Date().toISOString().slice(0, 10));
+    // The database's day. A revision dated tomorrow must not surface today, and
+    // this process's clock is not the one the dates were written against.
+    return compensationOn(history, await this.clock.today());
   }
 }

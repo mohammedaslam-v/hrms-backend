@@ -1,9 +1,14 @@
-import { canSeeCompensation, canSeePersonalDetails, resolveProfileAccess } from './profile.domain';
+import { canSeeCompensation, canSeePersonalDetails } from '../access/access.domain';
 import { vestedUnits } from '../compensation/compensation.domain';
 import { ICompensationService } from '../compensation/compensation.service.interface';
-import { IOrgRepository } from '../org/org.repository.interface';
+import { FeedbackRecord } from '../feedback/feedback.model';
+import { IFeedbackService } from '../feedback/feedback.service.interface';
+import { GoalView } from '../goals/goals.model';
+import { ProjectRecord } from '../projects/projects.model';
+import { IProjectsService } from '../projects/projects.service.interface';
+import { IGoalsService } from '../goals/goals.service.interface';
 import { IProfileRepository } from './profile.repository.interface';
-import { IAuthService } from '../auth/auth.service.interface';
+import { IAccessService } from '../access/access.service.interface';
 import { ILeaveService } from '../leave/leave.service.interface';
 import { IProfileService } from './profile.service.interface';
 import { CompensationView, ProfileRecord, ProfileView } from './profile.model';
@@ -29,18 +34,17 @@ const toCompensationView = (
  */
 const PENDING_BLOCKS: { block: string; reason: string }[] = [
   { block: 'week', reason: 'Attendance is shown on each person’s own page.' },
-  { block: 'goals', reason: 'Goals have not been set up yet.' },
-  { block: 'projects', reason: 'Projects are not being tracked yet.' },
-  { block: 'feedback', reason: 'No feedback has been recorded yet.' },
 ];
 
 export class ProfileService implements IProfileService {
   constructor(
     private readonly profileRepository: IProfileRepository,
-    private readonly orgRepository: IOrgRepository,
-    private readonly authService: IAuthService,
+    private readonly accessService: IAccessService,
     private readonly leaveService: ILeaveService,
     private readonly compensationService: ICompensationService,
+    private readonly goalsService: IGoalsService,
+    private readonly projectsService: IProjectsService,
+    private readonly feedbackService: IFeedbackService,
   ) {}
 
   async getProfile(viewerId: number, subjectId: number): Promise<ProfileView> {
@@ -49,39 +53,22 @@ export class ProfileService implements IProfileService {
       throw ApiError.notFound('That employee record does not exist.');
     }
 
-    // Tiers are resolved live, never read from the token, so an access change
-    // takes effect on the next request rather than when the token expires.
-    const viewer = await this.authService.getCurrentEmployee(viewerId);
-
-    // Only ask the database about the reporting tree when the answer can still
-    // change the outcome — viewing yourself, or holding admin, settles it.
-    const needsTreeLookup = viewerId !== subjectId && !viewer.tiers.includes('admin');
-    const isReport = needsTreeLookup
-      ? await this.orgRepository.isInReportingTree(viewerId, subjectId)
-      : false;
-
-    const access = resolveProfileAccess({
-      viewerId,
-      subjectId,
-      tiers: viewer.tiers,
-      isReport,
-    });
-
-    if (access === 'denied') {
-      // Deliberately the same message whether the person exists or not: a
-      // different reply would let anyone map the company by trying ids.
-      throw new ApiError(403, 'You do not have access to this profile.');
-    }
+    const access = await this.accessService.require(viewerId, subjectId);
 
     // Only ask for pay when this viewer could actually be shown it. A manager
     // opening a report must not cause the figures to be read at all, let alone
     // serialised — the cheapest way to keep a secret is not to fetch it.
-    const [leaveBalance, compensation] = await Promise.all([
+    const [leaveBalance, compensation, goals, projects, feedback] = await Promise.all([
       this.leaveBalanceOf(subjectId),
       canSeeCompensation(access) ? this.compensationService.getCurrent(subjectId) : null,
+      this.goalsService.getForEmployee(subjectId),
+      this.projectsService.getForEmployee(subjectId),
+      // The access level goes in, so restricted notes are dropped before they
+      // are ever serialised.
+      this.feedbackService.getVisibleTo(subjectId, access),
     ]);
 
-    return this.toView(record, access, leaveBalance, compensation);
+    return this.toView(record, access, leaveBalance, compensation, goals, projects, feedback);
   }
 
   /**
@@ -100,6 +87,9 @@ export class ProfileService implements IProfileService {
     access: 'self' | 'manager' | 'admin',
     leaveBalance: number,
     compensation: Awaited<ReturnType<ICompensationService['getCurrent']>>,
+    goals: GoalView[],
+    projects: ProjectRecord[],
+    feedback: FeedbackRecord[],
   ): ProfileView {
     // A manager opening a report's profile gets the work-facing record — the
     // Personal details card as the design draws it. Date of birth, personal
@@ -143,6 +133,9 @@ export class ProfileService implements IProfileService {
       // convenience for the reader, not access control.
       canSeeCompensation: canSeeCompensation(access),
       compensation: compensation ? toCompensationView(compensation) : null,
+      goals,
+      projects,
+      feedback,
       pending: PENDING_BLOCKS,
     };
   }
