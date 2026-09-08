@@ -1,35 +1,41 @@
 import { getPool } from './config/database';
-import { AttendanceController } from './controllers/attendance.controller';
-import { AuthController } from './controllers/auth.controller';
-import { LeaveController } from './controllers/leave.controller';
-import { ProfileController } from './controllers/profile.controller';
-import { EmployeeController } from './controllers/employee.controller';
-import { IAttendanceRepository } from './interfaces/repositories/attendance.repository.interface';
-import { IAuthRepository } from './interfaces/repositories/auth.repository.interface';
-import { ILeaveRepository } from './interfaces/repositories/leave.repository.interface';
-import { IPolicyRepository } from './interfaces/repositories/policy.repository.interface';
-import { IProfileRepository } from './interfaces/repositories/profile.repository.interface';
-import { IEmployeeRepository } from './interfaces/repositories/employee.repository.interface';
-import { IAttendanceService } from './interfaces/services/attendance.service.interface';
-import { IAuthService } from './interfaces/services/auth.service.interface';
-import { IEmployeeService } from './interfaces/services/employee.service.interface';
-import { ILeaveService } from './interfaces/services/leave.service.interface';
-import { IPolicyService } from './interfaces/services/policy.service.interface';
-import { IProfileService } from './interfaces/services/profile.service.interface';
-import { IOtpService } from './interfaces/services/otp.service.interface';
-import { AttendanceRepository } from './repositories/attendance.repository';
-import { AuthRepository } from './repositories/auth.repository';
-import { LeaveRepository } from './repositories/leave.repository';
-import { PolicyRepository } from './repositories/policy.repository';
-import { ProfileRepository } from './repositories/profile.repository';
-import { EmployeeRepository } from './repositories/employee.repository';
-import { AttendanceService } from './services/attendance.service';
-import { AuthService } from './services/auth.service';
-import { LeaveService } from './services/leave.service';
-import { PolicyService } from './services/policy.service';
-import { ProfileService } from './services/profile.service';
-import { OtpService } from './services/otp.service';
-import { EmployeeService } from './services/employee.service';
+import { AttendanceController } from './modules/attendance/attendance.controller';
+import { AuthController } from './modules/auth/auth.controller';
+import { LeaveController } from './modules/leave/leave.controller';
+import { ProfileController } from './modules/profile/profile.controller';
+import { EmployeeController } from './modules/employees/employee.controller';
+import { IAttendanceRepository } from './modules/attendance/attendance.repository.interface';
+import { IAuthRepository } from './modules/auth/auth.repository.interface';
+import { ILeaveRepository } from './modules/leave/leave.repository.interface';
+import { IOrgRepository } from './modules/org/org.repository.interface';
+import { ICompensationRepository } from './modules/compensation/compensation.repository.interface';
+import { IPolicyRepository } from './modules/policy/policy.repository.interface';
+import { IProfileRepository } from './modules/profile/profile.repository.interface';
+import { IEmployeeRepository } from './modules/employees/employee.repository.interface';
+import { IAttendanceService } from './modules/attendance/attendance.service.interface';
+import { IAuthService } from './modules/auth/auth.service.interface';
+import { IEmployeeService } from './modules/employees/employee.service.interface';
+import { ILeaveService } from './modules/leave/leave.service.interface';
+import { ICompensationService } from './modules/compensation/compensation.service.interface';
+import { IPolicyService } from './modules/policy/policy.service.interface';
+import { IProfileService } from './modules/profile/profile.service.interface';
+import { IOtpService } from './modules/auth/otp.service.interface';
+import { AttendanceRepository } from './modules/attendance/attendance.repository';
+import { AuthRepository } from './modules/auth/auth.repository';
+import { LeaveRepository } from './modules/leave/leave.repository';
+import { OrgRepository } from './modules/org/org.repository';
+import { CompensationRepository } from './modules/compensation/compensation.repository';
+import { PolicyRepository } from './modules/policy/policy.repository';
+import { ProfileRepository } from './modules/profile/profile.repository';
+import { EmployeeRepository } from './modules/employees/employee.repository';
+import { AttendanceService } from './modules/attendance/attendance.service';
+import { AuthService } from './modules/auth/auth.service';
+import { LeaveService } from './modules/leave/leave.service';
+import { CompensationService } from './modules/compensation/compensation.service';
+import { PolicyService } from './modules/policy/policy.service';
+import { ProfileService } from './modules/profile/profile.service';
+import { OtpService } from './modules/auth/otp.service';
+import { EmployeeService } from './modules/employees/employee.service';
 
 // Composition root: the only place where concrete implementations are chosen.
 // Every layer depends on interfaces, wired here via constructor injection.
@@ -41,14 +47,23 @@ export const createContainer = () => {
   const authService: IAuthService = new AuthService(authRepository, otpService);
   const authController = new AuthController(authService);
 
+  // The organisation structure. Leave approvals and profile access both depend
+  // on it, and both must get the same answer.
+  const orgRepository: IOrgRepository = new OrgRepository(pool);
+
   const leaveRepository: ILeaveRepository = new LeaveRepository(pool);
-  const leaveService: ILeaveService = new LeaveService(leaveRepository);
+  const leaveService: ILeaveService = new LeaveService(leaveRepository, orgRepository);
   const leaveController = new LeaveController(leaveService, authService);
 
   // Company policy — the grace window, the goal risk tolerance, the salary
   // constants. Read from the database so HR changes a row, not a deployment.
   const policyRepository: IPolicyRepository = new PolicyRepository(pool);
   const policyService: IPolicyService = new PolicyService(policyRepository);
+
+  // Compensation. Read by My page today and by the Salary page later, so it is
+  // its own service rather than a query hidden inside the profile.
+  const compensationRepository: ICompensationRepository = new CompensationRepository(pool);
+  const compensationService: ICompensationService = new CompensationService(compensationRepository);
 
   // Attendance depends on the policy service for the grace window, so it is
   // wired after it.
@@ -64,6 +79,7 @@ export const createContainer = () => {
   const profileRepository: IProfileRepository = new ProfileRepository(pool);
   const profileService: IProfileService = new ProfileService(
     profileRepository,
+    orgRepository,
     authService,
     leaveService,
   );
@@ -80,6 +96,7 @@ export const createContainer = () => {
     employeeController,
     attendanceController,
     policyService,
+    compensationService,
   };
 };
 
