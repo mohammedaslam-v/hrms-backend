@@ -18,6 +18,20 @@ export class CompensationService implements ICompensationService {
     private readonly clock: IClock,
   ) {}
 
+  async getCurrentForMany(employeeIds: number[]): Promise<Map<number, CompensationRecord>> {
+    const today = await this.clock.today();
+    const histories = await this.compensationRepository.findHistoryForMany(employeeIds);
+
+    const current = new Map<number, CompensationRecord>();
+    for (const [employeeId, history] of histories) {
+      // The same tested rule as the single case — a revision dated in the
+      // future has not taken effect, however many people are being read.
+      const applies = compensationOn(history, today);
+      if (applies) current.set(employeeId, applies);
+    }
+    return current;
+  }
+
   async getCurrent(employeeId: number): Promise<CompensationRecord | null> {
     const history = await this.compensationRepository.findHistory(employeeId);
     // The database's day. A revision dated tomorrow must not surface today, and

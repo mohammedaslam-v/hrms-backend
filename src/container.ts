@@ -13,6 +13,7 @@ import { IOrgRepository } from './modules/org/org.repository.interface';
 import { ICompensationRepository } from './modules/compensation/compensation.repository.interface';
 import { IFeedbackRepository } from './modules/feedback/feedback.repository.interface';
 import { IGoalsRepository } from './modules/goals/goals.repository.interface';
+import { ITeamService } from './modules/team/team.service.interface';
 import { IProjectsRepository } from './modules/projects/projects.repository.interface';
 import { IPolicyRepository } from './modules/policy/policy.repository.interface';
 import { IProfileRepository } from './modules/profile/profile.repository.interface';
@@ -38,6 +39,8 @@ import { FeedbackController } from './modules/feedback/feedback.controller';
 import { FeedbackRepository } from './modules/feedback/feedback.repository';
 import { GoalsRepository } from './modules/goals/goals.repository';
 import { ProjectsController } from './modules/projects/projects.controller';
+import { TeamController } from './modules/team/team.controller';
+import { TeamService } from './modules/team/team.service';
 import { ProjectsRepository } from './modules/projects/projects.repository';
 import { PolicyRepository } from './modules/policy/policy.repository';
 import { ProfileRepository } from './modules/profile/profile.repository';
@@ -109,12 +112,21 @@ export const createContainer = () => {
   const projectsController = new ProjectsController(projectsService);
   const feedbackController = new FeedbackController(feedbackService);
 
+  // The team directory: whose list, and whether it carries pay.
+  const teamService: ITeamService = new TeamService(
+    authService,
+    orgRepository,
+    compensationService,
+  );
+  const teamController = new TeamController(teamService);
+
   // Attendance depends on the policy service for the grace window, so it is
   // wired after it.
   const attendanceRepository: IAttendanceRepository = new AttendanceRepository(pool);
   const attendanceService: IAttendanceService = new AttendanceService(
     attendanceRepository,
     policyService,
+    accessService,
   );
   const attendanceController = new AttendanceController(attendanceService);
 
@@ -142,11 +154,13 @@ export const createContainer = () => {
     profileController,
     employeeController,
     attendanceController,
+    teamController,
     projectsController,
     feedbackController,
     policyService,
     compensationService,
     goalsService,
+    teamService,
   };
 };
 

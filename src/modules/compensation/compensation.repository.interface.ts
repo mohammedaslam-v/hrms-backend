@@ -10,4 +10,14 @@ export interface ICompensationRepository {
    * The Salary page will want the same list.
    */
   findHistory(employeeId: number): Promise<CompensationRecord[]>;
+
+  /**
+   * The same, for many people at once, keyed by employee.
+   *
+   * Returns the whole history rather than a pre-picked "current" row, so which
+   * revision applies is still decided by the tested domain function instead of
+   * being reimplemented as a MAX() in SQL. An employee has a handful of
+   * revisions in a career, so even the whole company is a small result.
+   */
+  findHistoryForMany(employeeIds: number[]): Promise<Map<number, CompensationRecord[]>>;
 }

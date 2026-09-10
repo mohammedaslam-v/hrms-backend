@@ -3,3 +3,8 @@ dist/
 .env
 *.log
 .DS_Store
+
+# Never commit these: 003 rewrites live leave balances with unqualified UPDATEs,
+# and seed-dev carries a plaintext development password in its header.
+db/003-leave-year-and-test-data.sql
+db/seed-dev.sql

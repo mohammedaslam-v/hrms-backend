@@ -17,5 +17,13 @@ export const createAttendanceRouter = (controller: AttendanceController): Router
   router.post('/me/check-in', controller.checkIn);
   router.post('/me/check-out', controller.checkOut);
 
+  // Declared AFTER the /me routes so the literal wins — otherwise ':employeeId'
+  // would swallow 'me' and every self request would fail on a bad id.
+  //
+  // Read only: a manager can see what their report's day looked like, and there
+  // is deliberately no route here that punches on someone else's behalf.
+  router.get('/:employeeId/today', controller.getTodayForEmployee);
+  router.get('/:employeeId/week', controller.getWeekForEmployee);
+
   return router;
 };

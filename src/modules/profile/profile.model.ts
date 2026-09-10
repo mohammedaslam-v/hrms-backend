@@ -147,10 +147,4 @@ export interface ProfileView {
    */
   feedback: FeedbackRecord[];
 
-  /**
-   * Blocks the page renders but cannot fill yet, with the reason. The design has
-   * nine cards; six of them are waiting on data that does not exist in the
-   * system, and saying so beats a card that looks broken.
-   */
-  pending: { block: string; reason: string }[];
 }

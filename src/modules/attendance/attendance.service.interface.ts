@@ -25,6 +25,15 @@ export interface IAttendanceService {
   getWeek(employeeId: number): Promise<WeekBar[]>;
 
   /**
+   * Somebody else's day and week, for a manager or admin who can already open
+   * their profile. Read only by construction: there is no path here that
+   * records a punch, because attendance is something a person declares for
+   * themselves.
+   */
+  getTodayFor(viewerId: number, subjectId: number): Promise<TodayView>;
+  getWeekFor(viewerId: number, subjectId: number): Promise<WeekBar[]>;
+
+  /**
    * Every day between two dates with its status resolved — the one place a
    * day's meaning is decided. Days with no punch are included, because a
    * weekly off, a day of leave and an absence are all facts about the week.

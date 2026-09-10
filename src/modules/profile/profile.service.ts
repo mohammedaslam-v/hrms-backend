@@ -27,15 +27,6 @@ const toCompensationView = (
   revisionNote: record.revisionNote,
 });
 
-/**
- * Blocks the design shows that have no data behind them yet. Sent to the client
- * so the page can explain an empty card instead of rendering a blank one, and
- * kept here rather than in React so the reason stays true as each phase lands.
- */
-const PENDING_BLOCKS: { block: string; reason: string }[] = [
-  { block: 'week', reason: 'Attendance is shown on each person’s own page.' },
-];
-
 export class ProfileService implements IProfileService {
   constructor(
     private readonly profileRepository: IProfileRepository,
@@ -136,7 +127,6 @@ export class ProfileService implements IProfileService {
       goals,
       projects,
       feedback,
-      pending: PENDING_BLOCKS,
     };
   }
 }
