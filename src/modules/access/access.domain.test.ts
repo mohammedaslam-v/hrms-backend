@@ -5,7 +5,7 @@ import {
   canSeeRestrictedFeedback,
   resolveProfileAccess,
   type ProfileViewerFacts,
-} from './profile.domain';
+} from './access.domain';
 
 const facts = (over: Partial<ProfileViewerFacts> = {}): ProfileViewerFacts => ({
   viewerId: 10,

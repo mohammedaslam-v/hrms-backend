@@ -1,5 +1,9 @@
 /**
- * Who may open whose profile, and how much of it they see.
+ * Who may see, and who may write, a record about a person.
+ *
+ * Its own module rather than part of `profile`: the same question governs the
+ * profile page, a project entry and a feedback note, and three copies of a
+ * security rule is how one of them quietly drifts.
  *
  * Pure functions, no database. The reporting-tree lookup is passed in as an
  * already-answered boolean so these rules can be read — and tested — without a
@@ -10,6 +14,9 @@
 import { AccessTier } from '../auth/auth.model';
 
 export type ProfileAccess = 'self' | 'manager' | 'admin' | 'denied';
+
+/** Access that has already been checked — 'denied' cannot reach here. */
+export type GrantedAccess = Exclude<ProfileAccess, 'denied'>;
 
 export interface ProfileViewerFacts {
   viewerId: number;
@@ -55,4 +62,14 @@ export const canSeePersonalDetails = (access: ProfileAccess): boolean =>
  * subject never sees it, however senior they are.
  */
 export const canSeeRestrictedFeedback = (access: ProfileAccess): boolean =>
+  access === 'manager' || access === 'admin';
+
+/**
+ * May this viewer record something ABOUT this person — a project, a note?
+ *
+ * Never about yourself, even as an admin. A record on someone's profile is
+ * written by somebody else; that is what makes it worth anything, and it is why
+ * `added_by` and `author_id` are NOT NULL on both tables.
+ */
+export const canRecordAbout = (access: ProfileAccess): boolean =>
   access === 'manager' || access === 'admin';

@@ -7,6 +7,10 @@
  * that a single rule governs it rather than each caller remembering.
  */
 
+import { FeedbackRecord } from '../feedback/feedback.model';
+import { GoalView } from '../goals/goals.model';
+import { ProjectRecord } from '../projects/projects.model';
+
 export type WorkMode = 'WFH' | 'WFO' | 'Hybrid';
 
 /**
@@ -124,9 +128,23 @@ export interface ProfileView {
   canSeeCompensation: boolean;
 
   /**
-   * Blocks the page renders but cannot fill yet, with the reason. The design has
-   * nine cards; six of them are waiting on data that does not exist in the
-   * system, and saying so beats a card that looks broken.
+   * Goals for the current financial year, with progress and status resolved.
+   *
+   * Not gated the way pay is: a goal is work, and a manager seeing what their
+   * report is aiming at is the point of having them. Empty is a real answer —
+   * most people have none set.
    */
-  pending: { block: string; reason: string }[];
+  goals: GoalView[];
+
+  /** Work this person is known for. Open to anyone who can open the page. */
+  projects: ProjectRecord[];
+
+  /**
+   * Notes about this person that THIS viewer may read.
+   *
+   * Already filtered: a `managers_only` note is absent from the response for
+   * the subject, not merely hidden by the card.
+   */
+  feedback: FeedbackRecord[];
+
 }

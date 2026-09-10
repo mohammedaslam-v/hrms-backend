@@ -22,7 +22,11 @@
  * shifted by a timezone.
  */
 
+import { addDays, eachDate } from '../../shared/dates';
 import { LeaveType } from '../leave/leave.domain';
+
+// Re-exported so callers in this module keep one import.
+export { addDays, eachDate };
 
 export type AttendanceStatus =
   | 'On time'
@@ -76,20 +80,6 @@ export function dayNameOf(date: string): string {
 export const isWeeklyOff = (date: string, weeklyOff: string[]): boolean =>
   weeklyOff.includes(dayNameOf(date));
 
-/** Every date from `from` to `to` inclusive, oldest first. */
-export function eachDate(from: string, to: string): string[] {
-  const out: string[] = [];
-  if (to < from) return out;
-  const cursor = new Date(`${from}T00:00:00Z`);
-  const end = new Date(`${to}T00:00:00Z`).getTime();
-  // Bounded: a malformed range can never spin, whatever a caller passes.
-  for (let i = 0; cursor.getTime() <= end && i < 400; i++) {
-    out.push(cursor.toISOString().slice(0, 10));
-    cursor.setUTCDate(cursor.getUTCDate() + 1);
-  }
-  return out;
-}
-
 /** The `count` days ending at `endDate`, oldest first. */
 export function lastDays(endDate: string, count: number): string[] {
   const start = new Date(`${endDate}T00:00:00Z`);
@@ -113,13 +103,6 @@ export const MAX_STINT_HOURS = 18;
 /** Does this shift run past midnight? 23:00–07:00 does; 10:00–19:00 does not. */
 export const crossesMidnight = (shiftStart: string, shiftEnd: string): boolean =>
   minutesOf(shiftEnd) <= minutesOf(shiftStart);
-
-/** `date` shifted by `days`, as a YYYY-MM-DD string. */
-export function addDays(date: string, days: number): string {
-  const cursor = new Date(`${date}T00:00:00Z`);
-  cursor.setUTCDate(cursor.getUTCDate() + days);
-  return cursor.toISOString().slice(0, 10);
-}
 
 /**
  * Which day's shift a punch belongs to.

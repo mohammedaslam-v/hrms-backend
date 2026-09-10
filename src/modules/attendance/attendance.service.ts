@@ -16,6 +16,7 @@ import {
 } from './attendance.domain';
 import { IAttendanceRepository } from './attendance.repository.interface';
 import { IAttendanceService } from './attendance.service.interface';
+import { IAccessService } from '../access/access.service.interface';
 import { IPolicyService } from '../policy/policy.service.interface';
 import { TodayView, WorkSchedule } from './attendance.model';
 import { ApiError } from '../../utils/api-error';
@@ -46,7 +47,26 @@ export class AttendanceService implements IAttendanceService {
   constructor(
     private readonly attendanceRepository: IAttendanceRepository,
     private readonly policyService: IPolicyService,
+    private readonly accessService: IAccessService,
   ) {}
+
+  /**
+   * The same day and week the person sees themselves, for someone entitled to
+   * open their profile — their manager, or an admin.
+   *
+   * `require` throws 403 for anyone else, so a hand-typed id gets nothing. The
+   * figures are identical to the employee's own view; only the ability to punch
+   * is missing, and that is missing because no endpoint here writes.
+   */
+  async getTodayFor(viewerId: number, subjectId: number): Promise<TodayView> {
+    await this.accessService.require(viewerId, subjectId);
+    return this.getToday(subjectId);
+  }
+
+  async getWeekFor(viewerId: number, subjectId: number): Promise<WeekBar[]> {
+    await this.accessService.require(viewerId, subjectId);
+    return this.getWeek(subjectId);
+  }
 
   async getToday(employeeId: number): Promise<TodayView> {
     const now = await this.attendanceRepository.now();
