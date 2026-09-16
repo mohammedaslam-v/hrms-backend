@@ -34,6 +34,9 @@ export class ProfileController {
     const key = req.params.key as DocumentKey;
 
     const filePath = await this.profileService.getDocumentFilePath(employeeId, subjectId, key);
+    if (filePath.startsWith('http://') || filePath.startsWith('https://')) {
+      return res.redirect(filePath);
+    }
     res.sendFile(filePath);
   });
 

@@ -164,6 +164,10 @@ export class ProfileService implements IProfileService {
       throw ApiError.notFound('Document not found for this employee.');
     }
 
+    if (relPath.startsWith('http://') || relPath.startsWith('https://')) {
+      return relPath;
+    }
+
     const candidatePaths = [
       path.resolve(process.cwd(), relPath),
       path.resolve(process.cwd(), 'uploads', path.basename(relPath)),
