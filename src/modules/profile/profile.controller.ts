@@ -28,6 +28,15 @@ export class ProfileController {
     res.json({ success: true, data: saved });
   });
 
+  deleteDocument: RequestHandler = asyncHandler(async (req, res) => {
+    const { employeeId } = req as AuthenticatedRequest;
+    const subjectId = req.params.id ? this.readId(req.params.id) : employeeId;
+    const key = req.params.key as DocumentKey;
+
+    await this.profileService.deleteDocument(employeeId, subjectId, key);
+    res.json({ success: true, message: 'Document deleted successfully.' });
+  });
+
   downloadDocument: RequestHandler = asyncHandler(async (req, res) => {
     const { employeeId } = req as AuthenticatedRequest;
     const subjectId = req.params.id ? this.readId(req.params.id) : employeeId;

@@ -15,10 +15,12 @@ export const createProfileRouter = (controller: ProfileController): Router => {
   router.get('/me', controller.getMine);
   router.post('/me/documents', controller.saveDocument);
   router.get('/me/documents/:key/file', controller.downloadDocument);
+  router.delete('/me/documents/:key', controller.deleteDocument);
 
   router.get('/:id', controller.getOne);
   router.post('/:id/documents', controller.saveDocument);
   router.get('/:id/documents/:key/file', controller.downloadDocument);
+  router.delete('/:id/documents/:key', controller.deleteDocument);
 
   return router;
 };

@@ -149,6 +149,44 @@ export class ProfileService implements IProfileService {
     };
   }
 
+  async deleteDocument(
+    viewerId: number,
+    subjectId: number,
+    key: DocumentKey,
+  ): Promise<void> {
+    const access = await this.accessService.require(viewerId, subjectId);
+    if (access !== 'self' && access !== 'admin') {
+      throw ApiError.forbidden('Only the employee or an admin may remove documents.');
+    }
+
+    if (!key || !DOCUMENT_LABELS[key]) {
+      throw ApiError.badRequest('A valid document key is required.');
+    }
+
+    const record = await this.profileRepository.findProfile(subjectId);
+    if (!record) {
+      throw ApiError.notFound('That employee record does not exist.');
+    }
+
+    try {
+      const existingPath = await this.profileRepository.findDocumentPath(subjectId, key);
+      if (existingPath && !existingPath.startsWith('http')) {
+        const full = path.resolve(process.cwd(), existingPath);
+        if (fs.existsSync(full) && full.includes('uploads/documents')) {
+          await fs.promises.unlink(full).catch(() => {});
+        }
+      }
+    } catch {}
+
+    await this.profileRepository.updateDocument(
+      subjectId,
+      record.adminId,
+      key,
+      null,
+      null,
+    );
+  }
+
   async getDocumentFilePath(
     viewerId: number,
     subjectId: number,

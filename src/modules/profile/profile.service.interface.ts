@@ -23,4 +23,10 @@ export interface IProfileService {
     subjectId: number,
     key: DocumentKey,
   ): Promise<string>;
+
+  deleteDocument(
+    viewerId: number,
+    subjectId: number,
+    key: DocumentKey,
+  ): Promise<void>;
 }
