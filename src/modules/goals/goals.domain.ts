@@ -44,6 +44,9 @@ export interface GoalRecord {
   unit: string | null;
   direction: GoalDirection;
   note: string | null;
+  setOn?: string;
+  setBy?: number | null;
+  setterName?: string | null;
   milestones: Milestone[];
 }
 
