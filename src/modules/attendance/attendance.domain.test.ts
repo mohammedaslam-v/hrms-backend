@@ -37,6 +37,8 @@ const day = (date: string, hours: number): DayAttendance => ({
   status: 'On time',
   loginAt: '10:00',
   logoutAt: '19:00',
+  segments: [{ from: '10:00', to: '19:00' }],
+  source: 'punch' as const,
   activeHours: hours,
   lateByMinutes: 0,
 });

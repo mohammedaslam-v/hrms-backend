@@ -2,20 +2,25 @@ import {
   activeHours,
   addDays,
   attendanceOf,
+  calendarWeek,
   crossesMidnight,
+  EMPTY_SLOTS,
+  readDayAsObserved,
   minutesOf,
   eachDate,
-  lastDays,
   shiftDateOf,
   minutesLate,
   resolveDayStatus,
+  slotsForShiftDay,
   weekBars,
   type DayAttendance,
   type DayFacts,
+  type SlotMask,
   type WeekBar,
 } from './attendance.domain';
 import { IAttendanceRepository } from './attendance.repository.interface';
 import { IAttendanceService } from './attendance.service.interface';
+import { isActivityMeasured } from './attendance.config';
 import { IAccessService } from '../access/access.service.interface';
 import { IPolicyService } from '../policy/policy.service.interface';
 import { TodayView, WorkSchedule } from './attendance.model';
@@ -34,11 +39,19 @@ const MAX_RANGE_DAYS = 366;
 const FINISHED_SHIFT_TAIL_MINUTES = 4 * 60;
 
 /**
- * Check-in and check-out.
+ * Attendance.
  *
- * Attendance at Bambinos is a DECLARATION: the employee records their own day
- * by pressing a button. Nothing here infers presence from activity, and the
- * numbers it produces mean exactly what they say and no more.
+ * EVERY employee checks in and checks out, whatever their role, and the Today
+ * card always shows what they declared. Punching is never taken away.
+ *
+ * The WEEK chart is the one place a role matters. For the roles listed in
+ * `attendance.config.ts` its hours come instead from the half-hour slots the
+ * admin portals observed, because those people work inside those portals all
+ * day and their punches would otherwise be the only record of a job done
+ * somewhere else entirely.
+ *
+ * Everything else downstream — the chart scale, the status ordering, the
+ * segments behind each bar — is shared. Only the source of the hours differs.
  *
  * Every time comes from `repository.now()` — the database clock — never from
  * this process. The two are not in the same timezone.
@@ -71,6 +84,7 @@ export class AttendanceService implements IAttendanceService {
   async getToday(employeeId: number): Promise<TodayView> {
     const now = await this.attendanceRepository.now();
     const schedule = await this.requireSchedule(employeeId, now.date);
+
 
     // A night worker at 07:00 is finishing yesterday's shift, so the card must
     // show that stint rather than an empty row for the new calendar day. An open
@@ -218,9 +232,16 @@ export class AttendanceService implements IAttendanceService {
     return this.getToday(employeeId);
   }
 
+  /**
+   * This week, Monday to Sunday.
+   *
+   * The calendar week rather than a rolling seven days, so "this week" on the
+   * card means what a person reading it assumes it means. Days later in the week
+   * have not happened yet and come back as 'Not in yet' with no hours.
+   */
   async getWeek(employeeId: number): Promise<WeekBar[]> {
     const now = await this.attendanceRepository.now();
-    const dates = lastDays(now.date, 7);
+    const dates = calendarWeek(now.date);
     const days = await this.getDays(employeeId, dates[0], dates[dates.length - 1]);
     return weekBars(days, now.date);
   }
@@ -247,10 +268,17 @@ export class AttendanceService implements IAttendanceService {
     const now = await this.attendanceRepository.now();
     const schedule = await this.requireSchedule(employeeId, now.date);
 
-    const [stored, context, policy] = await Promise.all([
+    const observed = isActivityMeasured(schedule.portalRole);
+
+    // Punches are fetched even for an observed person. Somebody moved onto
+    // observation keeps the days they had already declared — see readAsObserved.
+    const [stored, context, policy, slots] = await Promise.all([
       this.attendanceRepository.findRange(employeeId, from, to),
       this.attendanceRepository.findDayContextRange(employeeId, from, to),
       this.policyService.getForDate(now.date),
+      observed
+        ? this.slotsFor(employeeId, from, to, schedule)
+        : Promise.resolve(new Map<string, SlotMask>()),
     ]);
 
     const byDate = new Map(stored.map((record) => [record.date, record]));
@@ -261,13 +289,24 @@ export class AttendanceService implements IAttendanceService {
     return eachDate(from, to).map((date) => {
       const record = byDate.get(date);
       const day = context.get(date);
+      const punch = record?.loginAt ? { loginAt: record.loginAt, logoutAt: record.logoutAt } : null;
+      const mask = slots.get(date) ?? EMPTY_SLOTS;
+
+      // A day is read by the method that actually recorded it — see the rule
+      // in the domain, which is where it is tested.
+      const readAsObserved = readDayAsObserved(observed, mask, Boolean(punch));
+
       return attendanceOf({
         date,
         today: now.date,
         weeklyOff: schedule.weeklyOff,
         holidayName: day?.holidayName ?? null,
         leave: day?.leave ?? null,
-        punch: record?.loginAt ? { loginAt: record.loginAt, logoutAt: record.logoutAt } : null,
+        punch: readAsObserved ? null : punch,
+        // Undefined, not null, for a day read as a punch: the domain reads its
+        // PRESENCE as the choice of mode, and an empty mask would mean
+        // "observed nothing" rather than "not observed at all".
+        slots: readAsObserved ? mask : undefined,
         shiftStart: schedule.shiftStart,
         lateGraceMinutes: policy.lateGraceMinutes,
       });
@@ -275,6 +314,42 @@ export class AttendanceService implements IAttendanceService {
   }
 
   // ------------------------------------------------------------------ shared
+
+  /**
+   * Observed slots for a span of SHIFT days, already folded.
+   *
+   * Reads one calendar day past the end of the span, because a night shift
+   * starting on the last day finishes on the day after it, and half its hours
+   * live in that row. Folding is `slotsForShiftDay`'s job — the same rule
+   * `shiftDateOf` applies to punches, so both halves of the company agree about
+   * which day a night belonged to.
+   */
+  private async slotsFor(
+    employeeId: number,
+    from: string,
+    to: string,
+    schedule: WorkSchedule,
+  ): Promise<Map<string, SlotMask>> {
+    const byCalendarDate = await this.attendanceRepository.findActivitySlots(
+      employeeId,
+      from,
+      addDays(to, 1),
+    );
+
+    const byShiftDate = new Map<string, SlotMask>();
+    for (const date of eachDate(from, to)) {
+      byShiftDate.set(
+        date,
+        slotsForShiftDay(
+          byCalendarDate.get(date) ?? EMPTY_SLOTS,
+          byCalendarDate.get(addDays(date, 1)) ?? EMPTY_SLOTS,
+          schedule.shiftStart,
+          schedule.shiftEnd,
+        ),
+      );
+    }
+    return byShiftDate;
+  }
 
   /**
    * The facts a day is judged against, minus the punch: the schedule, whether

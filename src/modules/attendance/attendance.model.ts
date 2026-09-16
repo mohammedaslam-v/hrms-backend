@@ -32,12 +32,18 @@ export interface DatabaseNow {
   time: string;
 }
 
-/** The employee's working pattern — what a punch is judged against. */
+/** The employee's working pattern — what a day is judged against. */
 export interface WorkSchedule {
   shiftStart: string;
   shiftEnd: string;
   weeklyOff: string[];
   dateOfLeaving: string | null;
+  /**
+   * `admins.role` — CSR, SSM, Admin and so on. Null for the one employee with
+   * no `admins` row. Read against ACTIVITY_MEASURED_ROLES in attendance.config
+   * to decide where the WEEK's hours come from; it has no bearing on punching.
+   */
+  portalRole: string | null;
 }
 
 /**
@@ -72,6 +78,10 @@ export interface CheckOutInput {
  * The Today card. Carries `serverTime` so the browser can tick a running clock
  * from the same source the punches were stamped with, rather than from the
  * viewer's own machine.
+ */
+/**
+ * The Today card. Always the person's own declaration — check in and check out —
+ * whatever their role. Observed activity feeds the WEEK chart only.
  */
 export interface TodayView {
   date: string;

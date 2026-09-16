@@ -1,5 +1,5 @@
 import { Pool, ResultSetHeader, RowDataPacket } from 'mysql2/promise';
-import { AttendanceStatus, eachDate } from './attendance.domain';
+import { AttendanceStatus, eachDate, EMPTY_SLOTS, type SlotMask } from './attendance.domain';
 import { LeaveType } from '../leave/leave.domain';
 import { IAttendanceRepository } from './attendance.repository.interface';
 import {
@@ -22,6 +22,15 @@ interface ScheduleRow extends RowDataPacket {
   shift_end: string;
   weekly_off: string | null;
   date_of_leaving: string | null;
+  portal_role: string | null;
+}
+
+interface ActivityRow extends RowDataPacket {
+  act_date: string;
+  // BIGINT UNSIGNED. mysql2 hands back a string once the value exceeds what a
+  // double holds safely, so it is parsed as BigInt rather than trusted as a
+  // number — bit 47 alone is 1.4e14, and the arithmetic must stay exact.
+  slot_mask: string | number;
 }
 
 interface ContextRow extends RowDataPacket {
@@ -99,8 +108,11 @@ export class AttendanceRepository implements IAttendanceRepository {
 
   async findSchedule(employeeId: number): Promise<WorkSchedule | null> {
     const [rows] = await this.pool.execute<ScheduleRow[]>(
-      `SELECT shift_start, shift_end, weekly_off, date_of_leaving
-         FROM hrms_employees WHERE id = ?`,
+      `SELECT e.shift_start, e.shift_end, e.weekly_off, e.date_of_leaving,
+              COALESCE(a.role, e.designation) AS portal_role
+         FROM hrms_employees e
+         LEFT JOIN admins a ON a.id = e.admin_id AND a.deleted_at IS NULL
+        WHERE e.id = ?`,
       [employeeId],
     );
     const row = rows[0];
@@ -111,7 +123,35 @@ export class AttendanceRepository implements IAttendanceRepository {
       // MariaDB returns a SET column as a comma-separated string.
       weeklyOff: row.weekly_off ? row.weekly_off.split(',').filter(Boolean) : [],
       dateOfLeaving: row.date_of_leaving,
+      portalRole: row.portal_role,
     };
+  }
+
+  /**
+   * Observed half-hour slots, keyed by calendar date.
+   *
+   * Calendar date, deliberately — folding a night onto the day its shift started
+   * is the domain's job, and it needs both days to do it. Dates with no row are
+   * simply absent; the caller reads a missing date as "nothing was seen".
+   */
+  async findActivitySlots(
+    employeeId: number,
+    from: string,
+    to: string,
+  ): Promise<Map<string, SlotMask>> {
+    const [rows] = await this.pool.execute<ActivityRow[]>(
+      `SELECT a.act_date, a.slot_mask
+         FROM hrms_activity_day a
+         JOIN hrms_employees e ON e.admin_id = a.admin_id
+        WHERE e.id = ? AND a.act_date BETWEEN ? AND ?`,
+      [employeeId, from, to],
+    );
+
+    const byDate = new Map<string, SlotMask>();
+    for (const row of rows) {
+      byDate.set(row.act_date, row.slot_mask ? BigInt(row.slot_mask) : EMPTY_SLOTS);
+    }
+    return byDate;
   }
 
   async findDayContext(employeeId: number, date: string): Promise<DayContext> {

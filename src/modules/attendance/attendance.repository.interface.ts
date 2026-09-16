@@ -1,3 +1,4 @@
+import { SlotMask } from './attendance.domain';
 import {
   AttendanceRecord,
   CheckInInput,
@@ -14,8 +15,15 @@ export interface IAttendanceRepository {
    */
   now(): Promise<DatabaseNow>;
 
-  /** Shift and weekly off. Null when there is no such employee. */
+  /** Shift, weekly off and how the day is measured. Null when no such employee. */
   findSchedule(employeeId: number): Promise<WorkSchedule | null>;
+
+  /**
+   * Observed half-hour slots by CALENDAR date, for people measured from portal
+   * activity. Dates with no activity are absent from the map rather than zero,
+   * so the caller can tell "saw nothing" from "did not ask".
+   */
+  findActivitySlots(employeeId: number, from: string, to: string): Promise<Map<string, SlotMask>>;
 
   /** Declared closure and approved leave for one day, in a single round trip. */
   findDayContext(employeeId: number, date: string): Promise<DayContext>;
