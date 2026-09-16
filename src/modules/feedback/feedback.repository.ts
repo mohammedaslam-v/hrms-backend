@@ -30,6 +30,29 @@ export class FeedbackRepository implements IFeedbackRepository {
     return stored;
   }
 
+  async findById(id: number): Promise<FeedbackRecord | null> {
+    const [rows] = await this.pool.execute<FeedbackRow[]>(
+      `SELECT f.id, f.employee_id, f.author_id, f.body, f.visibility, f.given_on,
+              a.full_name AS author_name
+         FROM hrms_employee_feedback f
+         LEFT JOIN hrms_employees a ON a.id = f.author_id
+        WHERE f.id = ?`,
+      [id],
+    );
+
+    if (!rows[0]) return null;
+    const row = rows[0];
+    return {
+      id: row.id,
+      employeeId: row.employee_id,
+      authorId: row.author_id,
+      authorName: row.author_name,
+      body: row.body,
+      visibility: row.visibility,
+      givenOn: row.given_on,
+    };
+  }
+
   async findForEmployee(employeeId: number): Promise<FeedbackRecord[]> {
     const [rows] = await this.pool.execute<FeedbackRow[]>(
       `SELECT f.id, f.employee_id, f.author_id, f.body, f.visibility, f.given_on,
@@ -50,5 +73,9 @@ export class FeedbackRepository implements IFeedbackRepository {
       visibility: row.visibility,
       givenOn: row.given_on,
     }));
+  }
+
+  async delete(id: number): Promise<void> {
+    await this.pool.execute(`DELETE FROM hrms_employee_feedback WHERE id = ?`, [id]);
   }
 }

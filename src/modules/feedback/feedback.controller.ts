@@ -26,10 +26,18 @@ export class FeedbackController {
     res.status(201).json({ success: true, data });
   });
 
+  delete: RequestHandler = asyncHandler(async (req, res) => {
+    const { employeeId: viewerId } = req as AuthenticatedRequest;
+    const feedbackId = this.readId(req.params.id);
+
+    const data = await this.feedbackService.delete(viewerId, feedbackId);
+    res.json({ success: true, data });
+  });
+
   private readId(raw: unknown): number {
     const id = Number(raw);
     if (!Number.isInteger(id) || id <= 0) {
-      throw ApiError.badRequest('employeeId must be a positive integer');
+      throw ApiError.badRequest('id must be a positive integer');
     }
     return id;
   }

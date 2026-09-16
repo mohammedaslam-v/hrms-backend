@@ -76,4 +76,32 @@ export class FeedbackService implements IFeedbackService {
 
     return this.getVisibleTo(employeeId, access);
   }
+
+  async delete(viewerId: number, feedbackId: number): Promise<FeedbackRecord[]> {
+    const feedback = await this.feedbackRepository.findById(feedbackId);
+    if (!feedback) {
+      throw ApiError.notFound('That feedback note does not exist.');
+    }
+
+    const access = await this.accessService.require(viewerId, feedback.employeeId);
+    const isAuthor = feedback.authorId === viewerId;
+    const isAdmin = access === 'admin';
+
+    if (!isAuthor && !isAdmin) {
+      throw ApiError.forbidden('Only the author or an admin can remove this note.');
+    }
+
+    await this.feedbackRepository.delete(feedbackId);
+
+    await recordAudit(this.pool, {
+      actorEmployeeId: viewerId,
+      action: 'feedback.deleted',
+      entityType: 'hrms_employee_feedback',
+      entityId: feedbackId,
+      before: { employeeId: feedback.employeeId, authorId: feedback.authorId },
+      after: null,
+    });
+
+    return this.getVisibleTo(feedback.employeeId, access);
+  }
 }

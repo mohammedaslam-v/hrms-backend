@@ -6,5 +6,6 @@ export const createFeedbackRouter = (controller: FeedbackController): Router => 
   const router = Router();
   router.use(requireAuth);
   router.post('/:employeeId', controller.add);
+  router.delete('/:id', controller.delete);
   return router;
 };

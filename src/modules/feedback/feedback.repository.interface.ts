@@ -10,6 +10,12 @@ export interface IFeedbackRepository {
    */
   findForEmployee(employeeId: number): Promise<FeedbackRecord[]>;
 
+  /** Find a specific feedback note by its ID. */
+  findById(id: number): Promise<FeedbackRecord | null>;
+
   /** Records a note and returns it as stored, author's name resolved. */
   add(input: AddFeedbackInput): Promise<FeedbackRecord>;
+
+  /** Delete a feedback note by ID. */
+  delete(id: number): Promise<void>;
 }

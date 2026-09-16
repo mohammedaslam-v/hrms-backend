@@ -20,4 +20,9 @@ export interface IFeedbackService {
     employeeId: number,
     input: { body: string; visibility: FeedbackVisibility },
   ): Promise<FeedbackRecord[]>;
+
+  /**
+   * Remove a note. Permitted only for the original author or an admin.
+   */
+  delete(viewerId: number, feedbackId: number): Promise<FeedbackRecord[]>;
 }
