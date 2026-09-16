@@ -13,16 +13,28 @@ import { ProjectRecord } from '../projects/projects.model';
 
 export type WorkMode = 'WFH' | 'WFO' | 'Hybrid';
 
+export type DocumentKey =
+  | 'pan'
+  | 'aadhaar'
+  | 'resume'
+  | 'permanentAddress'
+  | 'temporaryAddress';
+
 /**
- * A file uploaded during onboarding through the Bambinos admin portal.
- *
- * `path` is what `admins` stores. It is never handed to the browser as-is — the
- * download endpoint re-checks the viewer and streams the file.
+ * A file uploaded during onboarding or by the employee on My Page.
  */
 export interface ProfileDocument {
-  key: string;
+  key: DocumentKey;
   label: string;
   path: string;
+  docNumber?: string | null;
+}
+
+export interface SaveDocumentDto {
+  key: DocumentKey;
+  fileName?: string;
+  fileBase64?: string;
+  docNumber?: string;
 }
 
 export interface ProfileRecord {
@@ -146,5 +158,4 @@ export interface ProfileView {
    * the subject, not merely hidden by the card.
    */
   feedback: FeedbackRecord[];
-
 }

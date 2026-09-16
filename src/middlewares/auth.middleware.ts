@@ -13,13 +13,20 @@ export interface AuthenticatedRequest extends Request {
  */
 export const requireAuth = (req: Request, _res: Response, next: NextFunction): void => {
   const header = req.headers.authorization;
-  if (!header?.startsWith('Bearer ')) {
+  const rawToken =
+    header && header.startsWith('Bearer ')
+      ? header.slice('Bearer '.length)
+      : typeof req.query.token === 'string'
+        ? req.query.token
+        : null;
+
+  if (!rawToken) {
     next(new ApiError(401, 'Sign in to continue.'));
     return;
   }
 
   try {
-    const payload = verifyAccessToken(header.slice('Bearer '.length));
+    const payload = verifyAccessToken(rawToken);
     const employeeId = Number(payload.sub);
     if (!Number.isInteger(employeeId) || employeeId <= 0) {
       throw new ApiError(401, 'Sign in to continue.');

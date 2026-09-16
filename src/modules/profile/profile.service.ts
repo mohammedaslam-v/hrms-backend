@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import { canSeeCompensation, canSeePersonalDetails } from '../access/access.domain';
 import { vestedUnits } from '../compensation/compensation.domain';
 import { ICompensationService } from '../compensation/compensation.service.interface';
@@ -11,7 +13,14 @@ import { IProfileRepository } from './profile.repository.interface';
 import { IAccessService } from '../access/access.service.interface';
 import { ILeaveService } from '../leave/leave.service.interface';
 import { IProfileService } from './profile.service.interface';
-import { CompensationView, ProfileRecord, ProfileView } from './profile.model';
+import {
+  CompensationView,
+  DocumentKey,
+  ProfileDocument,
+  ProfileRecord,
+  ProfileView,
+  SaveDocumentDto,
+} from './profile.model';
 import { ApiError } from '../../utils/api-error';
 
 const toCompensationView = (
@@ -26,6 +35,14 @@ const toCompensationView = (
   esopVestedUnits: vestedUnits(record),
   revisionNote: record.revisionNote,
 });
+
+const DOCUMENT_LABELS: Record<DocumentKey, string> = {
+  pan: 'PAN card',
+  aadhaar: 'Aadhaar card',
+  resume: 'Resume',
+  permanentAddress: 'Permanent address proof',
+  temporaryAddress: 'Current address proof',
+};
 
 export class ProfileService implements IProfileService {
   constructor(
@@ -46,28 +63,122 @@ export class ProfileService implements IProfileService {
 
     const access = await this.accessService.require(viewerId, subjectId);
 
-    // Only ask for pay when this viewer could actually be shown it. A manager
-    // opening a report must not cause the figures to be read at all, let alone
-    // serialised — the cheapest way to keep a secret is not to fetch it.
     const [leaveBalance, compensation, goals, projects, feedback] = await Promise.all([
       this.leaveBalanceOf(subjectId),
       canSeeCompensation(access) ? this.compensationService.getCurrent(subjectId) : null,
       this.goalsService.getForEmployee(subjectId),
       this.projectsService.getForEmployee(subjectId),
-      // The access level goes in, so restricted notes are dropped before they
-      // are ever serialised.
       this.feedbackService.getVisibleTo(subjectId, access),
     ]);
 
     return this.toView(record, access, leaveBalance, compensation, goals, projects, feedback);
   }
 
-  /**
-   * The balance comes from the leave engine, which derives it month by month
-   * from the accrual rule and the approved requests. Querying it here would be a
-   * second implementation of the same number, and the two would disagree the
-   * first time someone took leave beyond their balance.
-   */
+  async saveDocument(
+    viewerId: number,
+    subjectId: number,
+    dto: SaveDocumentDto,
+  ): Promise<ProfileDocument> {
+    const access = await this.accessService.require(viewerId, subjectId);
+    // Employee themselves or an admin may upload/update documents
+    if (access !== 'self' && access !== 'admin') {
+      throw ApiError.forbidden('Only the employee or an admin may update documents.');
+    }
+
+    if (!dto.key || !DOCUMENT_LABELS[dto.key]) {
+      throw ApiError.badRequest('A valid document key is required.');
+    }
+
+    const record = await this.profileRepository.findProfile(subjectId);
+    if (!record) {
+      throw ApiError.notFound('That employee record does not exist.');
+    }
+
+    let filePath: string | null | undefined = undefined;
+
+    if (dto.fileBase64) {
+      const matches = dto.fileBase64.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+      let buffer: Buffer;
+      let ext = 'pdf';
+
+      if (matches && matches.length === 3) {
+        const mime = matches[1].toLowerCase();
+        if (mime.includes('pdf')) ext = 'pdf';
+        else if (mime.includes('png')) ext = 'png';
+        else if (mime.includes('jpeg') || mime.includes('jpg')) ext = 'jpg';
+        buffer = Buffer.from(matches[2], 'base64');
+      } else {
+        buffer = Buffer.from(dto.fileBase64, 'base64');
+        if (dto.fileName && dto.fileName.includes('.')) {
+          ext = dto.fileName.split('.').pop()!.toLowerCase();
+        }
+      }
+
+      if (buffer.length > 10 * 1024 * 1024) {
+        throw ApiError.badRequest('Document file must not exceed 10 MB.');
+      }
+
+      const safeExt = ['pdf', 'png', 'jpg', 'jpeg'].includes(ext) ? ext : 'pdf';
+      const cleanFileName = `${subjectId}_${dto.key}_${Date.now()}.${safeExt}`;
+      const uploadsDir = path.resolve(process.cwd(), 'uploads/documents');
+      await fs.promises.mkdir(uploadsDir, { recursive: true });
+      const fullPath = path.join(uploadsDir, cleanFileName);
+      await fs.promises.writeFile(fullPath, buffer);
+
+      filePath = `uploads/documents/${cleanFileName}`;
+    }
+
+    let docNumber = dto.docNumber ? dto.docNumber.trim() : undefined;
+    if (dto.key === 'pan' && docNumber) {
+      docNumber = docNumber.toUpperCase();
+    }
+
+    await this.profileRepository.updateDocument(
+      subjectId,
+      record.adminId,
+      dto.key,
+      filePath,
+      docNumber,
+    );
+
+    return {
+      key: dto.key,
+      label: DOCUMENT_LABELS[dto.key] || dto.key,
+      path: filePath || '',
+      docNumber: docNumber || null,
+    };
+  }
+
+  async getDocumentFilePath(
+    viewerId: number,
+    subjectId: number,
+    key: DocumentKey,
+  ): Promise<string> {
+    const access = await this.accessService.require(viewerId, subjectId);
+    if (!canSeePersonalDetails(access)) {
+      throw ApiError.forbidden('Documents are visible to the employee and HR only.');
+    }
+
+    const relPath = await this.profileRepository.findDocumentPath(subjectId, key);
+    if (!relPath) {
+      throw ApiError.notFound('Document not found for this employee.');
+    }
+
+    const candidatePaths = [
+      path.resolve(process.cwd(), relPath),
+      path.resolve(process.cwd(), 'uploads', path.basename(relPath)),
+      path.resolve(process.cwd(), 'uploads/documents', path.basename(relPath)),
+      path.resolve('/Applications/XAMPP/xamppfiles/htdocs/bambinos-admin/public', relPath),
+      path.resolve('/Applications/XAMPP/xamppfiles/htdocs', relPath),
+    ];
+
+    for (const p of candidatePaths) {
+      if (fs.existsSync(p)) return p;
+    }
+
+    throw ApiError.notFound('The document file is not found on disk.');
+  }
+
   private async leaveBalanceOf(employeeId: number): Promise<number> {
     const leave = await this.leaveService.getMyLeave(employeeId);
     return leave.ledger.balance;
@@ -82,11 +193,6 @@ export class ProfileService implements IProfileService {
     projects: ProjectRecord[],
     feedback: FeedbackRecord[],
   ): ProfileView {
-    // A manager opening a report's profile gets the work-facing record — the
-    // Personal details card as the design draws it. Date of birth, personal
-    // email, emergency contact and the onboarding documents are a different
-    // matter: they are identity data the job does not require, so they are
-    // omitted from the response rather than hidden in the browser.
     const personal = canSeePersonalDetails(access);
 
     return {
@@ -108,9 +214,7 @@ export class ProfileService implements IProfileService {
       dateOfLeaving: record.dateOfLeaving,
       managerName: record.managerName,
 
-      // Work contact — on the card in the design, so a manager sees it.
       mobile: record.mobile,
-
       personalEmail: personal ? record.personalEmail : null,
       dateOfBirth: personal ? record.dateOfBirth : null,
       emergencyMobile: personal ? record.emergencyMobile : null,
@@ -119,9 +223,6 @@ export class ProfileService implements IProfileService {
       documents: personal ? record.documents : [],
       leaveBalance,
 
-      // Pay is between the employee, HR and the founder. The fields are absent
-      // from the response for anyone else — hiding the card in React would be a
-      // convenience for the reader, not access control.
       canSeeCompensation: canSeeCompensation(access),
       compensation: compensation ? toCompensationView(compensation) : null,
       goals,
