@@ -10,6 +10,8 @@ import {
   workingDaysBetween,
 } from './leave.domain';
 import { IOrgRepository } from '../org/org.repository.interface';
+import { IAccessService } from '../access/access.service.interface';
+import { IAuthService } from '../auth/auth.service.interface';
 import {
   ILeaveRepository,
   StoredLeaveRequest,
@@ -47,10 +49,111 @@ export class LeaveService implements ILeaveService {
     // Who reports to whom belongs to the org module, not to leave. Approvals
     // and profile access must never answer that question differently.
     private readonly orgRepository: IOrgRepository,
+    private readonly accessService?: IAccessService,
+    private readonly authService?: IAuthService,
   ) {}
 
   async getMyLeave(employeeId: number): Promise<MyLeaveView> {
-    return this.buildView(await this.resolve(employeeId));
+    const view = this.buildView(await this.resolve(employeeId));
+    if (this.authService) {
+      try {
+        const emp = await this.authService.getCurrentEmployee(employeeId);
+        view.employee = {
+          id: emp.id,
+          fullName: emp.fullName,
+          employeeCode: emp.employeeCode,
+          designation: emp.designation ?? null,
+        };
+      } catch {}
+    }
+    view.isSelf = true;
+    return view;
+  }
+
+  async getForEmployee(viewerId: number, subjectId: number): Promise<MyLeaveView> {
+    if (this.accessService) {
+      await this.accessService.require(viewerId, subjectId);
+    }
+    const view = this.buildView(await this.resolve(subjectId));
+    if (this.authService) {
+      try {
+        const emp = await this.authService.getCurrentEmployee(subjectId);
+        view.employee = {
+          id: emp.id,
+          fullName: emp.fullName,
+          employeeCode: emp.employeeCode,
+          designation: emp.designation ?? null,
+        };
+      } catch {}
+    }
+    view.isSelf = viewerId === subjectId;
+    return view;
+  }
+
+  async previewForEmployee(
+    viewerId: number,
+    subjectId: number,
+    fromDate: string,
+    toDate: string,
+    leaveType: LeaveType,
+    isHalfDay: boolean,
+  ): Promise<LeavePreview> {
+    if (this.accessService) {
+      await this.accessService.require(viewerId, subjectId);
+    }
+    return this.preview(subjectId, fromDate, toDate, leaveType, isHalfDay);
+  }
+
+  async applyForEmployee(
+    viewerId: number,
+    subjectId: number,
+    dto: ApplyLeaveDto,
+  ): Promise<MyLeaveView> {
+    if (this.accessService) {
+      const access = await this.accessService.require(viewerId, subjectId);
+      if (access !== "manager" && access !== "admin" && access !== "self") {
+        throw ApiError.forbidden("You do not have permission to apply leave for this employee.");
+      }
+    }
+    const view = await this.apply(subjectId, dto);
+    if (this.authService) {
+      try {
+        const emp = await this.authService.getCurrentEmployee(subjectId);
+        view.employee = {
+          id: emp.id,
+          fullName: emp.fullName,
+          employeeCode: emp.employeeCode,
+          designation: emp.designation ?? null,
+        };
+      } catch {}
+    }
+    view.isSelf = viewerId === subjectId;
+    return view;
+  }
+
+  async cancelForEmployee(
+    viewerId: number,
+    subjectId: number,
+    requestId: number,
+    byName: string,
+  ): Promise<MyLeaveView> {
+    if (this.accessService) {
+      await this.accessService.require(viewerId, subjectId);
+    }
+    const view = await this.cancel(subjectId, requestId, byName);
+    if (this.authService) {
+      try {
+        const emp = await this.authService.getCurrentEmployee(subjectId);
+        view.employee = {
+          id: emp.id,
+          fullName: emp.fullName,
+          employeeCode: emp.employeeCode,
+          designation: emp.designation ?? null,
+        };
+      } catch {}
+    }
+    view.isSelf = viewerId === subjectId;
+    return view;
   }
 
   async preview(

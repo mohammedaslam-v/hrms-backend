@@ -52,6 +52,56 @@ export class LeaveController {
     });
   });
 
+  getForEmployee: RequestHandler = asyncHandler(async (req, res) => {
+    const { employeeId: viewerId } = req as AuthenticatedRequest;
+    const subjectId = this.readId(req.params.id);
+    const data = await this.leaveService.getForEmployee(viewerId, subjectId);
+    res.json({ success: true, data });
+  });
+
+  previewForEmployee: RequestHandler = asyncHandler(async (req, res) => {
+    const { employeeId: viewerId } = req as AuthenticatedRequest;
+    const subjectId = this.readId(req.params.id);
+    const fromDate = this.readDate(req.query.from, "from");
+    const toDate = this.readDate(req.query.to, "to");
+    const leaveType = this.readType(req.query.type);
+    const isHalfDay = req.query.halfDay === "true";
+
+    const data = await this.leaveService.previewForEmployee(
+      viewerId,
+      subjectId,
+      fromDate,
+      toDate,
+      leaveType,
+      isHalfDay,
+    );
+    res.json({ success: true, data });
+  });
+
+  applyForEmployee: RequestHandler = asyncHandler(async (req, res) => {
+    const { employeeId: viewerId } = req as AuthenticatedRequest;
+    const subjectId = this.readId(req.params.id);
+    const dto = this.toApplyDto(req.body);
+
+    const data = await this.leaveService.applyForEmployee(viewerId, subjectId, dto);
+    res.status(201).json({ success: true, data });
+  });
+
+  cancelForEmployee: RequestHandler = asyncHandler(async (req, res) => {
+    const { employeeId: viewerId } = req as AuthenticatedRequest;
+    const subjectId = this.readId(req.params.id);
+    const requestId = this.readId(req.params.requestId);
+
+    const me = await this.authService.getCurrentEmployee(viewerId);
+    const data = await this.leaveService.cancelForEmployee(
+      viewerId,
+      subjectId,
+      requestId,
+      me.fullName,
+    );
+    res.json({ success: true, data });
+  });
+
   // ---------------------------------------------------------------- parsing
 
   private readDate(raw: unknown, field: string): string {

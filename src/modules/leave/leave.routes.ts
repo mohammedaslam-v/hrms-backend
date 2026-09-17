@@ -22,5 +22,11 @@ export const createLeaveRouter = (controller: LeaveController): Router => {
   router.get('/approvals', controller.getApprovals);
   router.post('/approvals/:id/decide', controller.decide);
 
+  // Employee-specific endpoints (for manager/admin access)
+  router.get('/:id', controller.getForEmployee);
+  router.get('/:id/preview', controller.previewForEmployee);
+  router.post('/:id/requests', controller.applyForEmployee);
+  router.post('/:id/requests/:requestId/cancel', controller.cancelForEmployee);
+
   return router;
 };

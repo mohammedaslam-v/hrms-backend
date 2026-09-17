@@ -81,7 +81,7 @@ export const createContainer = () => {
   const accessService: IAccessService = new AccessService(authService, orgRepository);
 
   const leaveRepository: ILeaveRepository = new LeaveRepository(pool);
-  const leaveService: ILeaveService = new LeaveService(leaveRepository, orgRepository);
+  const leaveService: ILeaveService = new LeaveService(leaveRepository, orgRepository, accessService, authService);
   const leaveController = new LeaveController(leaveService, authService);
 
   // Company policy — the grace window, the goal risk tolerance, the salary
