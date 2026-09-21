@@ -225,7 +225,7 @@ export class AuthService implements IAuthService {
     // Re-check the account on every refresh. Without this, a 7-day refresh token
     // issued before someone left would keep working for the rest of its life.
     const credentials = await this.authRepository.findCredentialsByEmployeeId(session.employeeId);
-    if (!credentials || credentials.adminId === null || this.hasLeft(credentials.dateOfLeaving)) {
+    if (!credentials || credentials.adminId === null || this.hasLeft(credentials.dateOfLeaving) || credentials.isLoginDisabled) {
       await this.authRepository.revokeAllSessionsForEmployee(session.employeeId, 'account_inactive');
       throw new ApiError(401, 'This account is no longer active. Please sign in again.');
     }
@@ -266,6 +266,9 @@ export class AuthService implements IAuthService {
   private assertUsableAccount(credentials: EmployeeCredentials): void {
     if (credentials.adminId === null) {
       throw new ApiError(403, 'This profile has no linked login account. Contact HR.');
+    }
+    if (credentials.isLoginDisabled) {
+      throw new ApiError(403, "Your account login has been disabled. Please contact HR or an Administrator.");
     }
     if (this.hasLeft(credentials.dateOfLeaving)) {
       throw new ApiError(403, 'This account is no longer active. Contact HR.');

@@ -37,6 +37,7 @@ interface CredentialsRow extends RowDataPacket {
   admin_id: number | null;
   password_hash: string | null;
   date_of_leaving: string | null;
+  is_login_disabled?: number;
 }
 
 interface TierRow extends RowDataPacket {
@@ -69,10 +70,12 @@ export class AuthRepository implements IAuthRepository {
       `SELECT e.id            AS employee_id,
               e.admin_id      AS admin_id,
               a.password      AS password_hash,
-              e.date_of_leaving
+              e.date_of_leaving,
+              e.is_login_disabled
          FROM hrms_employees e
          LEFT JOIN admins a ON a.id = e.admin_id AND a.deleted_at IS NULL
-        WHERE e.work_email = ?`,
+        WHERE e.work_email = ?
+          AND (e.deleted_at IS NULL)`,
       [workEmail],
     );
 
@@ -84,6 +87,7 @@ export class AuthRepository implements IAuthRepository {
       adminId: row.admin_id,
       passwordHash: row.password_hash,
       dateOfLeaving: row.date_of_leaving,
+      isLoginDisabled: Boolean(row.is_login_disabled),
     };
   }
 
@@ -92,10 +96,12 @@ export class AuthRepository implements IAuthRepository {
       `SELECT e.id       AS employee_id,
               e.admin_id AS admin_id,
               a.password AS password_hash,
-              e.date_of_leaving
+              e.date_of_leaving,
+              e.is_login_disabled
          FROM hrms_employees e
          LEFT JOIN admins a ON a.id = e.admin_id AND a.deleted_at IS NULL
-        WHERE e.id = ?`,
+        WHERE e.id = ?
+          AND (e.deleted_at IS NULL)`,
       [employeeId],
     );
 
@@ -107,6 +113,7 @@ export class AuthRepository implements IAuthRepository {
       adminId: row.admin_id,
       passwordHash: row.password_hash,
       dateOfLeaving: row.date_of_leaving,
+      isLoginDisabled: Boolean(row.is_login_disabled),
     };
   }
 
