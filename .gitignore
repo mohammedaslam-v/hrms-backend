@@ -8,3 +8,5 @@ dist/
 # and seed-dev carries a plaintext development password in its header.
 db/003-leave-year-and-test-data.sql
 db/seed-dev.sql
+
+uploads/
