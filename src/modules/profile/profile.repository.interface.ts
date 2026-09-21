@@ -1,25 +1,27 @@
-import { DocumentKey, ProfileRecord } from './profile.model';
+import { DismissEmployeeDto, DocumentKey, ProfileRecord } from './profile.model';
 
 export interface IProfileRepository {
-  /**
-   * The whole profile in one round trip: the HRMS record, the manager's name,
-   * and the personal details and onboarding documents held in `admins`.
-   */
   findProfile(employeeId: number): Promise<ProfileRecord | null>;
 
-  /**
-   * Update or attach a document file path and/or document number.
-   */
   updateDocument(
     employeeId: number,
     adminId: number | null,
     key: DocumentKey,
     filePath?: string | null,
     docNumber?: string | null,
+    label?: string | null,
+    addedBy?: number,
   ): Promise<void>;
 
-  /**
-   * Get the stored file path for a document key.
-   */
   findDocumentPath(employeeId: number, key: DocumentKey): Promise<string | null>;
+
+  updateLoginDisabled(employeeId: number, disabled: boolean): Promise<void>;
+
+  dismissEmployee(employeeId: number, dto: DismissEmployeeDto): Promise<void>;
+
+  updateSalaryStopped(employeeId: number, stopped: boolean, reason?: string | null): Promise<void>;
+
+  updateEmploymentType(employeeId: number, employmentType: string): Promise<void>;
+
+  deleteEmployee(employeeId: number, adminId: number | null): Promise<void>;
 }

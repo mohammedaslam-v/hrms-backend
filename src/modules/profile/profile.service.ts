@@ -15,11 +15,13 @@ import { ILeaveService } from '../leave/leave.service.interface';
 import { IProfileService } from './profile.service.interface';
 import {
   CompensationView,
+  DismissEmployeeDto,
   DocumentKey,
   ProfileDocument,
   ProfileRecord,
   ProfileView,
   SaveDocumentDto,
+  ToggleSalaryDto,
 } from './profile.model';
 import { ApiError } from '../../utils/api-error';
 
@@ -80,13 +82,15 @@ export class ProfileService implements IProfileService {
     dto: SaveDocumentDto,
   ): Promise<ProfileDocument> {
     const access = await this.accessService.require(viewerId, subjectId);
-    // Employee themselves or an admin may upload/update documents
     if (access !== 'self' && access !== 'admin') {
       throw ApiError.forbidden('Only the employee or an admin may update documents.');
     }
 
-    if (!dto.key || !DOCUMENT_LABELS[dto.key]) {
-      throw ApiError.badRequest('A valid document key is required.');
+    const isStandard = Boolean(DOCUMENT_LABELS[dto.key as DocumentKey]);
+    const label = isStandard ? DOCUMENT_LABELS[dto.key as DocumentKey] : (dto.label?.trim() || dto.key);
+
+    if (!dto.key || (!isStandard && !dto.label?.trim() && !dto.key)) {
+      throw ApiError.badRequest('A document name is required.');
     }
 
     const record = await this.profileRepository.findProfile(subjectId);
@@ -139,11 +143,13 @@ export class ProfileService implements IProfileService {
       dto.key,
       filePath,
       docNumber,
+      label,
+      viewerId,
     );
 
     return {
       key: dto.key,
-      label: DOCUMENT_LABELS[dto.key] || dto.key,
+      label,
       path: filePath || '',
       docNumber: docNumber || null,
     };
@@ -159,7 +165,7 @@ export class ProfileService implements IProfileService {
       throw ApiError.forbidden('Only the employee or an admin may remove documents.');
     }
 
-    if (!key || !DOCUMENT_LABELS[key]) {
+    if (!key) {
       throw ApiError.badRequest('A valid document key is required.');
     }
 
@@ -221,6 +227,116 @@ export class ProfileService implements IProfileService {
     throw ApiError.notFound('The document file is not found on disk.');
   }
 
+  async toggleLogin(
+    viewerId: number,
+    subjectId: number,
+    disabled: boolean,
+  ): Promise<{ isLoginDisabled: boolean }> {
+    const access = await this.accessService.require(viewerId, subjectId);
+    if (access !== 'admin') {
+      throw ApiError.forbidden('Only administrators can enable or disable employee login.');
+    }
+    if (viewerId === subjectId) {
+      throw ApiError.badRequest('Administrators cannot disable their own login.');
+    }
+
+    const record = await this.profileRepository.findProfile(subjectId);
+    if (!record) {
+      throw ApiError.notFound('That employee record does not exist.');
+    }
+
+    await this.profileRepository.updateLoginDisabled(subjectId, disabled);
+    return { isLoginDisabled: disabled };
+  }
+
+  async dismissEmployee(
+    viewerId: number,
+    subjectId: number,
+    dto: DismissEmployeeDto,
+  ): Promise<void> {
+    const access = await this.accessService.require(viewerId, subjectId);
+    if (access !== 'admin') {
+      throw ApiError.forbidden('Only administrators can dismiss employees.');
+    }
+    if (viewerId === subjectId) {
+      throw ApiError.badRequest('Administrators cannot dismiss their own account.');
+    }
+
+    if (!dto.lastWorkingDay) {
+      throw ApiError.badRequest('Last working day is required.');
+    }
+
+    const record = await this.profileRepository.findProfile(subjectId);
+    if (!record) {
+      throw ApiError.notFound('That employee record does not exist.');
+    }
+
+    await this.profileRepository.dismissEmployee(subjectId, dto);
+  }
+
+  async toggleSalary(
+    viewerId: number,
+    subjectId: number,
+    dto: ToggleSalaryDto,
+  ): Promise<{ isSalaryStopped: boolean }> {
+    const access = await this.accessService.require(viewerId, subjectId);
+    if (access !== 'admin') {
+      throw ApiError.forbidden('Only administrators can stop or resume employee salary.');
+    }
+    if (viewerId === subjectId) {
+      throw ApiError.badRequest('Administrators cannot stop their own salary.');
+    }
+
+    const record = await this.profileRepository.findProfile(subjectId);
+    if (!record) {
+      throw ApiError.notFound('That employee record does not exist.');
+    }
+
+    await this.profileRepository.updateSalaryStopped(subjectId, dto.stopped, dto.reason);
+    return { isSalaryStopped: dto.stopped };
+  }
+
+  async updateEmploymentType(
+    viewerId: number,
+    subjectId: number,
+    employmentType: string,
+  ): Promise<{ employmentType: string; isContractor: boolean }> {
+    const access = await this.accessService.require(viewerId, subjectId);
+    if (access !== "admin") {
+      throw ApiError.forbidden("Only administrators can update employment types.");
+    }
+
+    const record = await this.profileRepository.findProfile(subjectId);
+    if (!record) {
+      throw ApiError.notFound("That employee record does not exist.");
+    }
+
+    const normalized = employmentType.trim();
+    await this.profileRepository.updateEmploymentType(subjectId, normalized);
+    const isContractor = normalized.toLowerCase().includes("contract");
+    return { employmentType: normalized, isContractor };
+  }
+
+  async deleteEmployee(
+    viewerId: number,
+    subjectId: number,
+  ): Promise<void> {
+    const access = await this.accessService.require(viewerId, subjectId);
+    if (access !== 'admin') {
+      throw ApiError.forbidden('Only administrators can delete employee profiles.');
+    }
+    if (viewerId === subjectId) {
+      throw ApiError.badRequest('Administrators cannot delete their own account.');
+    }
+
+    const record = await this.profileRepository.findProfile(subjectId);
+    if (!record) {
+      throw ApiError.notFound('That employee record does not exist.');
+    }
+
+    await this.profileRepository.deleteEmployee(subjectId, record.adminId);
+  }
+
   private async leaveBalanceOf(employeeId: number): Promise<number> {
     const leave = await this.leaveService.getMyLeave(employeeId);
     return leave.ledger.balance;
@@ -247,6 +363,8 @@ export class ProfileService implements IProfileService {
       workEmail: record.workEmail,
       designation: record.designation,
       department: record.department,
+      employmentType: record.employmentType,
+      isContractor: record.isContractor,
       workMode: record.workMode,
       workState: record.workState,
       shiftStart: record.shiftStart,
@@ -270,6 +388,19 @@ export class ProfileService implements IProfileService {
       goals,
       projects,
       feedback,
+
+      isLoginDisabled: record.isLoginDisabled,
+      loginDisabledAt: record.loginDisabledAt,
+      isSalaryStopped: record.isSalaryStopped,
+      salaryStoppedAt: record.salaryStoppedAt,
+      salaryStopReason: record.salaryStopReason,
+      resignationDate: record.resignationDate,
+      resignationReason: record.resignationReason,
+      isNoticeServing: record.isNoticeServing,
+      lastWorkingDay: record.lastWorkingDay,
+      isRehireEligible: record.isRehireEligible,
+      exitNotes: record.exitNotes,
+      deletedAt: record.deletedAt,
     };
   }
 }

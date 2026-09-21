@@ -1,10 +1,6 @@
 /**
  * My page — the employee's own profile, and the profile a manager opens for
  * someone in their reporting line.
- *
- * The record here is the raw read. Nothing on it is gated: deciding what a
- * particular viewer may see (pay, restricted feedback) is the service's job, so
- * that a single rule governs it rather than each caller remembering.
  */
 
 import { FeedbackRecord } from '../feedback/feedback.model';
@@ -18,7 +14,8 @@ export type DocumentKey =
   | 'aadhaar'
   | 'resume'
   | 'permanentAddress'
-  | 'temporaryAddress';
+  | 'temporaryAddress'
+  | (string & {});
 
 /**
  * A file uploaded during onboarding or by the employee on My Page.
@@ -32,9 +29,32 @@ export interface ProfileDocument {
 
 export interface SaveDocumentDto {
   key: DocumentKey;
+  label?: string;
   fileName?: string;
   fileBase64?: string;
   docNumber?: string;
+}
+
+export interface DismissEmployeeDto {
+  resignationDate: string | null;
+  resignationReason: string;
+  isNoticeServing: boolean;
+  lastWorkingDay: string;
+  isRehireEligible: boolean;
+  exitNotes?: string | null;
+}
+
+export interface ToggleLoginDto {
+  disabled: boolean;
+}
+
+export interface UpdateEmploymentTypeDto {
+  employmentType: string;
+}
+
+export interface ToggleSalaryDto {
+  stopped: boolean;
+  reason?: string | null;
 }
 
 export interface ProfileRecord {
@@ -47,6 +67,8 @@ export interface ProfileRecord {
   workEmail: string;
   designation: string | null;
   department: string | null;
+  employmentType: string;
+  isContractor: boolean;
   workMode: WorkMode;
   workState: string;
   shiftStart: string;
@@ -69,15 +91,22 @@ export interface ProfileRecord {
 
   /** Only the documents actually on file. An empty list is a real answer. */
   documents: ProfileDocument[];
+
+  // ---- lifecycle & exit fields -------------------------------------------
+  isLoginDisabled: boolean;
+  loginDisabledAt: string | null;
+  isSalaryStopped: boolean;
+  salaryStoppedAt: string | null;
+  salaryStopReason: string | null;
+  resignationDate: string | null;
+  resignationReason: string | null;
+  isNoticeServing: boolean;
+  lastWorkingDay: string | null;
+  isRehireEligible: boolean;
+  exitNotes: string | null;
+  deletedAt: string | null;
 }
 
-/**
- * The pay figures My page shows, for a viewer entitled to see them.
- *
- * A separate object rather than loose fields on the view, so "may this person
- * see pay at all" is one null check in the UI instead of six — and so a new pay
- * field cannot be added without passing through the gate that builds this.
- */
 export interface CompensationView {
   effectiveFrom: string;
   ctc: number;
@@ -85,19 +114,11 @@ export interface CompensationView {
   bonus: number;
   esopUnits: number;
   esopVestedPct: number;
-  /** Units actually held today, derived from the grant and the vested share. */
   esopVestedUnits: number;
   revisionNote: string | null;
 }
 
-// ---------------------------------------------------------------- the view
-
-/**
- * What My page receives. Assembled from `ProfileRecord` plus the leave balance,
- * and trimmed to what this particular viewer is allowed to see.
- */
 export interface ProfileView {
-  /** Why this viewer is being shown the page. Drives the UI's read-only hints. */
   access: 'self' | 'manager' | 'admin';
   isSelf: boolean;
 
@@ -107,6 +128,8 @@ export interface ProfileView {
   workEmail: string;
   designation: string | null;
   department: string | null;
+  employmentType: string;
+  isContractor: boolean;
   workMode: WorkMode;
   workState: string;
   shiftStart: string;
@@ -124,38 +147,26 @@ export interface ProfileView {
   linkedinProfile: string | null;
 
   documents: ProfileDocument[];
-
-  /** Days available today, from the leave engine — never recomputed here. */
   leaveBalance: number;
 
-  /**
-   * Pay, or null.
-   *
-   * Null carries two different meanings, and `canSeeCompensation` tells them
-   * apart for the UI: the viewer is not entitled to see it, or nobody has loaded
-   * it yet. A manager viewing a report gets null here NOT because the card is
-   * hidden in the browser, but because the figures never left the server.
-   */
   compensation: CompensationView | null;
   canSeeCompensation: boolean;
 
-  /**
-   * Goals for the current financial year, with progress and status resolved.
-   *
-   * Not gated the way pay is: a goal is work, and a manager seeing what their
-   * report is aiming at is the point of having them. Empty is a real answer —
-   * most people have none set.
-   */
   goals: GoalView[];
-
-  /** Work this person is known for. Open to anyone who can open the page. */
   projects: ProjectRecord[];
-
-  /**
-   * Notes about this person that THIS viewer may read.
-   *
-   * Already filtered: a `managers_only` note is absent from the response for
-   * the subject, not merely hidden by the card.
-   */
   feedback: FeedbackRecord[];
+
+  // ---- lifecycle & exit flags -------------------------------------------
+  isLoginDisabled: boolean;
+  loginDisabledAt: string | null;
+  isSalaryStopped: boolean;
+  salaryStoppedAt: string | null;
+  salaryStopReason: string | null;
+  resignationDate: string | null;
+  resignationReason: string | null;
+  isNoticeServing: boolean;
+  lastWorkingDay: string | null;
+  isRehireEligible: boolean;
+  exitNotes: string | null;
+  deletedAt: string | null;
 }
