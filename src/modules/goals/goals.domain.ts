@@ -34,6 +34,7 @@ export interface GoalRecord {
   id: number;
   ref: string;
   employeeId: number;
+  employeeName?: string | null;
   title: string;
   goalType: GoalType;
   fy: string;

@@ -73,3 +73,10 @@ export const canSeeRestrictedFeedback = (access: ProfileAccess): boolean =>
  */
 export const canRecordAbout = (access: ProfileAccess): boolean =>
   access === 'manager' || access === 'admin';
+
+/**
+ * May this viewer manage projects, achievements, and project tasks for this person?
+ * Both the employee themselves, their reporting manager, and admins can add/edit.
+ */
+export const canManageProjects = (access: ProfileAccess): boolean =>
+  access === "self" || access === "manager" || access === "admin";

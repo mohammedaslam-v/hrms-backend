@@ -279,7 +279,7 @@ export class GoalsService implements IGoalsService {
       id: goal.id,
       ref: goal.ref,
       employeeId: goal.employeeId,
-      employeeName: goal.employeeName,
+      employeeName: goal.employeeName ?? undefined,
       title: goal.title,
       goalType: goal.goalType,
       period: goal.period,
