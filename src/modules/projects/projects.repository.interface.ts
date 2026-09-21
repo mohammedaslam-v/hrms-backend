@@ -1,14 +1,23 @@
-import { AddProjectInput, ProjectRecord } from './projects.model';
+import {
+  AddProjectInput,
+  AddTaskInput,
+  ProjectRecord,
+  ProjectTaskRecord,
+  UpdateProjectInput,
+  UpdateTaskInput,
+} from "./projects.model";
 
 export interface IProjectsRepository {
-  /**
-   * Everything recorded for this employee, most recent first.
-   *
-   * Live work leads, because that is what somebody opening the page wants to
-   * know; finished work follows in the order it was added.
-   */
   findForEmployee(employeeId: number): Promise<ProjectRecord[]>;
-
-  /** Records a project and returns it as stored, author's name resolved. */
+  findById(id: number): Promise<ProjectRecord | null>;
   add(input: AddProjectInput): Promise<ProjectRecord>;
+  update(id: number, input: UpdateProjectInput): Promise<ProjectRecord>;
+  delete(id: number): Promise<void>;
+
+  addTask(input: AddTaskInput): Promise<ProjectTaskRecord>;
+  updateTask(id: number, input: UpdateTaskInput): Promise<ProjectTaskRecord>;
+  deleteTask(id: number): Promise<void>;
+
+  findProjectOwner(id: number): Promise<{ employeeId: number; addedBy: number } | null>;
+  findTaskOwner(taskId: number): Promise<{ projectId: number; employeeId: number; addedBy: number } | null>;
 }

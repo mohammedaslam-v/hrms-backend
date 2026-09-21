@@ -1,12 +1,10 @@
-import { GoalPeriod, GoalStatus, GoalType } from './goals.domain';
+import { GoalDirection, GoalPeriod, GoalStatus, GoalType, Milestone } from './goals.domain';
 
-/**
- * One goal as My page shows it: the stored fields plus the two things that are
- * always derived — how far along it is, and what that means.
- */
 export interface GoalView {
   id: number;
   ref: string;
+  employeeId: number;
+  employeeName?: string;
   title: string;
   goalType: GoalType;
   period: GoalPeriod;
@@ -20,9 +18,54 @@ export interface GoalView {
   targetValue: number | null;
   currentValue: number | null;
   unit: string | null;
+  direction: GoalDirection;
   note: string | null;
+
+  setOn: string;
+  setterName: string | null;
 
   /** Only meaningful for a checklist goal; zero and zero for a metric. */
   milestonesDone: number;
   milestonesTotal: number;
+  milestones: Milestone[];
+}
+
+export interface MyGoalsSummaryView {
+  goalsThisYear: number;
+  averageProgress: number;
+  needingAttention: number;
+  achieved: number;
+  goals: GoalView[];
+}
+
+export interface MemberGoalsGroup {
+  employeeId: number;
+  employeeCode: string;
+  fullName: string;
+  designation: string | null;
+  department: string | null;
+  goalsCount: number;
+  averageProgress: number;
+  goals: GoalView[];
+}
+
+export interface TeamGoalsSummaryView {
+  totalGoals: number;
+  onTrack: number;
+  atRisk: number;
+  achievedSoFar: number;
+  members: MemberGoalsGroup[];
+}
+
+export interface CreateGoalDto {
+  employeeId: number;
+  title: string;
+  goalType: GoalType;
+  period: GoalPeriod;
+  targetValue?: number | null;
+  currentValue?: number | null;
+  unit?: string | null;
+  direction?: GoalDirection;
+  note?: string | null;
+  milestones?: string[];
 }

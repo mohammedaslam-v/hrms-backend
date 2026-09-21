@@ -8,6 +8,7 @@ import { createAuthRouter } from './modules/auth/auth.routes';
 import { createEmployeeRouter } from './modules/employees/employee.routes';
 import { createLeaveRouter } from './modules/leave/leave.routes';
 import { createProfileRouter } from './modules/profile/profile.routes';
+import { createGoalsRouter } from './modules/goals/goals.routes';
 
 export const createApiRouter = (container: Container): Router => {
   const router = Router();
@@ -20,6 +21,7 @@ export const createApiRouter = (container: Container): Router => {
   router.use('/team', createTeamRouter(container.teamController));
   router.use('/projects', createProjectsRouter(container.projectsController));
   router.use('/feedback', createFeedbackRouter(container.feedbackController));
+  router.use('/goals', createGoalsRouter(container.goalsController));
 
   return router;
 };

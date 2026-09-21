@@ -1,14 +1,18 @@
-import { Router } from 'express';
-import { requireAuth } from '../../middlewares/auth.middleware';
-import { ProjectsController } from './projects.controller';
+import { Router } from "express";
+import { requireAuth } from "../../middlewares/auth.middleware";
+import { ProjectsController } from "./projects.controller";
 
-/**
- * Reading projects happens through the profile. Only the write lives here, and
- * it is authorised in the service against the reporting tree.
- */
 export const createProjectsRouter = (controller: ProjectsController): Router => {
   const router = Router();
   router.use(requireAuth);
-  router.post('/:employeeId', controller.add);
+
+  router.patch("/tasks/:taskId", controller.updateTask);
+  router.delete("/tasks/:taskId", controller.deleteTask);
+
+  router.post("/:employeeId", controller.add);
+  router.patch("/:projectId", controller.update);
+  router.delete("/:projectId", controller.delete);
+  router.post("/:projectId/tasks", controller.addTask);
+
   return router;
 };

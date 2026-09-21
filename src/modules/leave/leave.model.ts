@@ -55,6 +55,13 @@ export interface LeavePreview {
 }
 
 export interface MyLeaveView {
+  employee?: {
+    id: number;
+    fullName: string;
+    employeeCode: string;
+    designation: string | null;
+  };
+  isSelf?: boolean;
   ledger: LeaveLedger;
   requests: (LeaveRequestRecord & {
     reason: string;

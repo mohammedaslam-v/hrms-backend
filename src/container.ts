@@ -5,6 +5,7 @@ import { AuthController } from './modules/auth/auth.controller';
 import { LeaveController } from './modules/leave/leave.controller';
 import { ProfileController } from './modules/profile/profile.controller';
 import { EmployeeController } from './modules/employees/employee.controller';
+import { GoalsController } from './modules/goals/goals.controller';
 import { IAttendanceRepository } from './modules/attendance/attendance.repository.interface';
 import { IAccessService } from './modules/access/access.service.interface';
 import { IAuthRepository } from './modules/auth/auth.repository.interface';
@@ -80,7 +81,7 @@ export const createContainer = () => {
   const accessService: IAccessService = new AccessService(authService, orgRepository);
 
   const leaveRepository: ILeaveRepository = new LeaveRepository(pool);
-  const leaveService: ILeaveService = new LeaveService(leaveRepository, orgRepository);
+  const leaveService: ILeaveService = new LeaveService(leaveRepository, orgRepository, accessService, authService);
   const leaveController = new LeaveController(leaveService, authService);
 
   // Company policy — the grace window, the goal risk tolerance, the salary
@@ -95,7 +96,15 @@ export const createContainer = () => {
 
   // Goals read the financial year's dates and the risk tolerance from policy.
   const goalsRepository: IGoalsRepository = new GoalsRepository(pool);
-  const goalsService: IGoalsService = new GoalsService(goalsRepository, policyService, clock);
+  const goalsService: IGoalsService = new GoalsService(
+    goalsRepository,
+    policyService,
+    clock,
+    authService,
+    accessService,
+    orgRepository,
+  );
+  const goalsController = new GoalsController(goalsService);
 
   // Work and notes recorded about a person. Feedback carries the one rule where
   // being the subject grants LESS access, so its filter lives in its service.
@@ -157,6 +166,7 @@ export const createContainer = () => {
     teamController,
     projectsController,
     feedbackController,
+    goalsController,
     policyService,
     compensationService,
     goalsService,

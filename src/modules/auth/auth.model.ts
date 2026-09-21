@@ -24,6 +24,7 @@ export interface EmployeeCredentials {
   adminId: number | null;
   passwordHash: string | null;
   dateOfLeaving: string | null;
+  isLoginDisabled?: boolean;
 }
 
 /** Raw tier inputs, resolved fresh on every request rather than cached in a token. */

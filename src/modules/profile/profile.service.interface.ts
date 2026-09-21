@@ -1,16 +1,52 @@
-import { ProfileView } from './profile.model';
+import { DismissEmployeeDto, DocumentKey, ProfileDocument, ProfileView, SaveDocumentDto, ToggleSalaryDto } from './profile.model';
 
 export interface IProfileService {
-  /**
-   * Build My page for `subjectId`, as seen by `viewerId`.
-   *
-   * The two ids are separate because the same screen serves both cases: your own
-   * profile, and a report's profile opened from the team directory. What the
-   * viewer is allowed to see is decided here, not by the caller — so the fields
-   * they may not see are never in the response to begin with.
-   *
-   * Throws 403 when the viewer has no claim on the profile, and 404 when the
-   * employee does not exist.
-   */
   getProfile(viewerId: number, subjectId: number): Promise<ProfileView>;
+
+  saveDocument(
+    viewerId: number,
+    subjectId: number,
+    dto: SaveDocumentDto,
+  ): Promise<ProfileDocument>;
+
+  getDocumentFilePath(
+    viewerId: number,
+    subjectId: number,
+    key: DocumentKey,
+  ): Promise<string>;
+
+  deleteDocument(
+    viewerId: number,
+    subjectId: number,
+    key: DocumentKey,
+  ): Promise<void>;
+
+  toggleLogin(
+    viewerId: number,
+    subjectId: number,
+    disabled: boolean,
+  ): Promise<{ isLoginDisabled: boolean }>;
+
+  dismissEmployee(
+    viewerId: number,
+    subjectId: number,
+    dto: DismissEmployeeDto,
+  ): Promise<void>;
+
+  toggleSalary(
+    viewerId: number,
+    subjectId: number,
+    dto: ToggleSalaryDto,
+  ): Promise<{ isSalaryStopped: boolean }>;
+
+  updateEmploymentType(
+    viewerId: number,
+    subjectId: number,
+    employmentType: string,
+  ): Promise<{ employmentType: string; isContractor: boolean }>;
+
+  deleteEmployee(
+    viewerId: number,
+    subjectId: number,
+  ): Promise<void>;
 }

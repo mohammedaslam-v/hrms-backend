@@ -22,30 +22,42 @@ interface RosterRow extends TreeRow {
   date_of_leaving: string | null;
 }
 
-/**
- * Still with the company — or asked for anyway.
- *
- * Written once and reused by both queries so the two can never disagree about
- * what "active" means. A leaving date in the future is still active: somebody
- * serving notice has not left yet.
- */
-const stillHere = (includeLeavers: boolean): string =>
-  includeLeavers ? '1 = 1' : '(e.date_of_leaving IS NULL OR e.date_of_leaving >= CURDATE())';
+const stillHere = (includeLeavers: boolean, hasDeleted: boolean): string => {
+  const notDeleted = hasDeleted ? 'e.deleted_at IS NULL' : '1 = 1';
+  const leavingClause = includeLeavers ? '1 = 1' : '(e.date_of_leaving IS NULL OR e.date_of_leaving >= CURDATE())';
+  return `${notDeleted} AND ${leavingClause}`;
+};
 
 interface ExistsRow extends RowDataPacket {
   found: number;
 }
 
 export class OrgRepository implements IOrgRepository {
+  private hasDeletedCol: boolean | null = null;
+
   constructor(private readonly pool: Pool) {}
 
+  private async checkDeletedCol(): Promise<boolean> {
+    if (this.hasDeletedCol !== null) return this.hasDeletedCol;
+    try {
+      const [rows] = await this.pool.query<RowDataPacket[]>(
+        "SHOW COLUMNS FROM hrms_employees LIKE 'deleted_at'"
+      );
+      this.hasDeletedCol = rows.length > 0;
+    } catch {
+      this.hasDeletedCol = false;
+    }
+    return this.hasDeletedCol;
+  }
+
   async findReportingTree(managerId: number, includeLeavers = false): Promise<TeamMember[]> {
+    const hasDeleted = await this.checkDeletedCol();
     const [rows] = await this.pool.execute<TreeRow[]>(
       `${REPORTING_TREE_CTE}
        SELECT DISTINCT e.id, e.employee_code, e.full_name, e.designation
          FROM hrms_employees e
          JOIN tree ON tree.id = e.id
-        WHERE ${stillHere(includeLeavers)}
+        WHERE ${stillHere(includeLeavers, hasDeleted)}
         ORDER BY e.full_name`,
       reportingTreeParams(managerId),
     );
@@ -60,11 +72,8 @@ export class OrgRepository implements IOrgRepository {
 
   async findRoster(scope: RosterScope): Promise<RosterMember[]> {
     const includeLeavers = scope.includeLeavers ?? false;
+    const hasDeleted = await this.checkDeletedCol();
 
-    // Two shapes of the same query. A manager's list walks the tree; an admin's
-    // is every row. Splitting on `rootId === null` rather than treating some id
-    // as "everyone" means the whole company can never be returned by accident
-    // from a bad id.
     const columns = `e.id, e.employee_code, e.full_name, e.designation, e.department,
               m.full_name AS manager_name,
               e.work_mode, e.shift_start, e.shift_end, e.weekly_off,
@@ -75,7 +84,7 @@ export class OrgRepository implements IOrgRepository {
           `SELECT ${columns}
              FROM hrms_employees e
              LEFT JOIN hrms_employees m ON m.id = e.manager_id
-            WHERE ${stillHere(includeLeavers)}
+            WHERE ${stillHere(includeLeavers, hasDeleted)}
             ORDER BY e.full_name`,
         )
       : await this.pool.execute<RosterRow[]>(
@@ -84,7 +93,7 @@ export class OrgRepository implements IOrgRepository {
              FROM hrms_employees e
              JOIN tree ON tree.id = e.id
              LEFT JOIN hrms_employees m ON m.id = e.manager_id
-            WHERE ${stillHere(includeLeavers)}
+            WHERE ${stillHere(includeLeavers, hasDeleted)}
             ORDER BY e.full_name`,
           reportingTreeParams(scope.rootId),
         );
@@ -97,10 +106,8 @@ export class OrgRepository implements IOrgRepository {
       department: row.department,
       managerName: row.manager_name,
       workMode: row.work_mode,
-      // TIME arrives as HH:MM:SS; the directory shows HH:MM.
       shiftStart: row.shift_start.slice(0, 5),
       shiftEnd: row.shift_end.slice(0, 5),
-      // MariaDB returns a SET column as a comma-separated string.
       weeklyOff: row.weekly_off ? row.weekly_off.split(',').filter(Boolean) : [],
       dateOfJoining: row.date_of_joining,
       dateOfLeaving: row.date_of_leaving,
@@ -108,9 +115,6 @@ export class OrgRepository implements IOrgRepository {
   }
 
   async isInReportingTree(managerId: number, employeeId: number): Promise<boolean> {
-    // `LIMIT 1` stops as soon as the person is found rather than expanding the
-    // rest of the tree — a skip-level manager can have hundreds of reports, and
-    // whether one particular person is among them is a single row of work.
     const [rows] = await this.pool.execute<ExistsRow[]>(
       `${REPORTING_TREE_CTE}
        SELECT 1 AS found FROM tree WHERE tree.id = ? LIMIT 1`,

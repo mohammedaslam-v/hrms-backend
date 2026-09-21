@@ -18,7 +18,8 @@ export const createApp = (): Application => {
   app.use(helmet());
   // credentials:true is required for the httpOnly refresh cookie to travel.
   app.use(cors({ origin: env.corsOrigin, credentials: true }));
-  app.use(express.json());
+  app.use(express.json({ limit: "15mb" }));
+  app.use(express.urlencoded({ extended: true, limit: "15mb" }));
   app.use(cookieParser());
 
   app.get('/health', (_req, res) => {

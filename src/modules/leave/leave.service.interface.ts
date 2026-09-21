@@ -26,6 +26,31 @@ export interface ILeaveService {
   /** Only the owner may cancel, and only while the request is still pending. */
   cancel(employeeId: number, requestId: number, byName: string): Promise<MyLeaveView>;
 
+  /** Leave details for another employee, authorized by reporting line or admin tier. */
+  getForEmployee(viewerId: number, subjectId: number): Promise<MyLeaveView>;
+
+  previewForEmployee(
+    viewerId: number,
+    subjectId: number,
+    fromDate: string,
+    toDate: string,
+    leaveType: LeaveType,
+    isHalfDay: boolean,
+  ): Promise<LeavePreview>;
+
+  applyForEmployee(
+    viewerId: number,
+    subjectId: number,
+    dto: ApplyLeaveDto,
+  ): Promise<MyLeaveView>;
+
+  cancelForEmployee(
+    viewerId: number,
+    subjectId: number,
+    requestId: number,
+    byName: string,
+  ): Promise<MyLeaveView>;
+
   // ---------------------------------------------------------------- approvals
 
   /** Pending queue, team balances and the request log, scoped to the manager's tree. */

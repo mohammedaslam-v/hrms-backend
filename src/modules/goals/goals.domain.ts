@@ -34,6 +34,7 @@ export interface GoalRecord {
   id: number;
   ref: string;
   employeeId: number;
+  employeeName?: string | null;
   title: string;
   goalType: GoalType;
   fy: string;
@@ -44,6 +45,9 @@ export interface GoalRecord {
   unit: string | null;
   direction: GoalDirection;
   note: string | null;
+  setOn?: string;
+  setBy?: number | null;
+  setterName?: string | null;
   milestones: Milestone[];
 }
 
