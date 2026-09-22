@@ -16,6 +16,7 @@ export const createProfileRouter = (controller: ProfileController): Router => {
   router.post('/me/documents', controller.saveDocument);
   router.get('/me/documents/:key/file', controller.downloadDocument);
   router.delete('/me/documents/:key', controller.deleteDocument);
+  router.post('/me/compensation', controller.updateCompensation);
 
   router.get('/:id', controller.getOne);
   router.post('/:id/documents', controller.saveDocument);
@@ -28,6 +29,7 @@ export const createProfileRouter = (controller: ProfileController): Router => {
   router.post('/:id/dismiss', controller.dismissEmployee);
   router.post('/:id/toggle-salary', controller.toggleSalary);
   router.delete('/:id', controller.deleteEmployee);
+  router.post('/:id/compensation', controller.updateCompensation);
 
   return router;
 };

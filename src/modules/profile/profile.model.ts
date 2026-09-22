@@ -52,6 +52,16 @@ export interface UpdateEmploymentTypeDto {
   employmentType: string;
 }
 
+export interface UpdateCompensationDto {
+  effectiveFrom?: string;
+  ctc: number;
+  variablePay?: number;
+  bonus?: number;
+  esopUnits?: number;
+  esopVestedPct?: number;
+  revisionNote?: string | null;
+}
+
 export interface ToggleSalaryDto {
   stopped: boolean;
   reason?: string | null;
