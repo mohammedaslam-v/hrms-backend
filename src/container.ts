@@ -60,6 +60,22 @@ import { EmployeeService } from './modules/employees/employee.service';
 
 // Composition root: the only place where concrete implementations are chosen.
 // Every layer depends on interfaces, wired here via constructor injection.
+import { ISalaryRepository } from './modules/salary/salary.repository.interface';
+import { ISalaryService } from './modules/salary/salary.service.interface';
+import { SalaryRepository } from './modules/salary/salary.repository';
+import { SalaryService } from './modules/salary/salary.service';
+import { SalaryController } from './modules/salary/salary.controller';
+import { IReimbursementRepository } from './modules/reimbursement/reimbursement.repository.interface';
+import { IReimbursementService } from './modules/reimbursement/reimbursement.service.interface';
+import { ReimbursementRepository } from './modules/reimbursement/reimbursement.repository';
+import { ReimbursementService } from './modules/reimbursement/reimbursement.service';
+import { ReimbursementController } from './modules/reimbursement/reimbursement.controller';
+import { ITaxRepository } from './modules/tax/tax.repository.interface';
+import { ITaxService } from './modules/tax/tax.service.interface';
+import { TaxRepository } from './modules/tax/tax.repository';
+import { TaxService } from './modules/tax/tax.service';
+import { TaxController } from './modules/tax/tax.controller';
+
 export const createContainer = () => {
   const pool = getPool();
 
@@ -153,9 +169,32 @@ export const createContainer = () => {
   );
   const profileController = new ProfileController(profileService);
 
+  const salaryRepository: ISalaryRepository = new SalaryRepository(pool);
+  const salaryService: ISalaryService = new SalaryService(
+    salaryRepository,
+    compensationService,
+    accessService,
+  );
+  const salaryController = new SalaryController(salaryService);
+
   const employeeRepository: IEmployeeRepository = new EmployeeRepository(pool);
   const employeeService: IEmployeeService = new EmployeeService(employeeRepository);
   const employeeController = new EmployeeController(employeeService);
+
+  const reimbursementRepository: IReimbursementRepository = new ReimbursementRepository(pool);
+  const reimbursementService: IReimbursementService = new ReimbursementService(
+    reimbursementRepository,
+    authService,
+  );
+  const reimbursementController = new ReimbursementController(reimbursementService);
+
+  const taxRepository: ITaxRepository = new TaxRepository(pool);
+  const taxService: ITaxService = new TaxService(
+    taxRepository,
+    compensationService,
+    accessService,
+  );
+  const taxController = new TaxController(taxService);
 
   return {
     authController,
@@ -167,6 +206,12 @@ export const createContainer = () => {
     projectsController,
     feedbackController,
     goalsController,
+    salaryController,
+    reimbursementController,
+    taxController,
+    taxService,
+    reimbursementService,
+    salaryService,
     policyService,
     compensationService,
     goalsService,

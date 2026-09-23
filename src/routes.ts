@@ -9,6 +9,9 @@ import { createEmployeeRouter } from './modules/employees/employee.routes';
 import { createLeaveRouter } from './modules/leave/leave.routes';
 import { createProfileRouter } from './modules/profile/profile.routes';
 import { createGoalsRouter } from './modules/goals/goals.routes';
+import { createSalaryRouter } from './modules/salary/salary.routes';
+import { createReimbursementRouter } from './modules/reimbursement/reimbursement.routes';
+import { createTaxRouter } from './modules/tax/tax.routes';
 
 export const createApiRouter = (container: Container): Router => {
   const router = Router();
@@ -22,6 +25,9 @@ export const createApiRouter = (container: Container): Router => {
   router.use('/projects', createProjectsRouter(container.projectsController));
   router.use('/feedback', createFeedbackRouter(container.feedbackController));
   router.use('/goals', createGoalsRouter(container.goalsController));
+  router.use('/salary', createSalaryRouter(container.salaryController));
+  router.use('/reimbursements', createReimbursementRouter(container.reimbursementController));
+  router.use('/tax', createTaxRouter(container.taxController));
 
   return router;
 };
