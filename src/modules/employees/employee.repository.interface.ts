@@ -1,6 +1,18 @@
-import { CreateEmployeeDto, Employee, UpdateEmployeeDto } from './employee.model';
+import {
+  CreateEmployeeDto,
+  CreateEmployeeRequestDto,
+  CreateEmployeeResult,
+  Employee,
+  EmployeeMetaDto,
+  UpdateEmployeeDto,
+} from './employee.model';
 
 export interface IEmployeeRepository {
+  getMeta(): Promise<EmployeeMetaDto>;
+  createEmployeeTransaction(
+    dto: CreateEmployeeRequestDto,
+    creatorId: number,
+  ): Promise<CreateEmployeeResult>;
   findAll(): Promise<Employee[]>;
   findById(id: number): Promise<Employee | null>;
   findByEmail(email: string): Promise<Employee | null>;

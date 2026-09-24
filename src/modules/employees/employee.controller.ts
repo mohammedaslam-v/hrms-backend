@@ -1,11 +1,28 @@
 import { RequestHandler } from 'express';
 import { IEmployeeService } from './employee.service.interface';
-import { CreateEmployeeDto, UpdateEmployeeDto } from './employee.model';
+import { CreateEmployeeDto, CreateEmployeeRequestDto, UpdateEmployeeDto } from './employee.model';
 import { ApiError } from '../../utils/api-error';
 import { asyncHandler } from '../../utils/async-handler';
+import { AuthenticatedRequest } from '../../middlewares/auth.middleware';
 
 export class EmployeeController {
   constructor(private readonly employeeService: IEmployeeService) {}
+
+  getMeta: RequestHandler = asyncHandler(async (_req, res) => {
+    const meta = await this.employeeService.getMeta();
+    res.json({ success: true, data: meta });
+  });
+
+  createFromForm: RequestHandler = asyncHandler(async (req, res) => {
+    const { employeeId } = req as AuthenticatedRequest;
+    const body = req.body as CreateEmployeeRequestDto;
+    const result = await this.employeeService.createEmployeeFromForm(employeeId, body);
+    res.status(201).json({
+      success: true,
+      data: result,
+      message: `Employee ${result.fullName} created successfully with code ${result.employeeCode}.`,
+    });
+  });
 
   getAll: RequestHandler = asyncHandler(async (_req, res) => {
     const employees = await this.employeeService.getAllEmployees();
@@ -19,6 +36,21 @@ export class EmployeeController {
   });
 
   create: RequestHandler = asyncHandler(async (req, res) => {
+    const body = req.body as Record<string, unknown>;
+    if ('ctc' in body || 'workEmail' in body) {
+      const { employeeId } = req as AuthenticatedRequest;
+      const result = await this.employeeService.createEmployeeFromForm(
+        employeeId,
+        body as unknown as CreateEmployeeRequestDto,
+      );
+      res.status(201).json({
+        success: true,
+        data: result,
+        message: `Employee ${result.fullName} created successfully with code ${result.employeeCode}.`,
+      });
+      return;
+    }
+
     const dto = this.toCreateDto(req.body);
     const employee = await this.employeeService.createEmployee(dto);
     res.status(201).json({ success: true, data: employee });
