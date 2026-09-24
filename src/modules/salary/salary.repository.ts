@@ -92,6 +92,18 @@ export class SalaryRepository implements ISalaryRepository {
     return rows;
   }
 
+  async findActiveLoans(employeeId: number): Promise<LoanRow[]> {
+    const [rows] = await this.pool.execute<LRow[]>(
+      `SELECT id, employee_id, purpose, principal, emi, interest_rate,
+              start_month, tenure_months, status
+         FROM hrms_employee_loans
+        WHERE employee_id = ? AND status = 'active'
+        ORDER BY id DESC`,
+      [employeeId],
+    );
+    return rows;
+  }
+
   async findActiveLoan(employeeId: number): Promise<LoanRow | null> {
     const [rows] = await this.pool.execute<LRow[]>(
       `SELECT id, employee_id, purpose, principal, emi, interest_rate,

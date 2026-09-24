@@ -53,40 +53,44 @@ export class SalaryService implements ISalaryService {
     const variablePay = comp?.variablePay || 0;
     const bonus = comp?.bonus || 0;
 
-    const activeLoan = await this.salaryRepository.findActiveLoan(subjectId);
+    const activeLoans = await this.salaryRepository.findActiveLoans(subjectId);
     let loanEmi = 0;
     let loanView: EmployeeLoanView | null = null;
 
-    if (activeLoan) {
-      const [sy, sm] = activeLoan.start_month.split("-").map(Number);
-      const monthsElapsed = (y - sy) * 12 + (m - sm);
-      if (monthsElapsed >= 0 && monthsElapsed < activeLoan.tenure_months) {
-        loanEmi = Number(activeLoan.emi);
+    if (activeLoans.length > 0) {
+      for (const al of activeLoans) {
+        const [sy, sm] = al.start_month.split("-").map(Number);
+        const monthsElapsed = (y - sy) * 12 + (m - sm);
+        if (monthsElapsed >= 0 && monthsElapsed < al.tenure_months) {
+          loanEmi += Number(al.emi);
+        }
       }
 
+      const primaryLoan = activeLoans[0];
+      const [sy, sm] = primaryLoan.start_month.split("-").map(Number);
       const totalMonthsElapsed = Math.max(0, (y - sy) * 12 + (m - sm) + 1);
-      const paidMonths = Math.min(activeLoan.tenure_months, totalMonthsElapsed);
-      const repaid = Math.min(Number(activeLoan.principal), paidMonths * Number(activeLoan.emi));
-      const outstanding = Math.max(0, Number(activeLoan.principal) - repaid);
+      const paidMonths = Math.min(primaryLoan.tenure_months, totalMonthsElapsed);
+      const repaid = Math.min(Number(primaryLoan.principal), paidMonths * Number(primaryLoan.emi));
+      const outstanding = Math.max(0, Number(primaryLoan.principal) - repaid);
 
-      const endM = sm + activeLoan.tenure_months - 1;
+      const endM = sm + primaryLoan.tenure_months - 1;
       const endYear = sy + Math.floor((endM - 1) / 12);
       const endMonthNum = ((endM - 1) % 12) + 1;
       const finalMonthKey = `${endYear}-${String(endMonthNum).padStart(2, "0")}`;
 
       loanView = {
-        id: activeLoan.id,
-        purpose: activeLoan.purpose,
-        principal: Number(activeLoan.principal),
-        emi: Number(activeLoan.emi),
-        interestRate: Number(activeLoan.interest_rate),
-        startMonth: activeLoan.start_month,
-        tenureMonths: activeLoan.tenure_months,
+        id: primaryLoan.id,
+        purpose: primaryLoan.purpose,
+        principal: Number(primaryLoan.principal),
+        emi: Number(primaryLoan.emi),
+        interestRate: Number(primaryLoan.interest_rate),
+        startMonth: primaryLoan.start_month,
+        tenureMonths: primaryLoan.tenure_months,
         paidMonths,
         repaidAmount: repaid,
         outstandingAmount: outstanding,
         finalMonth: monthLabel(finalMonthKey),
-        status: activeLoan.status,
+        status: primaryLoan.status,
       };
     }
 

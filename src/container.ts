@@ -75,6 +75,12 @@ import { ITaxService } from './modules/tax/tax.service.interface';
 import { TaxRepository } from './modules/tax/tax.repository';
 import { TaxService } from './modules/tax/tax.service';
 import { TaxController } from './modules/tax/tax.controller';
+import { ILoanRepository } from './modules/loans/loan.repository.interface';
+import { ILoanService } from './modules/loans/loan.service.interface';
+import { LoanRepository } from './modules/loans/loan.repository';
+import { LoanService } from './modules/loans/loan.service';
+import { LoanController } from './modules/loans/loan.controller';
+
 
 export const createContainer = () => {
   const pool = getPool();
@@ -178,7 +184,7 @@ export const createContainer = () => {
   const salaryController = new SalaryController(salaryService);
 
   const employeeRepository: IEmployeeRepository = new EmployeeRepository(pool);
-  const employeeService: IEmployeeService = new EmployeeService(employeeRepository);
+  const employeeService: IEmployeeService = new EmployeeService(employeeRepository, authService);
   const employeeController = new EmployeeController(employeeService);
 
   const reimbursementRepository: IReimbursementRepository = new ReimbursementRepository(pool);
@@ -196,6 +202,11 @@ export const createContainer = () => {
   );
   const taxController = new TaxController(taxService);
 
+  const loanRepository: ILoanRepository = new LoanRepository(pool);
+  const loanService: ILoanService = new LoanService(loanRepository, authService);
+  const loanController = new LoanController(loanService);
+
+
   return {
     authController,
     leaveController,
@@ -209,6 +220,8 @@ export const createContainer = () => {
     salaryController,
     reimbursementController,
     taxController,
+    loanController,
+    loanService,
     taxService,
     reimbursementService,
     salaryService,

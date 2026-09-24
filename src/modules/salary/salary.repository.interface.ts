@@ -56,5 +56,6 @@ export interface ISalaryRepository {
   findFrozenPayslip(employeeId: number, payMonth: string): Promise<FrozenPayslipRow | null>;
   findFrozenHistory(employeeId: number): Promise<FrozenPayslipRow[]>;
   findActiveLoan(employeeId: number): Promise<LoanRow | null>;
+  findActiveLoans(employeeId: number): Promise<LoanRow[]>;
   findApprovedLopDays(employeeId: number, payMonth: string): Promise<number>;
 }

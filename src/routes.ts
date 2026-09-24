@@ -12,6 +12,7 @@ import { createGoalsRouter } from './modules/goals/goals.routes';
 import { createSalaryRouter } from './modules/salary/salary.routes';
 import { createReimbursementRouter } from './modules/reimbursement/reimbursement.routes';
 import { createTaxRouter } from './modules/tax/tax.routes';
+import { createLoanRouter } from './modules/loans/loan.routes';
 
 export const createApiRouter = (container: Container): Router => {
   const router = Router();
@@ -28,6 +29,7 @@ export const createApiRouter = (container: Container): Router => {
   router.use('/salary', createSalaryRouter(container.salaryController));
   router.use('/reimbursements', createReimbursementRouter(container.reimbursementController));
   router.use('/tax', createTaxRouter(container.taxController));
+  router.use('/loans', createLoanRouter(container.loanController));
 
   return router;
 };
