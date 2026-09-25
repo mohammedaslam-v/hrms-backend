@@ -1,4 +1,4 @@
-export type LoanStatus = 'active' | 'closed' | 'cancelled';
+export type LoanStatus = 'active' | 'closed' | 'cancelled' | 'pending_disbursement' | 'disbursement_failed';
 
 export interface LoanRepaymentScheduleItem {
   monthKey: string;
@@ -17,6 +17,8 @@ export interface EmployeeLoan {
   startMonth: string;
   tenureMonths: number;
   status: LoanStatus;
+  disbursementPayoutId?: number | null;
+  disbursedAt?: string | null;
   closedAt: string | null;
   closedBy: number | null;
   closedReason: string | null;
