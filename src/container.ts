@@ -1,3 +1,13 @@
+import { PayoutRepository } from './modules/payout/payout.repository';
+import { IPayoutRepository } from './modules/payout/payout.repository.interface';
+import { PayoutService } from './modules/payout/payout.service';
+import { IPayoutService } from './modules/payout/payout.service.interface';
+import { PayoutController } from './modules/payout/payout.controller';
+import { PayrollRepository } from './modules/payroll/payroll.repository';
+import { IPayrollRepository } from './modules/payroll/payroll.repository.interface';
+import { PayrollService } from './modules/payroll/payroll.service';
+import { IPayrollService } from './modules/payroll/payroll.service.interface';
+import { PayrollController } from './modules/payroll/payroll.controller';
 import { getPool } from './config/database';
 import { DatabaseClock, IClock } from './shared/clock';
 import { AttendanceController } from './modules/attendance/attendance.controller';
@@ -206,6 +216,15 @@ export const createContainer = () => {
   const loanService: ILoanService = new LoanService(loanRepository, authService);
   const loanController = new LoanController(loanService);
 
+  const payoutRepository: IPayoutRepository = new PayoutRepository(pool);
+  const payoutService: IPayoutService = new PayoutService(payoutRepository, salaryService);
+  const payoutController = new PayoutController(payoutService);
+
+  const payrollRepository: IPayrollRepository = new PayrollRepository(pool);
+  const payrollService: IPayrollService = new PayrollService(payrollRepository, salaryService);
+  const payrollController = new PayrollController(payrollService);
+
+
 
   return {
     authController,
@@ -221,6 +240,10 @@ export const createContainer = () => {
     reimbursementController,
     taxController,
     loanController,
+    payoutController,
+    payrollController,
+    payoutService,
+    payrollService,
     loanService,
     taxService,
     reimbursementService,

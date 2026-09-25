@@ -1,3 +1,5 @@
+import { createPayoutRouter } from './modules/payout/payout.routes';
+import { createPayrollRouter } from './modules/payroll/payroll.routes';
 import { Router } from 'express';
 import { Container } from './container';
 import { createAttendanceRouter } from './modules/attendance/attendance.routes';
@@ -30,6 +32,8 @@ export const createApiRouter = (container: Container): Router => {
   router.use('/reimbursements', createReimbursementRouter(container.reimbursementController));
   router.use('/tax', createTaxRouter(container.taxController));
   router.use('/loans', createLoanRouter(container.loanController));
+  router.use('/payouts', createPayoutRouter(container.payoutController));
+  router.use('/payroll', createPayrollRouter(container.payrollController));
 
   return router;
 };
