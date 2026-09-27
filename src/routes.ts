@@ -1,3 +1,4 @@
+import { createReportsRouter } from './modules/reports/reports.routes';
 import { createPayoutRouter } from './modules/payout/payout.routes';
 import { createPayrollRouter } from './modules/payroll/payroll.routes';
 import { Router } from 'express';
@@ -6,6 +7,7 @@ import { createAttendanceRouter } from './modules/attendance/attendance.routes';
 import { createFeedbackRouter } from './modules/feedback/feedback.routes';
 import { createProjectsRouter } from './modules/projects/projects.routes';
 import { createTeamRouter } from './modules/team/team.routes';
+import { createDashboardRouter } from './modules/dashboard/dashboard.routes';
 import { createAuthRouter } from './modules/auth/auth.routes';
 import { createEmployeeRouter } from './modules/employees/employee.routes';
 import { createLeaveRouter } from './modules/leave/leave.routes';
@@ -25,6 +27,7 @@ export const createApiRouter = (container: Container): Router => {
   router.use('/profile', createProfileRouter(container.profileController));
   router.use('/attendance', createAttendanceRouter(container.attendanceController));
   router.use('/team', createTeamRouter(container.teamController));
+  router.use('/dashboard', createDashboardRouter(container.dashboardController));
   router.use('/projects', createProjectsRouter(container.projectsController));
   router.use('/feedback', createFeedbackRouter(container.feedbackController));
   router.use('/goals', createGoalsRouter(container.goalsController));
@@ -34,6 +37,7 @@ export const createApiRouter = (container: Container): Router => {
   router.use('/loans', createLoanRouter(container.loanController));
   router.use('/payouts', createPayoutRouter(container.payoutController));
   router.use('/payroll', createPayrollRouter(container.payrollController));
+  router.use('/reports', createReportsRouter(container.reportsController));
 
   return router;
 };

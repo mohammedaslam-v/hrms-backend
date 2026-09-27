@@ -1,3 +1,8 @@
+import { ReportsRepository } from './modules/reports/reports.repository';
+import { IReportsRepository } from './modules/reports/reports.repository.interface';
+import { ReportsService } from './modules/reports/reports.service';
+import { IReportsService } from './modules/reports/reports.service.interface';
+import { ReportsController } from './modules/reports/reports.controller';
 import { PayoutRepository } from './modules/payout/payout.repository';
 import { IPayoutRepository } from './modules/payout/payout.repository.interface';
 import { PayoutService } from './modules/payout/payout.service';
@@ -25,6 +30,7 @@ import { ICompensationRepository } from './modules/compensation/compensation.rep
 import { IFeedbackRepository } from './modules/feedback/feedback.repository.interface';
 import { IGoalsRepository } from './modules/goals/goals.repository.interface';
 import { ITeamService } from './modules/team/team.service.interface';
+import { IDashboardService } from './modules/dashboard/dashboard.service.interface';
 import { IProjectsRepository } from './modules/projects/projects.repository.interface';
 import { IPolicyRepository } from './modules/policy/policy.repository.interface';
 import { IProfileRepository } from './modules/profile/profile.repository.interface';
@@ -52,6 +58,8 @@ import { GoalsRepository } from './modules/goals/goals.repository';
 import { ProjectsController } from './modules/projects/projects.controller';
 import { TeamController } from './modules/team/team.controller';
 import { TeamService } from './modules/team/team.service';
+import { DashboardService } from './modules/dashboard/dashboard.service';
+import { DashboardController } from './modules/dashboard/dashboard.controller';
 import { ProjectsRepository } from './modules/projects/projects.repository';
 import { PolicyRepository } from './modules/policy/policy.repository';
 import { ProfileRepository } from './modules/profile/profile.repository';
@@ -171,6 +179,18 @@ export const createContainer = () => {
   );
   const attendanceController = new AttendanceController(attendanceService);
 
+  // The operations dashboard owns no table — it composes the roster, attendance,
+  // leave and goals. Wired last of the group because it depends on all of them.
+  const dashboardService: IDashboardService = new DashboardService(
+    orgRepository,
+    attendanceRepository,
+    leaveRepository,
+    goalsRepository,
+    policyService,
+    authService,
+  );
+  const dashboardController = new DashboardController(dashboardService);
+
   // My page reads its own record but borrows the leave balance, so the profile
   // service depends on the leave service rather than re-deriving the number.
   const profileRepository: IProfileRepository = new ProfileRepository(pool);
@@ -209,6 +229,7 @@ export const createContainer = () => {
     taxRepository,
     compensationService,
     accessService,
+    authService,
   );
   const taxController = new TaxController(taxService);
 
@@ -224,6 +245,10 @@ export const createContainer = () => {
   const payrollService: IPayrollService = new PayrollService(payrollRepository, salaryService);
   const payrollController = new PayrollController(payrollService);
 
+  const reportsRepository: IReportsRepository = new ReportsRepository(pool);
+  const reportsService: IReportsService = new ReportsService(reportsRepository, compensationService);
+  const reportsController = new ReportsController(reportsService);
+
 
 
   return {
@@ -233,6 +258,7 @@ export const createContainer = () => {
     employeeController,
     attendanceController,
     teamController,
+    dashboardController,
     projectsController,
     feedbackController,
     goalsController,
@@ -242,6 +268,8 @@ export const createContainer = () => {
     loanController,
     payoutController,
     payrollController,
+    reportsController,
+    reportsService,
     payoutService,
     payrollService,
     loanService,
@@ -252,6 +280,7 @@ export const createContainer = () => {
     compensationService,
     goalsService,
     teamService,
+    dashboardService,
   };
 };
 
