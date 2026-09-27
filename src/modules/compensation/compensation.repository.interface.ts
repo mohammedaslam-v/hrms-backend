@@ -20,4 +20,8 @@ export interface ICompensationRepository {
    * revisions in a career, so even the whole company is a small result.
    */
   findHistoryForMany(employeeIds: number[]): Promise<Map<number, CompensationRecord[]>>;
+  addRevision(
+    record: Omit<CompensationRecord, "id" | "createdAt">,
+    createdBy: number,
+  ): Promise<CompensationRecord>;
 }

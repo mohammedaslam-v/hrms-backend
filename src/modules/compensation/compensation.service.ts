@@ -38,4 +38,10 @@ export class CompensationService implements ICompensationService {
     // this process's clock is not the one the dates were written against.
     return compensationOn(history, await this.clock.today());
   }
+  async recordRevision(
+    record: Omit<CompensationRecord, 'id' | 'createdAt'>,
+    createdBy: number,
+  ): Promise<CompensationRecord> {
+    return this.compensationRepository.addRevision(record, createdBy);
+  }
 }

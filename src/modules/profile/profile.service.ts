@@ -22,6 +22,7 @@ import {
   ProfileView,
   SaveDocumentDto,
   ToggleSalaryDto,
+  UpdateCompensationDto,
 } from './profile.model';
 import { ApiError } from '../../utils/api-error';
 
@@ -402,5 +403,39 @@ export class ProfileService implements IProfileService {
       exitNotes: record.exitNotes,
       deletedAt: record.deletedAt,
     };
+  }
+  async updateCompensation(
+    viewerId: number,
+    subjectId: number,
+    dto: UpdateCompensationDto,
+  ): Promise<CompensationView> {
+    const viewerRecord = await this.profileRepository.findProfile(viewerId);
+    const access = await this.accessService.require(viewerId, subjectId);
+    const isAdmin = access === "admin" || (viewerRecord && viewerRecord.adminId !== null);
+    if (!isAdmin) {
+      throw ApiError.forbidden("Only administrators can update employee compensation.");
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+    const effectiveFrom =
+      dto.effectiveFrom && /^\d{4}-\d{2}-\d{2}$/.test(dto.effectiveFrom)
+        ? dto.effectiveFrom
+        : today;
+
+    const record = await this.compensationService.recordRevision(
+      {
+        employeeId: subjectId,
+        effectiveFrom,
+        ctc: Math.round(Number(dto.ctc)),
+        variablePay: Math.round(Number(dto.variablePay || 0)),
+        bonus: Math.round(Number(dto.bonus || 0)),
+        esopUnits: Math.round(Number(dto.esopUnits || 0)),
+        esopVestedPct: Number(dto.esopVestedPct || 0),
+        revisionNote: dto.revisionNote || null,
+      },
+      viewerId,
+    );
+
+    return toCompensationView(record);
   }
 }

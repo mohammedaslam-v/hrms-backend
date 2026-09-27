@@ -45,6 +45,13 @@ export const env = {
     apiKey: process.env.HELTAR_API_KEY ?? '',
     enabled: (process.env.HELTAR_ENABLED ?? 'true') !== 'false',
   },
+  razorpay: {
+    key: process.env.RAZORPAY_KEY ?? '',
+    secret: process.env.RAZORPAY_SECRET ?? '',
+    account: process.env.RAZORPAY_ACCOUNT ?? '',
+    webhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET ?? '',
+    mode: (process.env.RAZORPAY_MODE ?? 'mock') as 'live' | 'test' | 'mock',
+  },
   corsOrigin: required('CORS_ORIGIN', 'http://localhost:5173'),
 } as const;
 

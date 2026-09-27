@@ -1,3 +1,13 @@
+import { PayoutRepository } from './modules/payout/payout.repository';
+import { IPayoutRepository } from './modules/payout/payout.repository.interface';
+import { PayoutService } from './modules/payout/payout.service';
+import { IPayoutService } from './modules/payout/payout.service.interface';
+import { PayoutController } from './modules/payout/payout.controller';
+import { PayrollRepository } from './modules/payroll/payroll.repository';
+import { IPayrollRepository } from './modules/payroll/payroll.repository.interface';
+import { PayrollService } from './modules/payroll/payroll.service';
+import { IPayrollService } from './modules/payroll/payroll.service.interface';
+import { PayrollController } from './modules/payroll/payroll.controller';
 import { getPool } from './config/database';
 import { DatabaseClock, IClock } from './shared/clock';
 import { AttendanceController } from './modules/attendance/attendance.controller';
@@ -60,6 +70,28 @@ import { EmployeeService } from './modules/employees/employee.service';
 
 // Composition root: the only place where concrete implementations are chosen.
 // Every layer depends on interfaces, wired here via constructor injection.
+import { ISalaryRepository } from './modules/salary/salary.repository.interface';
+import { ISalaryService } from './modules/salary/salary.service.interface';
+import { SalaryRepository } from './modules/salary/salary.repository';
+import { SalaryService } from './modules/salary/salary.service';
+import { SalaryController } from './modules/salary/salary.controller';
+import { IReimbursementRepository } from './modules/reimbursement/reimbursement.repository.interface';
+import { IReimbursementService } from './modules/reimbursement/reimbursement.service.interface';
+import { ReimbursementRepository } from './modules/reimbursement/reimbursement.repository';
+import { ReimbursementService } from './modules/reimbursement/reimbursement.service';
+import { ReimbursementController } from './modules/reimbursement/reimbursement.controller';
+import { ITaxRepository } from './modules/tax/tax.repository.interface';
+import { ITaxService } from './modules/tax/tax.service.interface';
+import { TaxRepository } from './modules/tax/tax.repository';
+import { TaxService } from './modules/tax/tax.service';
+import { TaxController } from './modules/tax/tax.controller';
+import { ILoanRepository } from './modules/loans/loan.repository.interface';
+import { ILoanService } from './modules/loans/loan.service.interface';
+import { LoanRepository } from './modules/loans/loan.repository';
+import { LoanService } from './modules/loans/loan.service';
+import { LoanController } from './modules/loans/loan.controller';
+
+
 export const createContainer = () => {
   const pool = getPool();
 
@@ -153,9 +185,46 @@ export const createContainer = () => {
   );
   const profileController = new ProfileController(profileService);
 
+  const salaryRepository: ISalaryRepository = new SalaryRepository(pool);
+  const salaryService: ISalaryService = new SalaryService(
+    salaryRepository,
+    compensationService,
+    accessService,
+  );
+  const salaryController = new SalaryController(salaryService);
+
   const employeeRepository: IEmployeeRepository = new EmployeeRepository(pool);
-  const employeeService: IEmployeeService = new EmployeeService(employeeRepository);
+  const employeeService: IEmployeeService = new EmployeeService(employeeRepository, authService);
   const employeeController = new EmployeeController(employeeService);
+
+  const reimbursementRepository: IReimbursementRepository = new ReimbursementRepository(pool);
+  const reimbursementService: IReimbursementService = new ReimbursementService(
+    reimbursementRepository,
+    authService,
+  );
+  const reimbursementController = new ReimbursementController(reimbursementService);
+
+  const taxRepository: ITaxRepository = new TaxRepository(pool);
+  const taxService: ITaxService = new TaxService(
+    taxRepository,
+    compensationService,
+    accessService,
+  );
+  const taxController = new TaxController(taxService);
+
+  const loanRepository: ILoanRepository = new LoanRepository(pool);
+  const loanService: ILoanService = new LoanService(loanRepository, authService);
+  const loanController = new LoanController(loanService);
+
+  const payoutRepository: IPayoutRepository = new PayoutRepository(pool);
+  const payoutService: IPayoutService = new PayoutService(payoutRepository, salaryService);
+  const payoutController = new PayoutController(payoutService);
+
+  const payrollRepository: IPayrollRepository = new PayrollRepository(pool);
+  const payrollService: IPayrollService = new PayrollService(payrollRepository, salaryService);
+  const payrollController = new PayrollController(payrollService);
+
+
 
   return {
     authController,
@@ -167,6 +236,18 @@ export const createContainer = () => {
     projectsController,
     feedbackController,
     goalsController,
+    salaryController,
+    reimbursementController,
+    taxController,
+    loanController,
+    payoutController,
+    payrollController,
+    payoutService,
+    payrollService,
+    loanService,
+    taxService,
+    reimbursementService,
+    salaryService,
     policyService,
     compensationService,
     goalsService,

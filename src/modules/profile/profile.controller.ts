@@ -115,6 +115,23 @@ export class ProfileController {
     });
   });
 
+  updateCompensation: RequestHandler = asyncHandler(async (req, res) => {
+    const { employeeId } = req as AuthenticatedRequest;
+    const subjectId = req.params.id ? this.readId(req.params.id) : employeeId;
+
+    const result = await this.profileService.updateCompensation(
+      employeeId,
+      subjectId,
+      req.body,
+    );
+
+    res.json({
+      success: true,
+      message: "Compensation updated successfully.",
+      data: result,
+    });
+  });
+
   private readId(raw: unknown): number {
     const id = Number(raw);
     if (!Number.isInteger(id) || id <= 0) {
