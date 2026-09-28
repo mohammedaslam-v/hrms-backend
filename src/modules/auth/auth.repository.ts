@@ -144,11 +144,18 @@ export class AuthRepository implements IAuthRepository {
     await this.pool.execute(`UPDATE admins SET password = ? WHERE id = ?`, [passwordHash, adminId]);
   }
 
+  /**
+   * expires_at is set from NOW() rather than a bound JS Date. mysql2 serialises a
+   * Date as the Node process's local wall-clock time with no offset, and the DB
+   * session runs in a different zone (+05:30 vs UTC) — so a Date-derived expiry
+   * landed 5h30m in the past and every code was dead on arrival. It is compared
+   * against NOW() in findOtpByChallenge, so it must be written from NOW() too.
+   */
   async createOtp(input: CreateOtpInput): Promise<void> {
     await this.pool.execute(
       `INSERT INTO hrms_login_otps
          (challenge_token, employee_id, purpose, code_hash, max_attempts, sent_to, expires_at, ip_address)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, NOW() + INTERVAL ? MINUTE, ?)`,
       [
         input.challengeToken,
         input.employeeId,
@@ -156,7 +163,7 @@ export class AuthRepository implements IAuthRepository {
         input.codeHash,
         input.maxAttempts,
         input.sentTo,
-        input.expiresAt,
+        input.ttlMinutes,
         input.ipAddress,
       ],
     );
@@ -277,13 +284,14 @@ export class AuthRepository implements IAuthRepository {
   async createSession(
     employeeId: number,
     refreshTokenHash: string,
-    expiresAt: Date,
+    ttlDays: number,
     context: SessionContext,
   ): Promise<number> {
+    // Database clock for the same reason as createOtp: it is checked against NOW().
     const [result] = await this.pool.execute<ResultSetHeader>(
       `INSERT INTO hrms_sessions (employee_id, refresh_token_hash, expires_at, user_agent, ip_address)
-       VALUES (?, ?, ?, ?, ?)`,
-      [employeeId, refreshTokenHash, expiresAt, context.userAgent, context.ipAddress],
+       VALUES (?, ?, NOW() + INTERVAL ? DAY, ?, ?)`,
+      [employeeId, refreshTokenHash, ttlDays, context.userAgent, context.ipAddress],
     );
     return result.insertId;
   }

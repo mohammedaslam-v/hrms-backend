@@ -52,7 +52,7 @@ export class OtpService implements IOtpService {
       codeHash: hashCode(code),
       maxAttempts: env.otp.maxAttempts,
       sentTo: masked,
-      expiresAt,
+      ttlMinutes: env.otp.ttlMinutes,
       ipAddress,
     });
 
