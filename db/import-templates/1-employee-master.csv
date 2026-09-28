@@ -1,0 +1,3 @@
+work_email,employee_code,department,designation,manager_work_email,employment_type,work_mode,work_state,shift_start,shift_end,weekly_off,date_of_joining,date_of_leaving,uan,opening_leave,hrms_role
+priya.sharma@bambinos.live,BAM-014,Sales,Senior Sales Manager,ashish@bambinos.live,Full-time,WFO,Karnataka,10:00,19:00,Sun,2024-06-17,,100987654321,4.5,employee
+rahul.verma@bambinos.live,BAM-021,Tech,Backend Engineer,sajan@bambinos.live,Full-time,WFH,Uttar Pradesh,11:00,20:00,"Sat,Sun",2025-01-06,,101234567890,0,employee

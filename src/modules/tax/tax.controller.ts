@@ -27,4 +27,11 @@ export class TaxController {
     }
     return id;
   }
+
+  /** The company-wide register. Admin only — the service enforces it. */
+  getCompanyRegister: RequestHandler = asyncHandler(async (req, res) => {
+    const { employeeId } = req as AuthenticatedRequest;
+    const data = await this.taxService.getCompanyRegister(employeeId);
+    res.json({ success: true, data });
+  });
 }

@@ -154,6 +154,130 @@ export class AttendanceRepository implements IAttendanceRepository {
     return byDate;
   }
 
+  // ----------------------------------------------------------- roster reads
+  //
+  // One query per concern for a whole roster, rather than four queries per
+  // person. Every one of these returns a map keyed by employee id, and a
+  // missing key means "no row", never an error — a roster always contains
+  // people who did nothing today.
+  //
+  // `?` cannot bind a list in mysql2, so the ids are inlined. They come from
+  // org.findRoster and are database-generated integers, never user input, and
+  // each one is coerced with Number() before it reaches the string.
+
+  private static idList(employeeIds: number[]): string {
+    return employeeIds.map((id) => Number(id)).filter(Number.isInteger).join(',');
+  }
+
+  async findSchedulesFor(employeeIds: number[]): Promise<Map<number, WorkSchedule>> {
+    const byId = new Map<number, WorkSchedule>();
+    if (employeeIds.length === 0) return byId;
+
+    const [rows] = await this.pool.query<(ScheduleRow & { id: number })[]>(
+      `SELECT e.id, e.shift_start, e.shift_end, e.weekly_off, e.date_of_leaving,
+              a.role AS portal_role
+         FROM hrms_employees e
+         LEFT JOIN admins a ON a.id = e.admin_id AND a.deleted_at IS NULL
+        WHERE e.id IN (${AttendanceRepository.idList(employeeIds)})`,
+    );
+
+    for (const row of rows) {
+      byId.set(row.id, {
+        shiftStart: row.shift_start.slice(0, 5),
+        shiftEnd: row.shift_end.slice(0, 5),
+        weeklyOff: row.weekly_off ? row.weekly_off.split(',').filter(Boolean) : [],
+        dateOfLeaving: row.date_of_leaving,
+        portalRole: row.portal_role,
+      });
+    }
+    return byId;
+  }
+
+  async findByDateFor(
+    employeeIds: number[],
+    date: string,
+  ): Promise<Map<number, AttendanceRecord>> {
+    const byId = new Map<number, AttendanceRecord>();
+    if (employeeIds.length === 0) return byId;
+
+    const [rows] = await this.pool.query<AttendanceRow[]>(
+      `SELECT ${COLUMNS}
+         FROM hrms_attendance
+        WHERE att_date = ? AND employee_id IN (${AttendanceRepository.idList(employeeIds)})`,
+      [date],
+    );
+
+    for (const row of rows) byId.set(row.employee_id, mapRecord(row));
+    return byId;
+  }
+
+  async findActivitySlotsFor(
+    employeeIds: number[],
+    from: string,
+    to: string,
+  ): Promise<Map<number, Map<string, SlotMask>>> {
+    const byEmployee = new Map<number, Map<string, SlotMask>>();
+    if (employeeIds.length === 0) return byEmployee;
+
+    const [rows] = await this.pool.query<(ActivityRow & { employee_id: number })[]>(
+      `SELECT e.id AS employee_id, a.act_date, a.slot_mask
+         FROM hrms_activity_day a
+         JOIN hrms_employees e ON e.admin_id = a.admin_id
+        WHERE a.act_date BETWEEN ? AND ?
+          AND e.id IN (${AttendanceRepository.idList(employeeIds)})`,
+      [from, to],
+    );
+
+    for (const row of rows) {
+      let days = byEmployee.get(row.employee_id);
+      if (!days) {
+        days = new Map<string, SlotMask>();
+        byEmployee.set(row.employee_id, days);
+      }
+      days.set(row.act_date, row.slot_mask ? BigInt(row.slot_mask) : EMPTY_SLOTS);
+    }
+    return byEmployee;
+  }
+
+  async findDayContextFor(
+    employeeIds: number[],
+    date: string,
+  ): Promise<Map<number, DayContext>> {
+    const byId = new Map<number, DayContext>();
+    if (employeeIds.length === 0) return byId;
+
+    // The holiday is company-wide, so it is read once rather than per person.
+    const [holidayRows] = await this.pool.execute<HolidayRow[]>(
+      `SELECT holiday_date, name FROM hrms_holidays WHERE holiday_date = ? LIMIT 1`,
+      [date],
+    );
+    const holidayName = holidayRows[0]?.name ?? null;
+
+    const [leaveRows] = await this.pool.query<
+      (LeaveSpanRow & { employee_id: number })[]
+    >(
+      `SELECT employee_id, from_date, to_date, leave_type, is_half_day
+         FROM hrms_leave_requests
+        WHERE status = 'Approved'
+          AND ? BETWEEN from_date AND to_date
+          AND employee_id IN (${AttendanceRepository.idList(employeeIds)})`,
+      [date],
+    );
+
+    const leaveByEmployee = new Map<number, { type: LeaveType; isHalfDay: boolean }>();
+    for (const row of leaveRows) {
+      leaveByEmployee.set(row.employee_id, {
+        type: row.leave_type,
+        isHalfDay: row.is_half_day === 1,
+      });
+    }
+
+    for (const id of employeeIds) {
+      byId.set(id, { holidayName, leave: leaveByEmployee.get(id) ?? null });
+    }
+    return byId;
+  }
+
   async findDayContext(employeeId: number, date: string): Promise<DayContext> {
     // Both facts in one round trip. The holiday side is a company-wide lookup
     // and normally finds nothing — Bambinos declares none — while the leave side

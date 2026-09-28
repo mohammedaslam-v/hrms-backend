@@ -25,6 +25,24 @@ export interface IAttendanceRepository {
    */
   findActivitySlots(employeeId: number, from: string, to: string): Promise<Map<string, SlotMask>>;
 
+  /**
+   * The same four facts as the single-employee reads, for a whole roster on one
+   * date, in one query each.
+   *
+   * The dashboard resolves today for up to 450 people at once. Calling the
+   * per-employee methods in a loop would be four queries per person — around
+   * 1,800 round trips for one page load. These return maps keyed by employee id;
+   * anyone absent from a map simply had no row.
+   */
+  findSchedulesFor(employeeIds: number[]): Promise<Map<number, WorkSchedule>>;
+  findByDateFor(employeeIds: number[], date: string): Promise<Map<number, AttendanceRecord>>;
+  findActivitySlotsFor(
+    employeeIds: number[],
+    from: string,
+    to: string,
+  ): Promise<Map<number, Map<string, SlotMask>>>;
+  findDayContextFor(employeeIds: number[], date: string): Promise<Map<number, DayContext>>;
+
   /** Declared closure and approved leave for one day, in a single round trip. */
   findDayContext(employeeId: number, date: string): Promise<DayContext>;
 
