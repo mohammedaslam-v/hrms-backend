@@ -72,14 +72,25 @@ export class ReportsRepository implements IReportsRepository {
 
   async findActiveEmployees(department?: string): Promise<RawEmployeeRow[]> {
     const selectFields = await this.buildEmployeeSelect();
+    const hasStatus = await this.hasColumn('hrms_employees', 'status');
+    const hasIsActive = await this.hasColumn('hrms_employees', 'is_active');
+
     const params: any[] = [];
     let sql = `
       SELECT ${selectFields}
         FROM hrms_employees e
         LEFT JOIN hrms_employees m ON m.id = e.manager_id
        WHERE e.deleted_at IS NULL
-         AND (e.date_of_leaving IS NULL OR e.date_of_leaving > CURRENT_DATE())
+         AND (e.date_of_leaving IS NULL OR e.date_of_leaving >= CURRENT_DATE())
     `;
+
+    if (hasStatus) {
+      sql += " AND (e.status IS NULL OR LOWER(e.status) = 'active')";
+    }
+    if (hasIsActive) {
+      sql += " AND (e.is_active IS NULL OR e.is_active = 1)";
+    }
+
     if (department && department !== 'ALL') {
       sql += ' AND e.department = ?';
       params.push(department);
