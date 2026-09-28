@@ -71,7 +71,7 @@ function resolveRange(filter: ReportFilterDto): { from: string; to: string; labe
     return { from: fromStr, to: toStr, label: `Week of ${formatDisplayDate(fromStr)} — ${formatDisplayDate(toStr)}` };
   }
   if (p === 'monthly') {
-    const m = filter.month || '2026-08';
+    const m = filter.month || '2026-09';
     return { from: `${m}-01`, to: getLastDayOfMonth(m), label: formatMonthLabel(m) };
   }
   if (p === 'range') {
@@ -360,7 +360,7 @@ export class ReportsService implements IReportsService {
         reportTitle: 'Attendance — day by day',
         periodLabel: range.label,
         generatedAt: new Date().toISOString(),
-        totalRecords: rows.length,
+        totalRecords: employees.length,
       },
       columns,
       rows,
