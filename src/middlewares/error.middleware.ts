@@ -9,6 +9,7 @@ export const notFoundHandler = (req: Request, res: Response): void => {
   });
 };
 
+//gl
 export const errorHandler = (
   err: Error,
   _req: Request,

@@ -14,7 +14,8 @@ export interface CreateOtpInput {
   codeHash: string;
   maxAttempts: number;
   sentTo: string;
-  expiresAt: Date;
+  /** Expiry is computed from the database clock, never a JS Date — see createOtp. */
+  ttlMinutes: number;
   ipAddress: string | null;
 }
 
@@ -57,7 +58,7 @@ export interface IAuthRepository {
   createSession(
     employeeId: number,
     refreshTokenHash: string,
-    expiresAt: Date,
+    ttlDays: number,
     context: SessionContext,
   ): Promise<number>;
 

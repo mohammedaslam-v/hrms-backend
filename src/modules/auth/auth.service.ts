@@ -307,7 +307,7 @@ export class AuthService implements IAuthService {
     await this.authRepository.createSession(
       employeeId,
       hashToken(refreshToken),
-      refreshTokenExpiresAt,
+      env.auth.refreshTokenTtlDays,
       context,
     );
 

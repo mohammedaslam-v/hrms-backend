@@ -1,0 +1,12 @@
+node_modules
+dist
+uploads
+.env*
+!.env.example
+.git
+.gitignore
+.gcloudignore
+*.log
+.DS_Store
+db/003-leave-year-and-test-data.sql
+db/seed-dev.sql
