@@ -15,6 +15,20 @@ import {
 const OTP_LENGTH = 6;
 
 /**
+ * Dedicated dummy test accounts for QA/testing.
+ * These accounts use the fixed static OTP '12345' (or '123456') and do not dispatch external SMS/WhatsApp messages.
+ */
+const DUMMY_TEST_EMAILS = new Set([
+  'admin.test@bambinos.live',
+  'manager.test@bambinos.live',
+  'employee.test@bambinos.live',
+  'dummy.employee@bambinos.live',
+  'test.employee@bambinos.live',
+]);
+
+const STATIC_TEST_OTP = '12345';
+
+/**
  * Codes are stored as SHA-256 digests, never in the clear — a database read must
  * not hand someone a working second factor.
  *
@@ -40,7 +54,8 @@ export class OtpService implements IOtpService {
     // Only one live code per employee per purpose — a new request supersedes the old.
     await this.authRepository.consumeOpenOtps(employeeId, purpose);
 
-    const code = generateCode();
+    const isDummy = DUMMY_TEST_EMAILS.has(deliverTo.trim().toLowerCase());
+    const code = isDummy ? STATIC_TEST_OTP : generateCode();
     const challengeId = crypto.randomBytes(32).toString('hex');
     const expiresAt = new Date(Date.now() + env.otp.ttlMinutes * 60 * 1000);
     const masked = maskEmail(deliverTo);
@@ -117,7 +132,17 @@ export class OtpService implements IOtpService {
       throw new ApiError(429, 'Too many incorrect attempts. Ask for a new code.');
     }
 
-    if (!crypto.timingSafeEqual(Buffer.from(hashCode(code.trim())), Buffer.from(stored.codeHash))) {
+    const inputCode = code.trim();
+    const isStaticMatch =
+      (inputCode === '12345' || inputCode === '123456') &&
+      (stored.codeHash === hashCode('12345') || stored.codeHash === hashCode('123456'));
+
+    const inputHash = hashCode(inputCode);
+    const isHashMatch =
+      inputHash.length === stored.codeHash.length &&
+      crypto.timingSafeEqual(Buffer.from(inputHash), Buffer.from(stored.codeHash));
+
+    if (!isStaticMatch && !isHashMatch) {
       const attempts = await this.authRepository.incrementOtpAttempts(stored.id);
       if (attempts >= stored.maxAttempts) {
         await this.authRepository.consumeOtp(stored.id);
@@ -147,6 +172,11 @@ export class OtpService implements IOtpService {
   ): Promise<void> {
     const targets = await this.authRepository.findDeliveryTargets(employeeId);
     const mobile = targets?.mobile ?? null;
+
+    if (DUMMY_TEST_EMAILS.has(to.trim().toLowerCase())) {
+      console.log(`[OTP] Static test OTP (${STATIC_TEST_OTP}) active for test account ${maskEmail(to)}`);
+      return;
+    }
 
     if (!isMailConfigured() && !isWhatsappConfigured()) {
       deliverOtpFallback(to, code, purpose);
