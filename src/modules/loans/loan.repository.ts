@@ -222,7 +222,7 @@ export class LoanRepository implements ILoanRepository {
       `INSERT INTO hrms_employee_loans (
         employee_id, purpose, principal, emi, interest_rate,
         start_month, tenure_months, status, created_by, created_at
-      ) VALUES (?, ?, ?, ?, 0.00, ?, ?, 'active', ?, NOW())`,
+      ) VALUES (?, ?, ?, ?, 0.00, ?, ?, 'pending_disbursement', ?, NOW())`,
       [
         dto.employeeId,
         dto.purpose,

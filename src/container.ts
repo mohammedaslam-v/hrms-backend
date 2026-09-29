@@ -233,13 +233,13 @@ export const createContainer = () => {
   );
   const taxController = new TaxController(taxService);
 
-  const loanRepository: ILoanRepository = new LoanRepository(pool);
-  const loanService: ILoanService = new LoanService(loanRepository, authService);
-  const loanController = new LoanController(loanService);
-
   const payoutRepository: IPayoutRepository = new PayoutRepository(pool);
   const payoutService: IPayoutService = new PayoutService(payoutRepository, salaryService);
   const payoutController = new PayoutController(payoutService);
+
+  const loanRepository: ILoanRepository = new LoanRepository(pool);
+  const loanService: ILoanService = new LoanService(loanRepository, authService, payoutService);
+  const loanController = new LoanController(loanService);
 
   const payrollRepository: IPayrollRepository = new PayrollRepository(pool);
   const payrollService: IPayrollService = new PayrollService(payrollRepository, salaryService);

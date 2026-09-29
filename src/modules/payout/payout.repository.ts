@@ -236,8 +236,7 @@ export class PayoutRepository implements IPayoutRepository {
       `UPDATE hrms_employee_loans
          SET status = ?,
              disbursement_payout_id = ?,
-             disbursed_at = IF(? = 'active', NOW(), disbursed_at),
-             updated_at = NOW()
+             disbursed_at = IF(? = 'active', NOW(), disbursed_at)
        WHERE id = ?`,
       [status, payoutId, status, loanId],
     );
