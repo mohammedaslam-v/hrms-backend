@@ -40,10 +40,27 @@ const reportDeliveryChannels = (): void => {
   }
 };
 
+/**
+ * TEMPORARY — confirms Cloud Run egress leaves through the reserved static IP
+ * that Razorpay whitelists. Remove once the IP shows up in the Cloud Run logs.
+ */
+const logOutboundIp = async (): Promise<void> => {
+  try {
+    const response = await fetch('https://api.ipify.org?format=json', {
+      signal: AbortSignal.timeout(10_000),
+    });
+    const data = (await response.json()) as { ip: string };
+    console.log('HRMS OUTBOUND IP:', data.ip);
+  } catch (err) {
+    console.error('HRMS OUTBOUND IP check failed:', err instanceof Error ? err.message : err);
+  }
+};
+
 server.listen(env.port, () => {
   console.log(`HRMS API listening on http://localhost:${env.port}`);
   reportDeliveryChannels();
   void checkDatabaseConnection();
+  if (isProduction) void logOutboundIp();
 });
 
 const shutdown = (signal: string): void => {
