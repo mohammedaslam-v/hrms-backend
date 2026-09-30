@@ -12,6 +12,9 @@ export const createAttendanceRouter = (controller: AttendanceController): Router
   router.use(requireAuth);
 
   router.get('/me/today', controller.getToday);
+  router.get('/today-board', controller.getTodayBoard);
+  router.get('/range', controller.getRange);
+  router.get('/summary', controller.getSummary);
   router.get('/me/week', controller.getWeek);
   router.get('/me/days', controller.getDays);
   router.post('/me/check-in', controller.checkIn);

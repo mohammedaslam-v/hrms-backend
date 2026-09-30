@@ -1,5 +1,10 @@
 import { DayAttendance, WeekBar } from './attendance.domain';
-import { TodayView } from './attendance.model';
+import {
+  AttendanceRangeDto,
+  PunctualitySummaryDto,
+  TodayBoardDto,
+  TodayView,
+} from './attendance.model';
 
 export interface IAttendanceService {
   /** The Today card for the signed-in person. Writes nothing. */
@@ -39,4 +44,24 @@ export interface IAttendanceService {
    * weekly off, a day of leave and an absence are all facts about the week.
    */
   getDays(employeeId: number, from: string, to: string): Promise<DayAttendance[]>;
+
+  getTodayBoard(viewerId: number): Promise<TodayBoardDto>;
+  getAttendanceRange(
+    viewerId: number,
+    options: {
+      from: string;
+      to: string;
+      employeeId?: number;
+      department?: string;
+      status?: string;
+    },
+  ): Promise<AttendanceRangeDto>;
+  getPunctualitySummary(
+    viewerId: number,
+    options: {
+      from: string;
+      to: string;
+      department?: string;
+    },
+  ): Promise<PunctualitySummaryDto>;
 }

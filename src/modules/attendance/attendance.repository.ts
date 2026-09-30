@@ -480,4 +480,56 @@ export class AttendanceRepository implements IAttendanceRepository {
       after,
     });
   }
+  async findRangeFor(
+    employeeIds: number[],
+    from: string,
+    to: string,
+  ): Promise<AttendanceRecord[]> {
+    if (employeeIds.length === 0) return [];
+    const [rows] = await this.pool.query<AttendanceRow[]>(
+      `SELECT ${COLUMNS}
+         FROM hrms_attendance
+        WHERE employee_id IN (${AttendanceRepository.idList(employeeIds)})
+          AND att_date BETWEEN ? AND ?
+        ORDER BY att_date DESC, employee_id ASC`,
+      [from, to],
+    );
+    return rows.map(mapRecord);
+  }
+
+  async findHolidaysBetween(from: string, to: string): Promise<Map<string, string>> {
+    const [rows] = await this.pool.execute<HolidayRow[]>(
+      `SELECT holiday_date, name FROM hrms_holidays WHERE holiday_date BETWEEN ? AND ?`,
+      [from, to],
+    );
+    const map = new Map<string, string>();
+    for (const row of rows) {
+      const d = typeof row.holiday_date === 'string' ? row.holiday_date.slice(0, 10) : new Date(row.holiday_date).toISOString().slice(0, 10);
+      map.set(d, row.name);
+    }
+    return map;
+  }
+
+  async findApprovedLeavesBetween(
+    employeeIds: number[],
+    from: string,
+    to: string,
+  ): Promise<{ employeeId: number; fromDate: string; toDate: string; leaveType: LeaveType; isHalfDay: boolean }[]> {
+    if (employeeIds.length === 0) return [];
+    const [rows] = await this.pool.query<(LeaveSpanRow & { employee_id: number })[]>(
+      `SELECT employee_id, from_date, to_date, leave_type, is_half_day
+         FROM hrms_leave_requests
+        WHERE status = 'Approved'
+          AND to_date >= ? AND from_date <= ?
+          AND employee_id IN (${AttendanceRepository.idList(employeeIds)})`,
+      [from, to],
+    );
+    return rows.map((r) => ({
+      employeeId: r.employee_id,
+      fromDate: typeof r.from_date === 'string' ? r.from_date.slice(0, 10) : new Date(r.from_date).toISOString().slice(0, 10),
+      toDate: typeof r.to_date === 'string' ? r.to_date.slice(0, 10) : new Date(r.to_date).toISOString().slice(0, 10),
+      leaveType: r.leave_type,
+      isHalfDay: r.is_half_day === 1,
+    }));
+  }
 }

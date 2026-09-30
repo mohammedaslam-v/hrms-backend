@@ -97,3 +97,81 @@ export interface TodayView {
   canCheckIn: boolean;
   canCheckOut: boolean;
 }
+
+
+export interface TodayBoardKpis {
+  onTime: number;
+  late: number;
+  absent: number;
+  leave: number;
+  off: number;
+  total: number;
+}
+
+export interface TodayBoardRow {
+  employeeId: number;
+  code: string;
+  name: string;
+  department: string | null;
+  workMode: string;
+  shiftStart: string;
+  shiftEnd: string;
+  loginAt: string | null;
+  logoutAt: string | null;
+  activeHours: number;
+  lateByMinutes: number;
+  status: AttendanceStatus;
+  leaveType: string | null;
+}
+
+export interface TodayBoardDto {
+  date: string;
+  kpis: TodayBoardKpis;
+  quickCounts: Record<string, number>;
+  roster: TodayBoardRow[];
+}
+
+export interface AttendanceRangeRow {
+  date: string;
+  dayName: string;
+  employeeId: number;
+  code: string;
+  name: string;
+  department: string | null;
+  shiftStart: string;
+  shiftEnd: string;
+  loginAt: string | null;
+  logoutAt: string | null;
+  activeHours: number;
+  lateByMinutes: number;
+  status: AttendanceStatus;
+}
+
+export interface AttendanceRangeDto {
+  from: string;
+  to: string;
+  totalCount: number;
+  rows: AttendanceRangeRow[];
+}
+
+export interface PunctualityEmployeeSummary {
+  employeeId: number;
+  code: string;
+  name: string;
+  department: string | null;
+  workingDays: number;
+  onTime: number;
+  late: number;
+  absent: number;
+  leave: number;
+  halfDay: number;
+  totalActiveHours: number;
+  avgActiveHours: number;
+  punctuality: number;
+}
+
+export interface PunctualitySummaryDto {
+  from: string;
+  to: string;
+  summary: PunctualityEmployeeSummary[];
+}

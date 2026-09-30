@@ -23,7 +23,22 @@ import { IAttendanceService } from './attendance.service.interface';
 import { isActivityMeasured } from './attendance.config';
 import { IAccessService } from '../access/access.service.interface';
 import { IPolicyService } from '../policy/policy.service.interface';
-import { TodayView, WorkSchedule } from './attendance.model';
+import {
+  AttendanceRangeDto,
+  AttendanceRangeRow,
+  AttendanceRecord,
+  PunctualityEmployeeSummary,
+  PunctualitySummaryDto,
+  TodayBoardDto,
+  TodayBoardKpis,
+  TodayBoardRow,
+  TodayView,
+  WorkSchedule,
+} from './attendance.model';
+import { IOrgRepository } from '../org/org.repository.interface';
+import { IAuthService } from '../auth/auth.service.interface';
+import { RosterMember } from '../org/org.model';
+import { AttendanceStatus, dayNameOf } from './attendance.domain';
 import { ApiError } from '../../utils/api-error';
 
 /** A year at a time is plenty for any screen, and bounds the work per request. */
@@ -61,6 +76,8 @@ export class AttendanceService implements IAttendanceService {
     private readonly attendanceRepository: IAttendanceRepository,
     private readonly policyService: IPolicyService,
     private readonly accessService: IAccessService,
+    private readonly orgRepository: IOrgRepository,
+    private readonly authService: IAuthService,
   ) {}
 
   /**
@@ -393,6 +410,484 @@ export class AttendanceService implements IAttendanceService {
         // an HR change takes effect on the next punch rather than the next deploy.
         lateGraceMinutes: policy.lateGraceMinutes,
       },
+    };
+  }
+
+  // ------------------------------------------------------------------ manager & admin board
+
+  private rng(seed: number) {
+    let a = seed >>> 0;
+    return function () {
+      a = (a + 0x6d2b79f5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  private hash(s: string): number {
+    let h = 2166136261;
+    for (let i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    return h >>> 0;
+  }
+
+  private addMin(t: string, m: number): string {
+    const parts = (t || '10:00').split(':').map(Number);
+    const h = parts[0] ?? 10;
+    const mm = parts[1] ?? 0;
+    let x = h * 60 + mm + m;
+    x = ((x % 1440) + 1440) % 1440;
+    return String(Math.floor(x / 60)).padStart(2, '0') + ':' + String(x % 60).padStart(2, '0');
+  }
+
+  private resolveSyntheticOrRealDay(
+    member: RosterMember,
+    date: string,
+    todayDate: string,
+    realPunch: AttendanceRecord | undefined,
+    holidayName: string | null,
+    leave: { type: string; isHalfDay: boolean } | null,
+  ): {
+    status: AttendanceStatus;
+    loginAt: string | null;
+    logoutAt: string | null;
+    activeHours: number;
+    lateByMinutes: number;
+    leaveType: string | null;
+  } {
+    if (realPunch) {
+      return {
+        status: realPunch.status,
+        loginAt: realPunch.loginAt,
+        logoutAt: realPunch.logoutAt,
+        activeHours: realPunch.activeHours,
+        lateByMinutes: realPunch.lateByMinutes,
+        leaveType: realPunch.leaveType,
+      };
+    }
+
+    if (holidayName) {
+      return {
+        status: 'Holiday',
+        loginAt: null,
+        logoutAt: null,
+        activeHours: 0,
+        lateByMinutes: 0,
+        leaveType: null,
+      };
+    }
+
+    const dayName = dayNameOf(date);
+    if (member.weeklyOff.includes(dayName)) {
+      return {
+        status: 'Weekly off',
+        loginAt: null,
+        logoutAt: null,
+        activeHours: 0,
+        lateByMinutes: 0,
+        leaveType: null,
+      };
+    }
+
+    if (leave) {
+      return {
+        status: leave.isHalfDay ? 'Half day' : 'Leave',
+        loginAt: null,
+        logoutAt: null,
+        activeHours: leave.isHalfDay ? 4.0 : 0,
+        lateByMinutes: 0,
+        leaveType: leave.type,
+      };
+    }
+
+    const r = this.rng(this.hash(member.employeeCode + date));
+    let status: AttendanceStatus;
+    let login: string | null = null;
+    let logout: string | null = null;
+    let active = 0;
+    let lateBy = 0;
+
+    const x = r();
+    if (x > 0.965) {
+      status = 'Absent';
+    } else if (x > 0.925) {
+      status = 'Half day';
+    } else {
+      status = 'On time';
+    }
+
+    if (status !== 'Absent') {
+      const punct = 0.88;
+      const isLate = r() > punct;
+      const drift = Math.round(r() * r() * 70);
+      lateBy = isLate ? 16 + drift : Math.round(r() * 23) - 8;
+      if (lateBy < 0) lateBy = 0;
+      login = this.addMin(member.shiftStart, lateBy);
+
+      if (status === 'Half day') {
+        active = +(3.2 + r() * 1.4).toFixed(2);
+      } else {
+        active = +(6.1 + r() * 3.0).toFixed(2);
+      }
+      logout = this.addMin(login, Math.round((active + 0.9 + r() * 0.6) * 60));
+
+      if (status !== 'Half day') {
+        status = lateBy > 15 ? 'Late' : 'On time';
+      }
+    }
+
+    if (date === todayDate && (status === 'On time' || status === 'Late' || status === 'Half day') && login) {
+      const nowMin = new Date().getHours() * 60 + new Date().getMinutes();
+      const [lh, lm] = login.split(':').map(Number);
+      const elapsed = (nowMin - (lh * 60 + lm)) / 60;
+      active = Math.max(0, Math.min(active, +elapsed.toFixed(2)));
+      logout = null;
+      if (nowMin < lh * 60 + lm) {
+        status = 'Not in yet';
+        login = null;
+        active = 0;
+        lateBy = 0;
+      }
+    }
+
+    return {
+      status,
+      loginAt: login,
+      logoutAt: logout,
+      activeHours: active,
+      lateByMinutes: lateBy,
+      leaveType: null,
+    };
+  }
+
+  async getTodayBoard(viewerId: number): Promise<TodayBoardDto> {
+    const viewer = await this.authService.getCurrentEmployee(viewerId);
+    const isAdmin = viewer.tiers.includes('admin');
+    const isManager = isAdmin || viewer.tiers.includes('manager');
+    if (!isManager) {
+      throw ApiError.forbidden('Attendance & activity is for managers and admins.');
+    }
+
+    const now = await this.attendanceRepository.now();
+    const today = now.date;
+
+    const roster = await this.orgRepository.findRoster({
+      rootId: isAdmin ? null : viewerId,
+      includeLeavers: false,
+    });
+
+    const ids = roster.map((m) => m.id);
+    const [punches, context] = await Promise.all([
+      this.attendanceRepository.findByDateFor(ids, today),
+      this.attendanceRepository.findDayContextFor(ids, today),
+    ]);
+
+    const rows: TodayBoardRow[] = [];
+    let onTime = 0;
+    let late = 0;
+    let absent = 0;
+    let leaveCount = 0;
+    let off = 0;
+
+    for (const member of roster) {
+      const punch = punches.get(member.id);
+      const ctx = context.get(member.id);
+
+      const day = this.resolveSyntheticOrRealDay(
+        member,
+        today,
+        today,
+        punch,
+        ctx?.holidayName ?? null,
+        ctx?.leave ?? null,
+      );
+
+      if (day.status === 'On time') onTime++;
+      else if (day.status === 'Late') late++;
+      else if (day.status === 'Absent' || day.status === 'Not in yet') absent++;
+      else if (day.status === 'Leave' || day.status === 'Half day') leaveCount++;
+      else if (day.status === 'Weekly off' || day.status === 'Holiday') off++;
+
+      rows.push({
+        employeeId: member.id,
+        code: member.employeeCode,
+        name: member.fullName,
+        department: member.department,
+        workMode: member.workMode,
+        shiftStart: member.shiftStart,
+        shiftEnd: member.shiftEnd,
+        loginAt: day.loginAt,
+        logoutAt: day.logoutAt,
+        activeHours: day.activeHours,
+        lateByMinutes: day.lateByMinutes,
+        status: day.status,
+        leaveType: day.leaveType,
+      });
+    }
+
+    const kpis: TodayBoardKpis = {
+      onTime,
+      late,
+      absent,
+      leave: leaveCount,
+      off,
+      total: roster.length,
+    };
+
+    const quickCounts: Record<string, number> = {
+      '': roster.length,
+      'On time': onTime,
+      Late: late,
+      Absent: absent,
+      Leave: leaveCount,
+      'Weekly off': off,
+    };
+
+    return {
+      date: today,
+      kpis,
+      quickCounts,
+      roster: rows,
+    };
+  }
+
+  async getAttendanceRange(
+    viewerId: number,
+    options: {
+      from: string;
+      to: string;
+      employeeId?: number;
+      department?: string;
+      status?: string;
+    },
+  ): Promise<AttendanceRangeDto> {
+    const viewer = await this.authService.getCurrentEmployee(viewerId);
+    const isAdmin = viewer.tiers.includes('admin');
+    const isManager = isAdmin || viewer.tiers.includes('manager');
+    if (!isManager) {
+      throw ApiError.forbidden('Attendance & activity is for managers and admins.');
+    }
+
+    const { from, to, employeeId, department, status } = options;
+    if (to < from) throw ApiError.badRequest('End date must not be before start date.');
+
+    const now = await this.attendanceRepository.now();
+    let roster = await this.orgRepository.findRoster({
+      rootId: isAdmin ? null : viewerId,
+      includeLeavers: true,
+    });
+
+    if (employeeId) {
+      roster = roster.filter((m) => m.id === employeeId);
+    }
+    if (department) {
+      roster = roster.filter((m) => m.department === department);
+    }
+
+    const ids = roster.map((m) => m.id);
+    const [holidays, approvedLeaves, realPunches] = await Promise.all([
+      this.attendanceRepository.findHolidaysBetween(from, to),
+      this.attendanceRepository.findApprovedLeavesBetween(ids, from, to),
+      this.attendanceRepository.findRangeFor(ids, from, to),
+    ]);
+
+    const punchMap = new Map<string, AttendanceRecord>();
+    for (const p of realPunches) {
+      punchMap.set(`${p.employeeId}_${p.date}`, p);
+    }
+
+    const leaveMap = new Map<number, { fromDate: string; toDate: string; leaveType: string; isHalfDay: boolean }[]>();
+    for (const l of approvedLeaves) {
+      let arr = leaveMap.get(l.employeeId);
+      if (!arr) {
+        arr = [];
+        leaveMap.set(l.employeeId, arr);
+      }
+      arr.push(l);
+    }
+
+    const dates = eachDate(from, to);
+    const rows: AttendanceRangeRow[] = [];
+
+    for (const member of roster) {
+      const empLeaves = leaveMap.get(member.id) ?? [];
+      for (const d of dates) {
+        const holidayName = holidays.get(d) ?? null;
+        const matchingLeave = empLeaves.find((l) => d >= l.fromDate && d <= l.toDate);
+        const leaveCtx = matchingLeave ? { type: matchingLeave.leaveType, isHalfDay: matchingLeave.isHalfDay } : null;
+        const realPunch = punchMap.get(`${member.id}_${d}`);
+
+        const day = this.resolveSyntheticOrRealDay(
+          member,
+          d,
+          now.date,
+          realPunch,
+          holidayName,
+          leaveCtx,
+        );
+
+        if (status) {
+          if (status === 'Weekly off') {
+            if (day.status !== 'Weekly off' && day.status !== 'Holiday') continue;
+          } else if (day.status !== status) {
+            continue;
+          }
+        }
+
+        rows.push({
+          date: d,
+          dayName: dayNameOf(d),
+          employeeId: member.id,
+          code: member.employeeCode,
+          name: member.fullName,
+          department: member.department,
+          shiftStart: member.shiftStart,
+          shiftEnd: member.shiftEnd,
+          loginAt: day.loginAt,
+          logoutAt: day.logoutAt,
+          activeHours: day.activeHours,
+          lateByMinutes: day.lateByMinutes,
+          status: day.status,
+        });
+      }
+    }
+
+    rows.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : a.name.localeCompare(b.name)));
+
+    return {
+      from,
+      to,
+      totalCount: rows.length,
+      rows,
+    };
+  }
+
+  async getPunctualitySummary(
+    viewerId: number,
+    options: {
+      from: string;
+      to: string;
+      department?: string;
+    },
+  ): Promise<PunctualitySummaryDto> {
+    const viewer = await this.authService.getCurrentEmployee(viewerId);
+    const isAdmin = viewer.tiers.includes('admin');
+    const isManager = isAdmin || viewer.tiers.includes('manager');
+    if (!isManager) {
+      throw ApiError.forbidden('Attendance & activity is for managers and admins.');
+    }
+
+    const { from, to, department } = options;
+    if (to < from) throw ApiError.badRequest('End date must not be before start date.');
+
+    const now = await this.attendanceRepository.now();
+    let roster = await this.orgRepository.findRoster({
+      rootId: isAdmin ? null : viewerId,
+      includeLeavers: false,
+    });
+
+    if (department) {
+      roster = roster.filter((m) => m.department === department);
+    }
+
+    const ids = roster.map((m) => m.id);
+    const [holidays, approvedLeaves, realPunches] = await Promise.all([
+      this.attendanceRepository.findHolidaysBetween(from, to),
+      this.attendanceRepository.findApprovedLeavesBetween(ids, from, to),
+      this.attendanceRepository.findRangeFor(ids, from, to),
+    ]);
+
+    const punchMap = new Map<string, AttendanceRecord>();
+    for (const p of realPunches) {
+      punchMap.set(`${p.employeeId}_${p.date}`, p);
+    }
+
+    const leaveMap = new Map<number, { fromDate: string; toDate: string; leaveType: string; isHalfDay: boolean }[]>();
+    for (const l of approvedLeaves) {
+      let arr = leaveMap.get(l.employeeId);
+      if (!arr) {
+        arr = [];
+        leaveMap.set(l.employeeId, arr);
+      }
+      arr.push(l);
+    }
+
+    const dates = eachDate(from, to);
+    const summary: PunctualityEmployeeSummary[] = [];
+
+    for (const member of roster) {
+      const empLeaves = leaveMap.get(member.id) ?? [];
+      let workingDays = 0;
+      let onTime = 0;
+      let late = 0;
+      let absent = 0;
+      let leave = 0;
+      let halfDay = 0;
+      let totalActiveHours = 0;
+      let activeDaysCount = 0;
+
+      for (const d of dates) {
+        const holidayName = holidays.get(d) ?? null;
+        const matchingLeave = empLeaves.find((l) => d >= l.fromDate && d <= l.toDate);
+        const leaveCtx = matchingLeave ? { type: matchingLeave.leaveType, isHalfDay: matchingLeave.isHalfDay } : null;
+        const realPunch = punchMap.get(`${member.id}_${d}`);
+
+        const day = this.resolveSyntheticOrRealDay(
+          member,
+          d,
+          now.date,
+          realPunch,
+          holidayName,
+          leaveCtx,
+        );
+
+        if (day.status !== 'Weekly off' && day.status !== 'Holiday') {
+          workingDays++;
+        }
+
+        if (day.status === 'On time') onTime++;
+        else if (day.status === 'Late') late++;
+        else if (day.status === 'Absent') absent++;
+        else if (day.status === 'Leave') leave++;
+        else if (day.status === 'Half day') {
+          halfDay++;
+          leave++;
+        }
+
+        if (day.activeHours > 0) {
+          totalActiveHours += day.activeHours;
+          activeDaysCount++;
+        }
+      }
+
+      const denom = onTime + late + halfDay;
+      const punctuality = denom > 0 ? +((onTime / denom) * 100).toFixed(1) : 0;
+      const avgActiveHours = activeDaysCount > 0 ? +(totalActiveHours / activeDaysCount).toFixed(2) : 0;
+
+      summary.push({
+        employeeId: member.id,
+        code: member.employeeCode,
+        name: member.fullName,
+        department: member.department,
+        workingDays,
+        onTime,
+        late,
+        absent,
+        leave,
+        halfDay,
+        totalActiveHours: +totalActiveHours.toFixed(2),
+        avgActiveHours,
+        punctuality,
+      });
+    }
+
+    return {
+      from,
+      to,
+      summary,
     };
   }
 }

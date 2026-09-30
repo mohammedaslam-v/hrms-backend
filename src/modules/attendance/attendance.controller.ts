@@ -44,6 +44,47 @@ export class AttendanceController {
     res.json({ success: true, data: await this.attendanceService.getWeekFor(viewerId, subjectId) });
   });
 
+  getTodayBoard: RequestHandler = asyncHandler(async (req, res) => {
+    const { employeeId } = req as AuthenticatedRequest;
+    res.json({ success: true, data: await this.attendanceService.getTodayBoard(employeeId) });
+  });
+
+  getRange: RequestHandler = asyncHandler(async (req, res) => {
+    const { employeeId } = req as AuthenticatedRequest;
+    const from = this.readDate(req.query.from, 'from');
+    const to = this.readDate(req.query.to, 'to');
+    const targetEmpId = req.query.employeeId ? this.readId(req.query.employeeId) : undefined;
+    const department = req.query.department ? String(req.query.department) : undefined;
+    const status = req.query.status ? String(req.query.status) : undefined;
+
+    res.json({
+      success: true,
+      data: await this.attendanceService.getAttendanceRange(employeeId, {
+        from,
+        to,
+        employeeId: targetEmpId,
+        department,
+        status,
+      }),
+    });
+  });
+
+  getSummary: RequestHandler = asyncHandler(async (req, res) => {
+    const { employeeId } = req as AuthenticatedRequest;
+    const from = this.readDate(req.query.from, 'from');
+    const to = this.readDate(req.query.to, 'to');
+    const department = req.query.department ? String(req.query.department) : undefined;
+
+    res.json({
+      success: true,
+      data: await this.attendanceService.getPunctualitySummary(employeeId, {
+        from,
+        to,
+        department,
+      }),
+    });
+  });
+
   checkIn: RequestHandler = asyncHandler(async (req, res) => {
     const { employeeId } = req as AuthenticatedRequest;
     res.status(201).json({ success: true, data: await this.attendanceService.checkIn(employeeId) });

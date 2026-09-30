@@ -95,4 +95,12 @@ export interface IAttendanceRepository {
     before: unknown,
     after: unknown,
   ): Promise<void>;
+
+  findRangeFor(employeeIds: number[], from: string, to: string): Promise<AttendanceRecord[]>;
+  findHolidaysBetween(from: string, to: string): Promise<Map<string, string>>;
+  findApprovedLeavesBetween(
+    employeeIds: number[],
+    from: string,
+    to: string,
+  ): Promise<{ employeeId: number; fromDate: string; toDate: string; leaveType: any; isHalfDay: boolean }[]>;
 }
