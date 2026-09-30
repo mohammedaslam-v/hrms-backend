@@ -15,6 +15,22 @@ import {
 import { env } from '../../config/env';
 import { ApiError } from '../../utils/api-error';
 
+/**
+ * A narration Razorpay will accept: letters, digits and spaces only, 30 max.
+ *
+ * Anything else is rejected outright with "The narration format is invalid",
+ * and the payout never reaches the bank. Employee codes carry a hyphen —
+ * `BAM-014` — so every loan narration hit this until the strip was added.
+ * Collapsing whitespace matters too: a stripped character can leave a double
+ * space behind, which reads as a typo on the recipient's statement.
+ */
+const narrationOf = (text: string): string =>
+  text
+    .replace(/[^a-zA-Z0-9 ]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .substring(0, 30);
+
 export class PayoutService implements IPayoutService {
   constructor(
     private readonly payoutRepository: IPayoutRepository,
@@ -185,7 +201,7 @@ export class PayoutService implements IPayoutService {
       month: 'short',
       year: 'numeric',
     });
-    const narration = `Bambinos Salary ${monthShort}`.substring(0, 30);
+    const narration = narrationOf(`Bambinos Salary ${monthShort}`);
 
     const record = await this.payoutRepository.createPayout({
       payoutType: 'salary',
@@ -348,7 +364,7 @@ export class PayoutService implements IPayoutService {
     // 2. Create Payout entry
     const idempotencyKey = crypto.randomUUID();
     const amountPaise = Math.round(loan.amount * 100);
-    const narration = `Bambinos Loan ${meta.employeeCode}`.substring(0, 30);
+    const narration = narrationOf(`Bambinos Loan ${meta.employeeCode}`);
 
     const record = await this.payoutRepository.createPayout({
       payoutType: 'loan',
