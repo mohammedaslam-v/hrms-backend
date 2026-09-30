@@ -1,13 +1,20 @@
 import { Request, Response } from "express";
 import { IReportsService } from "./reports.service.interface";
 import { ReportFilterDto, ReportType } from "./reports.model";
+import { AuthenticatedRequest } from "../../middlewares/auth.middleware";
 
 export class ReportsController {
   constructor(private readonly reportsService: IReportsService) {}
 
-  getCatalog = (_req: Request, res: Response): void => {
-    const catalog = this.reportsService.getCatalog();
-    res.json({ success: true, data: catalog });
+  getCatalog = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const actorId = (req as AuthenticatedRequest).employeeId || (req as any).user?.id || 1;
+      const catalog = await this.reportsService.getCatalog(actorId);
+      res.json({ success: true, data: catalog });
+    } catch (err: any) {
+      const status = err.statusCode || 400;
+      res.status(status).json({ success: false, message: err.message || "Failed to get catalog" });
+    }
   };
 
   getReportData = async (req: Request, res: Response): Promise<void> => {
@@ -23,7 +30,7 @@ export class ReportsController {
       const department = req.query.department as string | undefined;
       const employeeId = req.query.employeeId as string | undefined;
 
-      const actorId = (req as any).user?.id || 1;
+      const actorId = (req as AuthenticatedRequest).employeeId || (req as any).user?.id || 1;
 
       const filter: ReportFilterDto = {
         type,
@@ -41,7 +48,8 @@ export class ReportsController {
 
       res.json({ success: true, data: report });
     } catch (err: any) {
-      res.status(400).json({ success: false, message: err.message || "Failed to generate report" });
+      const status = err.statusCode || 400;
+      res.status(status).json({ success: false, message: err.message || "Failed to generate report" });
     }
   };
 
@@ -58,7 +66,7 @@ export class ReportsController {
       const department = req.query.department as string | undefined;
       const employeeId = req.query.employeeId as string | undefined;
 
-      const actorId = (req as any).user?.id || 1;
+      const actorId = (req as AuthenticatedRequest).employeeId || (req as any).user?.id || 1;
 
       const filter: ReportFilterDto = {
         type,
@@ -78,7 +86,8 @@ export class ReportsController {
       res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
       res.status(200).send(csv);
     } catch (err: any) {
-      res.status(400).json({ success: false, message: err.message || "Failed to export report" });
+      const status = err.statusCode || 400;
+      res.status(status).json({ success: false, message: err.message || "Failed to export report" });
     }
   };
 }

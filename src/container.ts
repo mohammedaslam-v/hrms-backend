@@ -248,7 +248,7 @@ export const createContainer = () => {
   const payrollController = new PayrollController(payrollService);
 
   const reportsRepository: IReportsRepository = new ReportsRepository(pool);
-  const reportsService: IReportsService = new ReportsService(reportsRepository, compensationService);
+  const reportsService: IReportsService = new ReportsService(reportsRepository, compensationService, authService);
   const reportsController = new ReportsController(reportsService);
 
 

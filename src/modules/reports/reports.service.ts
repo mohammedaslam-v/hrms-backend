@@ -3,10 +3,27 @@ import {
   ReportColumn,
   ReportFilterDto,
   ReportResult,
+  ReportType,
 } from './reports.model';
 import { IReportsRepository } from './reports.repository.interface';
 import { IReportsService } from './reports.service.interface';
 import { ICompensationService } from '../compensation/compensation.service.interface';
+import { IAuthService } from '../auth/auth.service.interface';
+import { ApiError } from '../../utils/api-error';
+
+const PAYROLL_REPORT_TYPES: ReadonlySet<ReportType> = new Set([
+  'salary',
+  'pf',
+  'provident_fund',
+  'pt',
+  'profession_tax',
+  'tds',
+  'loan',
+  'loan_details',
+  'net_pay',
+  'income_tax',
+  'appraisals',
+]);
 import { structure } from '../salary/salary.domain';
 import { computeTaxComputation, TAX_CONFIG } from '../tax/tax.domain';
 import { ptFor } from '../salary/salary.domain';
@@ -103,9 +120,24 @@ export class ReportsService implements IReportsService {
   constructor(
     private readonly repository: IReportsRepository,
     private readonly compensationService: ICompensationService,
+    private readonly authService?: IAuthService,
   ) {}
 
-  getCatalog(): ReportCatalogItem[] {
+  async getCatalog(actorId?: number): Promise<ReportCatalogItem[]> {
+    const all = this.getAllCatalogItems();
+    if (!actorId || !this.authService) return all;
+    try {
+      const viewer = await this.authService.getCurrentEmployee(actorId);
+      if (!viewer.tiers.includes('admin')) {
+        return all.filter((item) => item.category !== 'Payroll');
+      }
+    } catch {
+      return all.filter((item) => item.category !== 'Payroll');
+    }
+    return all;
+  }
+
+  private getAllCatalogItems(): ReportCatalogItem[] {
     return [
       // Attendance
       {
@@ -248,7 +280,16 @@ export class ReportsService implements IReportsService {
     ];
   }
 
-  async generateReport(filter: ReportFilterDto, _actorId: number): Promise<ReportResult> {
+  async generateReport(filter: ReportFilterDto, actorId: number): Promise<ReportResult> {
+    if (PAYROLL_REPORT_TYPES.has(filter.type)) {
+      if (this.authService && actorId) {
+        const viewer = await this.authService.getCurrentEmployee(actorId);
+        if (!viewer.tiers.includes('admin')) {
+          throw ApiError.forbidden('Only administrators can access payroll and compensation reports.');
+        }
+      }
+    }
+
     switch (filter.type) {
       case 'attendance':
         return this.buildAttendance(filter);
