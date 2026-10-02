@@ -26,6 +26,7 @@ export const createProfileRouter = (controller: ProfileController): Router => {
   // Admin lifecycle & exit endpoints
   router.post('/:id/toggle-login', controller.toggleLogin);
   router.post('/:id/employment-type', controller.updateEmploymentType);
+  router.post('/:id/work-mode', controller.updateWorkMode);
   router.post('/:id/dismiss', controller.dismissEmployee);
   router.post('/:id/toggle-salary', controller.toggleSalary);
   router.delete('/:id', controller.deleteEmployee);

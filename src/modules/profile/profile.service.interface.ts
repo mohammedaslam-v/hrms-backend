@@ -45,6 +45,12 @@ export interface IProfileService {
     employmentType: string,
   ): Promise<{ employmentType: string; isContractor: boolean }>;
 
+  updateWorkMode(
+    viewerId: number,
+    subjectId: number,
+    workMode: string,
+  ): Promise<{ workMode: string }>;
+
   deleteEmployee(
     viewerId: number,
     subjectId: number,

@@ -297,6 +297,31 @@ export class ProfileService implements IProfileService {
     return { isSalaryStopped: dto.stopped };
   }
 
+  async updateWorkMode(
+    viewerId: number,
+    subjectId: number,
+    workMode: string,
+  ): Promise<{ workMode: string }> {
+    const access = await this.accessService.require(viewerId, subjectId);
+    if (access !== "admin") {
+      throw ApiError.forbidden("Only administrators can update work mode.");
+    }
+
+    const record = await this.profileRepository.findProfile(subjectId);
+    if (!record) {
+      throw ApiError.notFound("That employee record does not exist.");
+    }
+
+    const validModes = ["WFH", "WFO", "Hybrid"];
+    const normalized = validModes.find((m) => m.toLowerCase() === workMode.trim().toLowerCase());
+    if (!normalized) {
+      throw ApiError.badRequest("Invalid work mode. Must be WFH, WFO, or Hybrid.");
+    }
+
+    await this.profileRepository.updateWorkMode(subjectId, normalized);
+    return { workMode: normalized };
+  }
+
   async updateEmploymentType(
     viewerId: number,
     subjectId: number,

@@ -319,6 +319,13 @@ export class ProfileRepository implements IProfileRepository {
     );
   }
 
+  async updateWorkMode(employeeId: number, workMode: string): Promise<void> {
+    await this.pool.execute(
+      `UPDATE hrms_employees SET work_mode = ? WHERE id = ?`,
+      [workMode, employeeId],
+    );
+  }
+
   async updateEmploymentType(employeeId: number, employmentType: string): Promise<void> {
     await this.pool.execute(
       `UPDATE hrms_employees SET employment_type = ? WHERE id = ?`,

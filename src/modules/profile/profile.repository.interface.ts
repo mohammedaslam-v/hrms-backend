@@ -23,5 +23,7 @@ export interface IProfileRepository {
 
   updateEmploymentType(employeeId: number, employmentType: string): Promise<void>;
 
+  updateWorkMode(employeeId: number, workMode: string): Promise<void>;
+
   deleteEmployee(employeeId: number, adminId: number | null): Promise<void>;
 }

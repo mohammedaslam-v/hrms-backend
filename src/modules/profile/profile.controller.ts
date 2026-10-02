@@ -91,6 +91,19 @@ export class ProfileController {
     });
   });
 
+  updateWorkMode: RequestHandler = asyncHandler(async (req, res) => {
+    const { employeeId } = req as AuthenticatedRequest;
+    const subjectId = this.readId(req.params.id);
+    const workMode = String(req.body?.workMode || "WFO");
+
+    const result = await this.profileService.updateWorkMode(employeeId, subjectId, workMode);
+    res.json({
+      success: true,
+      message: `Work mode updated to ${result.workMode}.`,
+      data: result,
+    });
+  });
+
   updateEmploymentType: RequestHandler = asyncHandler(async (req, res) => {
     const { employeeId } = req as AuthenticatedRequest;
     const subjectId = this.readId(req.params.id);
