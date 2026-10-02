@@ -91,7 +91,20 @@ export class ProfileController {
     });
   });
 
-  updateWorkMode: RequestHandler = asyncHandler(async (req, res) => {
+    updatePersonalDetails: RequestHandler = asyncHandler(async (req, res) => {
+    const { employeeId } = req as AuthenticatedRequest;
+    const subjectId = req.params.id === "me" ? employeeId : this.readId(req.params.id);
+    const dto = req.body || {};
+
+    const result = await this.profileService.updatePersonalDetails(employeeId, subjectId, dto);
+    res.json({
+      success: true,
+      message: "Personal details updated successfully.",
+      data: result,
+    });
+  });
+
+updateWorkMode: RequestHandler = asyncHandler(async (req, res) => {
     const { employeeId } = req as AuthenticatedRequest;
     const subjectId = this.readId(req.params.id);
     const workMode = String(req.body?.workMode || "WFO");

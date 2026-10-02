@@ -23,6 +23,7 @@ import {
   SaveDocumentDto,
   ToggleSalaryDto,
   UpdateCompensationDto,
+  UpdatePersonalDetailsDto,
 } from './profile.model';
 import { ApiError } from '../../utils/api-error';
 
@@ -322,7 +323,76 @@ export class ProfileService implements IProfileService {
     return { workMode: normalized };
   }
 
-  async updateEmploymentType(
+    async updatePersonalDetails(
+    viewerId: number,
+    subjectId: number,
+    dto: UpdatePersonalDetailsDto,
+  ): Promise<ProfileView> {
+    const access = await this.accessService.require(viewerId, subjectId);
+    if (access !== "self" && access !== "admin") {
+      throw ApiError.forbidden("Only the employee or an administrator can update personal details.");
+    }
+
+    const record = await this.profileRepository.findProfile(subjectId);
+    if (!record) {
+      throw ApiError.notFound("That employee record does not exist.");
+    }
+
+    if (dto.email !== undefined && dto.email !== null) {
+      const cleanEmail = dto.email.trim();
+      if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+        throw ApiError.badRequest("Please enter a valid email address.");
+      }
+      dto.email = cleanEmail;
+    }
+
+    if (dto.pan && dto.pan.trim() && !/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/i.test(dto.pan.trim())) {
+      throw ApiError.badRequest("PAN must be 10 alphanumeric characters (e.g. ABCDE1234F).");
+    }
+
+    if (dto.aadhar && dto.aadhar.trim()) {
+      const cleanAadhar = dto.aadhar.replace(/\s+/g, "");
+      if (!/^\d{12}$/.test(cleanAadhar)) {
+        throw ApiError.badRequest("Aadhaar must be exactly 12 numeric digits.");
+      }
+      dto.aadhar = cleanAadhar;
+    }
+
+    if (dto.dateOfBirth && dto.dateOfBirth.trim() && !/^\d{4}-\d{2}-\d{2}$/.test(dto.dateOfBirth.trim())) {
+      throw ApiError.badRequest("Date of birth must be a valid date format (YYYY-MM-DD).");
+    }
+
+    if (access !== "admin") {
+      delete dto.shiftStart;
+      delete dto.shiftEnd;
+      delete dto.weeklyOff;
+      delete dto.dateOfJoining;
+      delete dto.leaveBalance;
+      delete dto.managerId;
+      delete dto.role;
+    } else {
+      if (dto.dateOfJoining && dto.dateOfJoining.trim() && !/^\d{4}-\d{2}-\d{2}$/.test(dto.dateOfJoining.trim())) {
+        throw ApiError.badRequest("Date of joining must be a valid date format (YYYY-MM-DD).");
+      }
+      if (dto.managerId !== undefined && dto.managerId !== null && Number(dto.managerId) === subjectId) {
+        throw ApiError.badRequest("An employee cannot be their own reporting manager.");
+      }
+      if (dto.leaveBalance !== undefined && dto.leaveBalance !== null) {
+        const targetBalance = Number(dto.leaveBalance);
+        if (isNaN(targetBalance) || targetBalance < 0) {
+          throw ApiError.badRequest("Leave balance must be a non-negative number.");
+        }
+        const currentBalance = await this.leaveBalanceOf(subjectId);
+        const diff = targetBalance - currentBalance;
+        (dto as any).leaveBalanceDiff = diff;
+      }
+    }
+
+    await this.profileRepository.updatePersonalDetails(subjectId, dto);
+    return this.getProfile(viewerId, subjectId);
+  }
+
+async updateEmploymentType(
     viewerId: number,
     subjectId: number,
     employmentType: string,
@@ -398,13 +468,18 @@ export class ProfileService implements IProfileService {
       weeklyOff: record.weeklyOff,
       dateOfJoining: record.dateOfJoining,
       dateOfLeaving: record.dateOfLeaving,
+      managerId: record.managerId,
       managerName: record.managerName,
+      role: record.role ?? "employee",
+      hrmsRole: record.hrmsRole,
 
       mobile: record.mobile,
       personalEmail: personal ? record.personalEmail : null,
       dateOfBirth: personal ? record.dateOfBirth : null,
       emergencyMobile: personal ? record.emergencyMobile : null,
       city: personal ? record.city : null,
+      panNumber: personal ? record.panNumber : null,
+      aadharNumber: personal ? record.aadharNumber : null,
       linkedinProfile: personal ? record.linkedinProfile : null,
       documents: personal ? record.documents : [],
       leaveBalance,

@@ -35,6 +35,22 @@ export interface SaveDocumentDto {
   docNumber?: string;
 }
 
+export interface UpdatePersonalDetailsDto {
+  email?: string | null;
+  mobile?: string | null;
+  dateOfBirth?: string | null;
+  pan?: string | null;
+  aadhar?: string | null;
+  workLocation?: string | null;
+  shiftStart?: string | null;
+  shiftEnd?: string | null;
+  weeklyOff?: string[] | string | null;
+  dateOfJoining?: string | null;
+  leaveBalance?: number | null;
+  managerId?: number | null;
+  role?: "employee" | "manager" | "admin" | null;
+}
+
 export interface DismissEmployeeDto {
   resignationDate: string | null;
   resignationReason: string;
@@ -98,6 +114,11 @@ export interface ProfileRecord {
   emergencyMobile: string | null;
   city: string | null;
   linkedinProfile: string | null;
+  panNumber: string | null;
+  aadharNumber: string | null;
+  hrmsRole?: "employee" | "admin";
+  isManagerOverride?: boolean;
+  role?: "employee" | "manager" | "admin";
 
   /** Only the documents actually on file. An empty list is a real answer. */
   documents: ProfileDocument[];
@@ -155,6 +176,11 @@ export interface ProfileView {
   emergencyMobile: string | null;
   city: string | null;
   linkedinProfile: string | null;
+  panNumber: string | null;
+  aadharNumber: string | null;
+  managerId?: number | null;
+  role?: "employee" | "manager" | "admin";
+  hrmsRole?: "employee" | "admin";
 
   documents: ProfileDocument[];
   leaveBalance: number;

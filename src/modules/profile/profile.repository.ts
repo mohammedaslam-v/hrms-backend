@@ -1,6 +1,6 @@
 import { Pool, RowDataPacket } from 'mysql2/promise';
 import { IProfileRepository } from './profile.repository.interface';
-import { DismissEmployeeDto, DocumentKey, ProfileDocument, ProfileRecord, WorkMode } from './profile.model';
+import { DismissEmployeeDto, DocumentKey, ProfileDocument, ProfileRecord, UpdatePersonalDetailsDto, WorkMode } from './profile.model';
 
 interface ProfileRow extends RowDataPacket {
   employee_id: number;
@@ -33,6 +33,10 @@ interface ProfileRow extends RowDataPacket {
   temp_address_proof: string | null;
   aadhar_number: string | null;
   pan_number: string | null;
+  hrms_role?: "employee" | "admin";
+  is_manager_override?: number;
+  has_active_reports?: number;
+  opening_leave?: string | number;
 
   is_login_disabled: number | boolean;
   login_disabled_at: string | null;
@@ -78,9 +82,9 @@ export class ProfileRepository implements IProfileRepository {
               e.date_of_leaving,
               e.manager_id,
               m.full_name                AS manager_name,
-              a.mobile,
+              COALESCE(a.mobile, e.phone) AS mobile,
               a.personal_email,
-              a.date_of_birth,
+              COALESCE(a.date_of_birth, e.date_of_birth) AS date_of_birth,
               a.emergency_mobile,
               a.city,
               a.linkedin_profile,
@@ -102,7 +106,11 @@ export class ProfileRepository implements IProfileRepository {
               e.last_working_day,
               e.is_rehire_eligible,
               e.exit_notes,
-              e.deleted_at
+              e.deleted_at,
+              e.hrms_role,
+              e.is_manager_override,
+              e.opening_leave,
+              EXISTS(SELECT 1 FROM hrms_employees rep WHERE rep.manager_id = e.id AND rep.deleted_at IS NULL) AS has_active_reports
          FROM hrms_employees e
          LEFT JOIN admins a         ON a.id = e.admin_id AND a.deleted_at IS NULL
          LEFT JOIN hrms_employees m ON m.id = e.manager_id
@@ -128,6 +136,12 @@ export class ProfileRepository implements IProfileRepository {
           path: cd.file_path || '',
           docNumber: cd.doc_number || null,
         });
+        if (cd.doc_key === 'aadhaar' && !profile.aadharNumber && cd.doc_number) {
+          profile.aadharNumber = cd.doc_number;
+        }
+        if (cd.doc_key === 'pan' && !profile.panNumber && cd.doc_number) {
+          profile.panNumber = cd.doc_number;
+        }
       }
     } catch {
       // Custom docs table might not exist yet
@@ -326,7 +340,151 @@ export class ProfileRepository implements IProfileRepository {
     );
   }
 
-  async updateEmploymentType(employeeId: number, employmentType: string): Promise<void> {
+    async updatePersonalDetails(employeeId: number, dto: UpdatePersonalDetailsDto): Promise<void> {
+    const [empRows] = await this.pool.execute<any[]>(
+      `SELECT id, admin_id FROM hrms_employees WHERE id = ?`,
+      [employeeId],
+    );
+    if (!empRows.length) return;
+    const adminId = empRows[0].admin_id;
+
+    const empUpdates: string[] = [];
+    const empValues: any[] = [];
+
+    if (dto.email !== undefined) {
+      empUpdates.push(`work_email = ?`);
+      empValues.push(dto.email?.trim() || null);
+    }
+    if (dto.mobile !== undefined) {
+      empUpdates.push(`phone = ?`);
+      empValues.push(dto.mobile?.trim() || null);
+    }
+    if (dto.dateOfBirth !== undefined) {
+      empUpdates.push(`date_of_birth = ?`);
+      empValues.push(dto.dateOfBirth?.trim() || null);
+    }
+    if (dto.pan !== undefined) {
+      empUpdates.push(`pan = ?`);
+      empValues.push(dto.pan?.trim() ? dto.pan.trim().toUpperCase() : null);
+    }
+    if (dto.workLocation !== undefined) {
+      empUpdates.push(`work_state = ?`);
+      empValues.push(dto.workLocation?.trim() || null);
+    }
+    if (dto.shiftStart !== undefined) {
+      empUpdates.push(`shift_start = ?`);
+      const s = dto.shiftStart?.trim() || "10:00:00";
+      empValues.push(s.length === 5 ? `${s}:00` : s);
+    }
+    if (dto.shiftEnd !== undefined) {
+      empUpdates.push(`shift_end = ?`);
+      const s = dto.shiftEnd?.trim() || "19:00:00";
+      empValues.push(s.length === 5 ? `${s}:00` : s);
+    }
+    if (dto.weeklyOff !== undefined) {
+      let daysStr = "";
+      if (Array.isArray(dto.weeklyOff)) {
+        daysStr = dto.weeklyOff.filter(Boolean).join(",");
+      } else if (typeof dto.weeklyOff === "string") {
+        daysStr = dto.weeklyOff.trim();
+      }
+      empUpdates.push(`weekly_off = ?`);
+      empValues.push(daysStr || "Sun");
+    }
+    if (dto.dateOfJoining !== undefined) {
+      empUpdates.push(`date_of_joining = ?`);
+      empValues.push(dto.dateOfJoining?.trim() || null);
+    }
+    if (dto.managerId !== undefined) {
+      const mId = dto.managerId ? Number(dto.managerId) : null;
+      empUpdates.push(`manager_id = ?`);
+      empValues.push(mId && mId > 0 ? mId : null);
+    }
+    if (dto.role !== undefined && dto.role !== null) {
+      if (dto.role === "admin") {
+        empUpdates.push(`hrms_role = 'admin', is_manager_override = 1`);
+      } else if (dto.role === "manager") {
+        empUpdates.push(`hrms_role = 'employee', is_manager_override = 1`);
+      } else {
+        empUpdates.push(`hrms_role = 'employee', is_manager_override = 0`);
+      }
+    }
+    if ((dto as any).leaveBalanceDiff !== undefined && !isNaN(Number((dto as any).leaveBalanceDiff))) {
+      const diff = Number((dto as any).leaveBalanceDiff);
+      empUpdates.push(`opening_leave = GREATEST(0, ROUND(opening_leave + ?, 1))`);
+      empValues.push(diff);
+    }
+
+    if (empUpdates.length > 0) {
+      empUpdates.push(`updated_at = NOW()`);
+      empValues.push(employeeId);
+      await this.pool.execute(
+        `UPDATE hrms_employees SET ${empUpdates.join(', ')} WHERE id = ?`,
+        empValues,
+      );
+    }
+
+    if (adminId) {
+      const adminUpdates: string[] = [];
+      const adminValues: any[] = [];
+
+      if (dto.email !== undefined) {
+        adminUpdates.push(`email = ?`);
+        adminValues.push(dto.email?.trim() || null);
+      }
+      if (dto.mobile !== undefined) {
+        adminUpdates.push(`mobile = ?`);
+        adminValues.push(dto.mobile?.trim() || null);
+      }
+      if (dto.dateOfBirth !== undefined) {
+        adminUpdates.push(`date_of_birth = ?`);
+        adminValues.push(dto.dateOfBirth?.trim() || null);
+      }
+      if (dto.pan !== undefined) {
+        adminUpdates.push(`pan = ?`);
+        adminValues.push(dto.pan?.trim() ? dto.pan.trim().toUpperCase() : null);
+      }
+      if (dto.aadhar !== undefined) {
+        adminUpdates.push(`aadhar_number = ?`);
+        adminValues.push(dto.aadhar?.trim() || null);
+      }
+
+      if (adminUpdates.length > 0) {
+        adminUpdates.push(`updated_at = NOW()`);
+        adminValues.push(adminId);
+        await this.pool.execute(
+          `UPDATE admins SET ${adminUpdates.join(', ')} WHERE id = ?`,
+          adminValues,
+        );
+      }
+    }
+
+    if (dto.pan !== undefined) {
+      try {
+        await this.pool.execute(
+          `UPDATE hrms_employee_documents SET doc_number = ? WHERE employee_id = ? AND doc_key = 'pan'`,
+          [dto.pan?.trim() ? dto.pan.trim().toUpperCase() : null, employeeId]
+        );
+      } catch {}
+    }
+    if (dto.aadhar !== undefined) {
+      try {
+        const [res]: any = await this.pool.execute(
+          `UPDATE hrms_employee_documents SET doc_number = ? WHERE employee_id = ? AND doc_key = 'aadhaar'`,
+          [dto.aadhar?.trim() || null, employeeId]
+        );
+        if (res && res.affectedRows === 0 && !adminId && dto.aadhar?.trim()) {
+          await this.pool.execute(
+            `INSERT INTO hrms_employee_documents (employee_id, doc_key, doc_name, doc_number, file_path)
+             VALUES (?, 'aadhaar', 'Aadhaar Card', ?, '')`,
+            [employeeId, dto.aadhar.trim()]
+          );
+        }
+      } catch {}
+    }
+  }
+
+async updateEmploymentType(employeeId: number, employmentType: string): Promise<void> {
     await this.pool.execute(
       `UPDATE hrms_employees SET employment_type = ? WHERE id = ?`,
       [employmentType, employeeId],
@@ -379,11 +537,16 @@ export class ProfileRepository implements IProfileRepository {
       dateOfLeaving: row.date_of_leaving,
       managerId: row.manager_id,
       managerName: row.manager_name,
+      hrmsRole: row.hrms_role,
+      isManagerOverride: row.is_manager_override === 1,
+      role: row.hrms_role === "admin" ? "admin" : (row.is_manager_override === 1 || row.has_active_reports === 1 ? "manager" : "employee"),
       mobile: this.text(row.mobile),
       personalEmail: this.text(row.personal_email),
       dateOfBirth: this.text(row.date_of_birth),
       emergencyMobile: this.text(row.emergency_mobile),
       city: this.text(row.city),
+      panNumber: this.text(row.pan_number),
+      aadharNumber: this.text(row.aadhar_number),
       linkedinProfile: this.text(row.linkedin_profile),
       documents: this.mapDocuments(row),
 
@@ -419,8 +582,14 @@ export class ProfileRepository implements IProfileRepository {
     return documents;
   }
 
-  private text(value: string | null): string | null {
+  private text(value: any): string | null {
     if (value === null || value === undefined) return null;
+    if (value instanceof Date) {
+      const y = value.getFullYear();
+      const m = String(value.getMonth() + 1).padStart(2, "0");
+      const d = String(value.getDate()).padStart(2, "0");
+      return `${y}-${m}-${d}`;
+    }
     const trimmed = String(value).trim();
     return trimmed === '' ? null : trimmed;
   }

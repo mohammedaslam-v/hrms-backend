@@ -1,4 +1,4 @@
-import { DismissEmployeeDto, DocumentKey, ProfileDocument, ProfileView, SaveDocumentDto, ToggleSalaryDto, UpdateCompensationDto, CompensationView } from './profile.model';
+import { DismissEmployeeDto, DocumentKey, ProfileDocument, ProfileView, SaveDocumentDto, ToggleSalaryDto, UpdateCompensationDto, CompensationView, UpdatePersonalDetailsDto } from './profile.model';
 
 export interface IProfileService {
   getProfile(viewerId: number, subjectId: number): Promise<ProfileView>;
@@ -50,6 +50,12 @@ export interface IProfileService {
     subjectId: number,
     workMode: string,
   ): Promise<{ workMode: string }>;
+
+  updatePersonalDetails(
+    viewerId: number,
+    subjectId: number,
+    dto: UpdatePersonalDetailsDto,
+  ): Promise<ProfileView>;
 
   deleteEmployee(
     viewerId: number,

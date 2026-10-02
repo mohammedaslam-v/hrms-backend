@@ -1,4 +1,4 @@
-import { DismissEmployeeDto, DocumentKey, ProfileRecord } from './profile.model';
+import { DismissEmployeeDto, DocumentKey, ProfileRecord, UpdatePersonalDetailsDto } from './profile.model';
 
 export interface IProfileRepository {
   findProfile(employeeId: number): Promise<ProfileRecord | null>;
@@ -24,6 +24,8 @@ export interface IProfileRepository {
   updateEmploymentType(employeeId: number, employmentType: string): Promise<void>;
 
   updateWorkMode(employeeId: number, workMode: string): Promise<void>;
+
+  updatePersonalDetails(employeeId: number, dto: UpdatePersonalDetailsDto): Promise<void>;
 
   deleteEmployee(employeeId: number, adminId: number | null): Promise<void>;
 }
