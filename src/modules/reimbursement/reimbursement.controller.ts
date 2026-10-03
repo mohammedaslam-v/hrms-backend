@@ -28,14 +28,14 @@ export class ReimbursementController {
     if (isNaN(claimId) || claimId <= 0) {
       throw ApiError.badRequest('Invalid claim ID.');
     }
-    const { fullPath, mimeType, filename } =
+    const { buffer, mimeType, filename } =
       await this.reimbursementService.getReceiptFile(employeeId, claimId);
     res.setHeader('Content-Type', mimeType);
     res.setHeader(
       'Content-Disposition',
       `inline; filename="${filename}"`,
     );
-    res.sendFile(fullPath);
+    res.send(buffer);
   });
 
   cancelClaim: RequestHandler = asyncHandler(async (req, res) => {

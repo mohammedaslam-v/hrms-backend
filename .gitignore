@@ -1,8 +1,19 @@
 node_modules/
 dist/
+# `.env` alone does not cover `.env.live`, which holds the production database
+# password and was sitting untracked and committable.
 .env
+.env.*
+!.env.example
 *.log
 .DS_Store
+
+# HR source extracts: real names, DOB, PAN, UAN, bank account numbers and IFSC
+# for the whole company. Fine to have locally while importing, never in git.
+/employees.csv
+/leave_balances.csv
+/shift_and_week_off .csv
+/update_shifts_and_weekly_off.sql
 
 # Never commit these: 003 rewrites live leave balances with unqualified UPDATEs,
 # and seed-dev carries a plaintext development password in its header.

@@ -1,5 +1,14 @@
 import fs from 'fs';
 import path from 'path';
+import {
+  buildKey,
+  contentTypeFor,
+  getObject,
+  isRemoteKey,
+  putObject,
+  removeObject,
+} from '../../utils/object-storage';
+import { env } from '../../config/env';
 import { canSeeCompensation, canSeePersonalDetails } from '../access/access.domain';
 import { vestedUnits } from '../compensation/compensation.domain';
 import { ICompensationService } from '../compensation/compensation.service.interface';
@@ -16,6 +25,7 @@ import { IProfileService } from './profile.service.interface';
 import {
   CompensationView,
   DismissEmployeeDto,
+  DocumentFileResult,
   DocumentKey,
   ProfileDocument,
   ProfileRecord,
@@ -125,13 +135,10 @@ export class ProfileService implements IProfileService {
       }
 
       const safeExt = ['pdf', 'png', 'jpg', 'jpeg'].includes(ext) ? ext : 'pdf';
-      const cleanFileName = `${subjectId}_${dto.key}_${Date.now()}.${safeExt}`;
-      const uploadsDir = path.resolve(process.cwd(), 'uploads/documents');
-      await fs.promises.mkdir(uploadsDir, { recursive: true });
-      const fullPath = path.join(uploadsDir, cleanFileName);
-      await fs.promises.writeFile(fullPath, buffer);
+      const key = buildKey('documents', subjectId, dto.key, safeExt);
+      await putObject(key, buffer, contentTypeFor(safeExt));
 
-      filePath = `uploads/documents/${cleanFileName}`;
+      filePath = key;
     }
 
     let docNumber = dto.docNumber ? dto.docNumber.trim() : undefined;
@@ -178,10 +185,12 @@ export class ProfileService implements IProfileService {
 
     try {
       const existingPath = await this.profileRepository.findDocumentPath(subjectId, key);
+      // Only ever remove something this app wrote. A legacy path pointing into
+      // the Laravel portal's own uploads is shared, and deleting it would take
+      // the document out of the old admin too.
       if (existingPath && !existingPath.startsWith('http')) {
-        const full = path.resolve(process.cwd(), existingPath);
-        if (fs.existsSync(full) && full.includes('uploads/documents')) {
-          await fs.promises.unlink(full).catch(() => {});
+        if (isRemoteKey(existingPath) || existingPath.includes('uploads/documents')) {
+          await removeObject(existingPath);
         }
       }
     } catch {}
@@ -195,11 +204,23 @@ export class ProfileService implements IProfileService {
     );
   }
 
-  async getDocumentFilePath(
+  /**
+   * The bytes of a document, never a link to them.
+   *
+   * Returning a path stopped working once files moved to Cloud Storage, and
+   * returning a bucket URL would hand out something that bypasses the access
+   * check above — so the object is fetched here and streamed by the route.
+   *
+   * Three shapes of stored value, because three eras wrote them:
+   *   · `hrms/…`          — written by this app, in the bucket
+   *   · `uploads/…`       — written by this app before the move, on disk
+   *   · `http(s)://…`     — a link the old Laravel portal stored
+   */
+  async getDocumentFile(
     viewerId: number,
     subjectId: number,
     key: DocumentKey,
-  ): Promise<string> {
+  ): Promise<DocumentFileResult> {
     const access = await this.accessService.require(viewerId, subjectId);
     if (!canSeePersonalDetails(access)) {
       throw ApiError.forbidden('Documents are visible to the employee and HR only.');
@@ -211,19 +232,44 @@ export class ProfileService implements IProfileService {
     }
 
     if (relPath.startsWith('http://') || relPath.startsWith('https://')) {
-      return relPath;
+      return { kind: 'redirect', url: relPath };
     }
 
+    const filename = path.basename(relPath);
+    const ext = filename.split('.').pop() ?? '';
+
+    if (isRemoteKey(relPath)) {
+      try {
+        return {
+          kind: 'buffer',
+          buffer: await getObject(relPath),
+          contentType: contentTypeFor(ext),
+          filename,
+        };
+      } catch {
+        throw ApiError.notFound('The document file is no longer in storage.');
+      }
+    }
+
+    // Legacy disk paths. env.legacyFileRoots covers documents the Laravel portal
+    // wrote next to itself; it is empty unless configured, so on the server these
+    // simply do not match rather than pointing at somebody's dev laptop.
     const candidatePaths = [
       path.resolve(process.cwd(), relPath),
-      path.resolve(process.cwd(), 'uploads', path.basename(relPath)),
-      path.resolve(process.cwd(), 'uploads/documents', path.basename(relPath)),
-      path.resolve('/Applications/XAMPP/xamppfiles/htdocs/bambinos-admin/public', relPath),
-      path.resolve('/Applications/XAMPP/xamppfiles/htdocs', relPath),
+      path.resolve(process.cwd(), 'uploads', filename),
+      path.resolve(process.cwd(), 'uploads/documents', filename),
+      ...env.legacyFileRoots.map((root) => path.resolve(root, relPath)),
     ];
 
     for (const p of candidatePaths) {
-      if (fs.existsSync(p)) return p;
+      if (fs.existsSync(p)) {
+        return {
+          kind: 'buffer',
+          buffer: await fs.promises.readFile(p),
+          contentType: contentTypeFor(ext),
+          filename,
+        };
+      }
     }
 
     throw ApiError.notFound('The document file is not found on disk.');

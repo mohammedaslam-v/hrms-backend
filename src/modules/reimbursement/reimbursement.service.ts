@@ -1,6 +1,6 @@
-import fs from 'fs';
 import path from 'path';
 import { ApiError } from '../../utils/api-error';
+import { buildKey, contentTypeFor, getObject, putObject } from '../../utils/object-storage';
 import { IAuthService } from '../auth/auth.service.interface';
 import {
   AdminReimbursementsView,
@@ -82,14 +82,13 @@ export class ReimbursementService implements IReimbursementService {
       const safeExt = ['pdf', 'png', 'jpg', 'jpeg'].includes(ext)
         ? ext
         : 'pdf';
-      const cleanFileName = `reimb_${employeeId}_${Date.now()}.${safeExt}`;
-      const uploadsDir = path.resolve(process.cwd(), 'uploads/reimbursements');
-      await fs.promises.mkdir(uploadsDir, { recursive: true });
-      const fullPath = path.join(uploadsDir, cleanFileName);
-      await fs.promises.writeFile(fullPath, buffer);
+      const key = buildKey('reimbursements', employeeId, 'receipt', safeExt);
+      await putObject(key, buffer, contentTypeFor(safeExt));
 
-      receiptPath = `uploads/reimbursements/${cleanFileName}`;
-      receiptFilename = dto.fileName || cleanFileName;
+      receiptPath = key;
+      // The name the claimant's browser had, kept for the download header; the
+      // stored key is deliberately not that name.
+      receiptFilename = dto.fileName || key.split('/').pop()!;
       receiptMimeType = mimeType;
     }
 
@@ -117,7 +116,7 @@ export class ReimbursementService implements IReimbursementService {
   async getReceiptFile(
     viewerId: number,
     claimId: number,
-  ): Promise<{ fullPath: string; mimeType: string; filename: string }> {
+  ): Promise<{ buffer: Buffer; mimeType: string; filename: string }> {
     const claim = await this.reimbursementRepository.findById(claimId);
     if (!claim || !claim.receiptPath) {
       throw ApiError.notFound('Receipt file not found.');
@@ -131,15 +130,20 @@ export class ReimbursementService implements IReimbursementService {
       );
     }
 
-    const fullPath = path.resolve(process.cwd(), claim.receiptPath);
-    if (!fs.existsSync(fullPath)) {
+    // Bytes rather than a path: receipts written since the move to Cloud Storage
+    // have no path on this machine. getObject falls back to disk for the older
+    // `uploads/reimbursements/…` rows, so both eras still download.
+    let buffer: Buffer;
+    try {
+      buffer = await getObject(claim.receiptPath);
+    } catch {
       throw ApiError.notFound('Receipt file does not exist on server.');
     }
 
     return {
-      fullPath,
+      buffer,
       mimeType: claim.receiptMimeType || 'application/octet-stream',
-      filename: claim.receiptFilename || path.basename(fullPath),
+      filename: claim.receiptFilename || path.basename(claim.receiptPath),
     };
   }
 

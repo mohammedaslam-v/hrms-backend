@@ -17,7 +17,7 @@ export interface IReimbursementService {
   getReceiptFile(
     viewerId: number,
     claimId: number,
-  ): Promise<{ fullPath: string; mimeType: string; filename: string }>;
+  ): Promise<{ buffer: Buffer; mimeType: string; filename: string }>;
   cancelClaim(viewerId: number, claimId: number): Promise<void>;
   getAllForAdmin(
     viewerId: number,

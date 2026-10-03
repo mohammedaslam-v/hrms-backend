@@ -27,6 +27,20 @@ export interface ProfileDocument {
   docNumber?: string | null;
 }
 
+/**
+ * What a document download resolves to.
+ *
+ * Bytes rather than a path: the file now lives in Cloud Storage and there is no
+ * path to send. Returning a bucket URL instead would hand out something that
+ * bypasses the access check, so the route streams these bytes itself.
+ *
+ * `redirect` covers only the links the old Laravel portal stored, which already
+ * point at its own public assets.
+ */
+export type DocumentFileResult =
+  | { kind: 'redirect'; url: string }
+  | { kind: 'buffer'; buffer: Buffer; contentType: string; filename: string };
+
 export interface SaveDocumentDto {
   key: DocumentKey;
   label?: string;

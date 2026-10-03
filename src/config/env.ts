@@ -52,6 +52,30 @@ export const env = {
     webhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET ?? '',
     mode: (process.env.RAZORPAY_MODE ?? 'mock') as 'live' | 'test' | 'mock',
   },
+  gcs: {
+    /**
+     * Unset means "write to ./uploads", which is what local development wants —
+     * no service-account credentials needed to run the app. Set it in Cloud Run,
+     * where the container filesystem does not survive a restart.
+     *
+     * Credentials come from Application Default Credentials, so there is no key
+     * to put here: on Cloud Run that is the service account the revision runs as.
+     */
+    bucket: process.env.GCS_BUCKET ?? '',
+    projectId: process.env.GCS_PROJECT_ID ?? process.env.GOOGLE_CLOUD_PROJECT ?? '',
+  },
+  /**
+   * Directories to search for documents the old Laravel portal wrote, as a
+   * comma-separated list. These used to be two absolute paths hardcoded into
+   * profile.service — a developer's own machine, which matched nothing on the
+   * server and made every legacy document download fail.
+   *
+   * Empty by default: no match is the honest answer when the files are not there.
+   */
+  legacyFileRoots: (process.env.LEGACY_FILE_ROOTS ?? '')
+    .split(',')
+    .map((p) => p.trim())
+    .filter(Boolean),
   corsOrigin: required('CORS_ORIGIN', 'http://localhost:5173'),
 } as const;
 

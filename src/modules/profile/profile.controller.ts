@@ -42,11 +42,14 @@ export class ProfileController {
     const subjectId = req.params.id ? this.readId(req.params.id) : employeeId;
     const key = req.params.key as DocumentKey;
 
-    const filePath = await this.profileService.getDocumentFilePath(employeeId, subjectId, key);
-    if (filePath.startsWith('http://') || filePath.startsWith('https://')) {
-      return res.redirect(filePath);
+    const file = await this.profileService.getDocumentFile(employeeId, subjectId, key);
+    if (file.kind === 'redirect') {
+      return res.redirect(file.url);
     }
-    res.sendFile(filePath);
+
+    res.setHeader('Content-Type', file.contentType);
+    res.setHeader('Content-Disposition', `inline; filename="${file.filename}"`);
+    res.send(file.buffer);
   });
 
   toggleLogin: RequestHandler = asyncHandler(async (req, res) => {
