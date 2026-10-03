@@ -93,7 +93,7 @@ export class ProfileController {
 
     updatePersonalDetails: RequestHandler = asyncHandler(async (req, res) => {
     const { employeeId } = req as AuthenticatedRequest;
-    const subjectId = req.params.id === "me" ? employeeId : this.readId(req.params.id);
+    const subjectId = req.params.id && req.params.id !== "me" ? this.readId(req.params.id) : employeeId;
     const dto = req.body || {};
 
     const result = await this.profileService.updatePersonalDetails(employeeId, subjectId, dto);
