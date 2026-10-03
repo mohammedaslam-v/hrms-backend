@@ -370,9 +370,22 @@ export class ProfileService implements IProfileService {
       delete dto.leaveBalance;
       delete dto.managerId;
       delete dto.role;
+      delete dto.confirmationDate;
+      delete dto.dateOfLeaving;
+      delete dto.uan;
+      delete dto.pfNumber;
+      delete dto.bankName;
+      delete dto.ifscCode;
+      delete dto.accountNo;
     } else {
       if (dto.dateOfJoining && dto.dateOfJoining.trim() && !/^\d{4}-\d{2}-\d{2}$/.test(dto.dateOfJoining.trim())) {
         throw ApiError.badRequest("Date of joining must be a valid date format (YYYY-MM-DD).");
+      }
+      if (dto.confirmationDate && dto.confirmationDate.trim() && !/^\d{4}-\d{2}-\d{2}$/.test(dto.confirmationDate.trim())) {
+        throw ApiError.badRequest("Confirmation date must be a valid date format (YYYY-MM-DD).");
+      }
+      if (dto.dateOfLeaving && dto.dateOfLeaving.trim() && !/^\d{4}-\d{2}-\d{2}$/.test(dto.dateOfLeaving.trim())) {
+        throw ApiError.badRequest("Date of leaving must be a valid date format (YYYY-MM-DD).");
       }
       if (dto.managerId !== undefined && dto.managerId !== null && Number(dto.managerId) === subjectId) {
         throw ApiError.badRequest("An employee cannot be their own reporting manager.");
@@ -468,6 +481,12 @@ async updateEmploymentType(
       weeklyOff: record.weeklyOff,
       dateOfJoining: record.dateOfJoining,
       dateOfLeaving: record.dateOfLeaving,
+      confirmationDate: record.confirmationDate,
+      uan: personal || access === 'admin' ? record.uan : null,
+      pfNumber: personal || access === 'admin' ? record.pfNumber : null,
+      bankName: personal || access === 'admin' ? record.bankName : null,
+      ifscCode: personal || access === 'admin' ? record.ifscCode : null,
+      accountNo: personal || access === 'admin' ? record.accountNo : null,
       managerId: record.managerId,
       managerName: record.managerName,
       role: record.role ?? "employee",

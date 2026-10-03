@@ -49,6 +49,13 @@ export interface UpdatePersonalDetailsDto {
   leaveBalance?: number | null;
   managerId?: number | null;
   role?: "employee" | "manager" | "admin" | null;
+  confirmationDate?: string | null;
+  dateOfLeaving?: string | null;
+  uan?: string | null;
+  pfNumber?: string | null;
+  bankName?: string | null;
+  ifscCode?: string | null;
+  accountNo?: string | null;
 }
 
 export interface DismissEmployeeDto {
@@ -102,6 +109,12 @@ export interface ProfileRecord {
   weeklyOff: string[];
   dateOfJoining: string;
   dateOfLeaving: string | null;
+  confirmationDate: string | null;
+  uan: string | null;
+  pfNumber: string | null;
+  bankName: string | null;
+  ifscCode: string | null;
+  accountNo: string | null;
 
   /** Resolved by a self join, so the header can say "reports to …" in one query. */
   managerId: number | null;
@@ -168,6 +181,12 @@ export interface ProfileView {
   weeklyOff: string[];
   dateOfJoining: string;
   dateOfLeaving: string | null;
+  confirmationDate: string | null;
+  uan: string | null;
+  pfNumber: string | null;
+  bankName: string | null;
+  ifscCode: string | null;
+  accountNo: string | null;
   managerName: string | null;
 
   mobile: string | null;

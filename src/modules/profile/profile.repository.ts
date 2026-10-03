@@ -33,6 +33,12 @@ interface ProfileRow extends RowDataPacket {
   temp_address_proof: string | null;
   aadhar_number: string | null;
   pan_number: string | null;
+  confirmation_date: string | null;
+  uan: string | null;
+  pf_number: string | null;
+  bank_name: string | null;
+  ifsc_code: string | null;
+  account_no: string | null;
   hrms_role?: "employee" | "admin";
   is_manager_override?: number;
   has_active_reports?: number;
@@ -80,6 +86,12 @@ export class ProfileRepository implements IProfileRepository {
               e.weekly_off,
               e.date_of_joining,
               e.date_of_leaving,
+              e.confirmation_date,
+              e.uan,
+              e.pf_number,
+              COALESCE(e.bank_name, a.bank_name) AS bank_name,
+              COALESCE(e.ifsc_code, a.ifsc_code) AS ifsc_code,
+              COALESCE(e.account_no, a.account_no) AS account_no,
               e.manager_id,
               m.full_name                AS manager_name,
               COALESCE(a.mobile, e.phone) AS mobile,
@@ -415,6 +427,35 @@ export class ProfileRepository implements IProfileRepository {
       empValues.push(diff);
     }
 
+    if (dto.confirmationDate !== undefined) {
+      empUpdates.push(`confirmation_date = ?`);
+      empValues.push(dto.confirmationDate?.trim() ? dto.confirmationDate.trim().slice(0, 10) : null);
+    }
+    if (dto.dateOfLeaving !== undefined) {
+      empUpdates.push(`date_of_leaving = ?`);
+      empValues.push(dto.dateOfLeaving?.trim() ? dto.dateOfLeaving.trim().slice(0, 10) : null);
+    }
+    if (dto.uan !== undefined) {
+      empUpdates.push(`uan = ?`);
+      empValues.push(dto.uan?.trim() || null);
+    }
+    if (dto.pfNumber !== undefined) {
+      empUpdates.push(`pf_number = ?`);
+      empValues.push(dto.pfNumber?.trim() || null);
+    }
+    if (dto.bankName !== undefined) {
+      empUpdates.push(`bank_name = ?`);
+      empValues.push(dto.bankName?.trim() || null);
+    }
+    if (dto.ifscCode !== undefined) {
+      empUpdates.push(`ifsc_code = ?`);
+      empValues.push(dto.ifscCode?.trim() ? dto.ifscCode.trim().toUpperCase() : null);
+    }
+    if (dto.accountNo !== undefined) {
+      empUpdates.push(`account_no = ?`);
+      empValues.push(dto.accountNo?.trim() || null);
+    }
+
     if (empUpdates.length > 0) {
       empUpdates.push(`updated_at = NOW()`);
       empValues.push(employeeId);
@@ -447,6 +488,18 @@ export class ProfileRepository implements IProfileRepository {
       if (dto.aadhar !== undefined) {
         adminUpdates.push(`aadhar_number = ?`);
         adminValues.push(dto.aadhar?.trim() || null);
+      }
+      if (dto.bankName !== undefined) {
+        adminUpdates.push(`bank_name = ?`);
+        adminValues.push(dto.bankName?.trim() || null);
+      }
+      if (dto.ifscCode !== undefined) {
+        adminUpdates.push(`ifsc_code = ?`);
+        adminValues.push(dto.ifscCode?.trim() ? dto.ifscCode.trim().toUpperCase() : null);
+      }
+      if (dto.accountNo !== undefined) {
+        adminUpdates.push(`account_no = ?`);
+        adminValues.push(dto.accountNo?.trim() || null);
       }
 
       if (adminUpdates.length > 0) {
@@ -534,7 +587,13 @@ async updateEmploymentType(employeeId: number, employmentType: string): Promise<
       shiftEnd: row.shift_end.slice(0, 5),
       weeklyOff: row.weekly_off ? row.weekly_off.split(',').filter(Boolean) : [],
       dateOfJoining: row.date_of_joining,
-      dateOfLeaving: row.date_of_leaving,
+      dateOfLeaving: row.date_of_leaving ? String(row.date_of_leaving).slice(0, 10) : null,
+      confirmationDate: row.confirmation_date ? String(row.confirmation_date).slice(0, 10) : null,
+      uan: this.text(row.uan),
+      pfNumber: this.text(row.pf_number),
+      bankName: this.text(row.bank_name),
+      ifscCode: this.text(row.ifsc_code),
+      accountNo: this.text(row.account_no),
       managerId: row.manager_id,
       managerName: row.manager_name,
       hrmsRole: row.hrms_role,
