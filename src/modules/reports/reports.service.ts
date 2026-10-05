@@ -9,6 +9,15 @@ import { IReportsRepository } from './reports.repository.interface';
 import { IReportsService } from './reports.service.interface';
 import { ICompensationService } from '../compensation/compensation.service.interface';
 import { IAuthService } from '../auth/auth.service.interface';
+import { IAttendanceRepository } from '../attendance/attendance.repository.interface';
+import { IPolicyService } from '../policy/policy.service.interface';
+import {
+  datesBetween,
+  loadAttendanceDays,
+  shiftLabel,
+  timeLabel,
+  type AttendanceDay,
+} from './reports.attendance';
 import { ApiError } from '../../utils/api-error';
 
 const PAYROLL_REPORT_TYPES: ReadonlySet<ReportType> = new Set([
@@ -38,8 +47,6 @@ const MONTH_NAMES = [
   'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
   'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
 ];
-
-const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 function formatMonthLabel(mKey: string): string {
   const parts = mKey.split('-');
@@ -121,7 +128,53 @@ export class ReportsService implements IReportsService {
     private readonly repository: IReportsRepository,
     private readonly compensationService: ICompensationService,
     private readonly authService?: IAuthService,
+    /**
+     * Optional so the service still constructs without it, but every
+     * attendance report is wrong without it — they printed a hardcoded 10:04
+     * for everyone before this was wired in. See buildAttendance.
+     */
+    private readonly attendanceRepository?: IAttendanceRepository,
+    private readonly policyService?: IPolicyService,
   ) {}
+
+  /**
+   * Real attendance for a set of employees over a date range.
+   *
+   * Every attendance report goes through here, so they cannot disagree about
+   * who was late or how long somebody worked. Returns an empty map when the
+   * repository was not injected, which makes the reports show no activity
+   * rather than invented activity.
+   */
+  private async attendanceFor(
+    employees: { id: number }[],
+    from: string,
+    to: string,
+  ): Promise<Map<number, Map<string, AttendanceDay>>> {
+    if (!this.attendanceRepository) return new Map();
+    const today = new Date().toISOString().slice(0, 10);
+    return loadAttendanceDays(
+      this.attendanceRepository,
+      employees.map((e) => e.id),
+      from,
+      to,
+      today,
+      await this.lateGrace(to),
+    );
+  }
+
+  /**
+   * The late-login grace from policy, or the statutory-looking default.
+   * Reports must agree with My Page about who was late.
+   */
+  private async lateGrace(date: string): Promise<number> {
+    if (!this.policyService) return 15;
+    try {
+      const fy = await this.policyService.getForDate(date);
+      return fy?.lateGraceMinutes ?? 15;
+    } catch {
+      return 15;
+    }
+  }
 
   async getCatalog(actorId?: number): Promise<ReportCatalogItem[]> {
     const all = this.getAllCatalogItems();
@@ -362,33 +415,27 @@ export class ReportsService implements IReportsService {
       { key: 'status', label: 'Status', width: '120px' },
     ];
 
-    // Generate date sequence
-    const dates: string[] = [];
-    const curr = new Date(range.from);
-    const end = new Date(range.to);
-    while (curr <= end && dates.length < 62) {
-      dates.push(curr.toISOString().split('T')[0]);
-      curr.setDate(curr.getDate() + 1);
-    }
+    const facts = await this.attendanceFor(employees, range.from, range.to);
+    const dates = datesBetween(range.from, range.to, 62);
 
     const rows: Record<string, any>[] = [];
     for (const d of dates) {
-      const dObj = new Date(d);
-      const dayName = DAY_NAMES[dObj.getDay()];
       for (const e of employees) {
-        const isOff = dayName === 'Sun';
+        const day = facts.get(e.id)?.get(d);
+        // No entry means the person had already left before this date.
+        if (!day) continue;
         rows.push({
           date: formatDisplayDate(d),
-          day: dayName,
+          day: day.dayName,
           code: e.employee_code,
           employee: e.full_name,
           department: e.department || 'General',
-          shift: '10:00–19:00',
-          login: isOff ? '—' : '10:04',
-          logout: isOff ? '—' : '19:08',
-          activeHours: isOff ? 0 : 8.5,
-          lateBy: 0,
-          status: isOff ? 'Weekly off' : 'On time',
+          shift: shiftLabel(day),
+          login: timeLabel(day.loginAt),
+          logout: timeLabel(day.logoutAt),
+          activeHours: Number(day.activeHours.toFixed(2)),
+          lateBy: day.lateByMinutes,
+          status: day.status,
         });
       }
     }
@@ -433,22 +480,45 @@ export class ReportsService implements IReportsService {
       { key: 'punctuality', label: 'Punctuality %', isNumeric: true },
     ];
 
-    const rows = employees.map((e) => ({
-      code: e.employee_code,
-      employee: e.full_name,
-      department: e.department || 'General',
-      workingDays: 22,
-      onTime: 20,
-      late: 1,
-      noLogin: 1,
-      halfDay: 0,
-      leave: 0,
-      weeklyOff: 4,
-      holiday: 1,
-      totalActive: 172.5,
-      avgActive: 8.2,
-      punctuality: '95.2%',
-    }));
+    const facts = await this.attendanceFor(employees, range.from, range.to);
+
+    const rows = employees.map((e) => {
+      const days = [...(facts.get(e.id)?.values() ?? [])];
+      const count = (status: string) => days.filter((d) => d.status === status).length;
+
+      const onTime = count('On time');
+      const late = count('Late');
+      const halfDay = count('Half day');
+      // A day still in progress is not an absence; it is also not yet a
+      // working day anyone can be judged on, so it stays out of both.
+      const noLogin = count('Absent');
+      const weeklyOff = count('Weekly off');
+      const holiday = count('Holiday');
+      const leave = count('Leave');
+
+      // Days the person was expected in — what the percentages divide by.
+      const workingDays = onTime + late + halfDay + noLogin;
+      const totalActive = days.reduce((sum, d) => sum + d.activeHours, 0);
+
+      return {
+        code: e.employee_code,
+        employee: e.full_name,
+        department: e.department || 'General',
+        workingDays,
+        onTime,
+        late,
+        noLogin,
+        halfDay,
+        leave,
+        weeklyOff,
+        holiday,
+        totalActive: Number(totalActive.toFixed(1)),
+        avgActive: workingDays > 0 ? Number((totalActive / workingDays).toFixed(1)) : 0,
+        // Zero working days gives no punctuality at all. Showing 0% would read
+        // as "always late" for somebody who was on leave for the period.
+        punctuality: workingDays > 0 ? `${((onTime / workingDays) * 100).toFixed(1)}%` : '—',
+      };
+    });
 
     return {
       type: 'attsummary',
@@ -482,17 +552,32 @@ export class ReportsService implements IReportsService {
       { key: 'activeHours', label: 'Active hours', width: '110px', isNumeric: true },
     ];
 
-    const rows = employees.slice(0, 5).map((e) => ({
-      date: formatDisplayDate('2026-09-24'),
-      day: 'Thu',
-      code: e.employee_code,
-      employee: e.full_name,
-      department: e.department || 'General',
-      shiftStart: '10:00',
-      login: '10:36',
-      lateBy: 36,
-      activeHours: 8.0,
-    }));
+    const facts = await this.attendanceFor(employees, range.from, range.to);
+    const grace = await this.lateGrace(range.to);
+
+    // Only the days somebody actually was late, newest first — this is an
+    // exception report, so a row per person per day would bury the exceptions.
+    const rows = employees
+      .flatMap((e) =>
+        [...(facts.get(e.id)?.values() ?? [])]
+          .filter((d) => d.status === 'Late')
+          .map((d) => ({
+            date: formatDisplayDate(d.date),
+            day: d.dayName,
+            code: e.employee_code,
+            employee: e.full_name,
+            department: e.department || 'General',
+            shiftStart: d.shiftStart.slice(0, 5),
+            login: timeLabel(d.loginAt),
+            lateBy: d.lateByMinutes,
+            activeHours: Number(d.activeHours.toFixed(2)),
+            _sort: d.date,
+          })),
+      )
+      .sort((a, b) => (a._sort < b._sort ? 1 : a._sort > b._sort ? -1 : 0))
+      .map(({ _sort, ...row }) => row);
+
+    const note = `A login more than ${grace} minutes after shift start is treated as late.`;
 
     return {
       type: 'late',
@@ -503,9 +588,9 @@ export class ReportsService implements IReportsService {
         periodLabel: range.label,
         generatedAt: new Date().toISOString(),
         totalRecords: rows.length,
-        note: 'A login more than 15 minutes after shift start is treated as late.',
+        note,
       },
-      note: 'A login more than 15 minutes after shift start is treated as late.',
+      note,
       columns,
       rows,
     };
@@ -527,16 +612,29 @@ export class ReportsService implements IReportsService {
       { key: 'status', label: 'Status', width: '150px' },
     ];
 
-    const rows = employees.slice(0, 3).map((e) => ({
-      date: formatDisplayDate('2026-09-24'),
-      day: 'Thu',
-      code: e.employee_code,
-      employee: e.full_name,
-      department: e.department || 'General',
-      manager: e.manager_name || '—',
-      shift: '10:00–19:00',
-      status: 'No login activity',
-    }));
+    const facts = await this.attendanceFor(employees, range.from, range.to);
+
+    // 'Absent' is a finished working day with nothing on it — the domain has
+    // already taken out weekly offs, holidays, approved leave and days still
+    // in progress, which is exactly what the note below promises.
+    const rows = employees
+      .flatMap((e) =>
+        [...(facts.get(e.id)?.values() ?? [])]
+          .filter((d) => d.status === 'Absent')
+          .map((d) => ({
+            date: formatDisplayDate(d.date),
+            day: d.dayName,
+            code: e.employee_code,
+            employee: e.full_name,
+            department: e.department || 'General',
+            manager: e.manager_name || '—',
+            shift: shiftLabel(d),
+            status: 'No login activity',
+            _sort: d.date,
+          })),
+      )
+      .sort((a, b) => (a._sort < b._sort ? 1 : a._sort > b._sort ? -1 : 0))
+      .map(({ _sort, ...row }) => row);
 
     return {
       type: 'nologin',
@@ -572,17 +670,30 @@ export class ReportsService implements IReportsService {
       { key: 'status', label: 'Status', width: '120px' },
     ];
 
-    const rows = employees.map((e) => ({
-      date: formatDisplayDate('2026-09-24'),
-      day: 'Thu',
-      code: e.employee_code,
-      employee: e.full_name,
-      department: e.department || 'General',
-      login: '10:04',
-      logout: '19:05',
-      activeHours: 8.5,
-      status: 'On time',
-    }));
+    const facts = await this.attendanceFor(employees, range.from, range.to);
+    const dates = datesBetween(range.from, range.to, 62);
+
+    // Days somebody was expected in. A page of weekly offs and holidays
+    // showing a dash under "active hours" tells nobody anything.
+    const rows: Record<string, any>[] = [];
+    for (const d of dates) {
+      for (const e of employees) {
+        const day = facts.get(e.id)?.get(d);
+        if (!day) continue;
+        if (day.status === 'Weekly off' || day.status === 'Holiday') continue;
+        rows.push({
+          date: formatDisplayDate(d),
+          day: day.dayName,
+          code: e.employee_code,
+          employee: e.full_name,
+          department: e.department || 'General',
+          login: timeLabel(day.loginAt),
+          logout: timeLabel(day.logoutAt),
+          activeHours: Number(day.activeHours.toFixed(2)),
+          status: day.status,
+        });
+      }
+    }
 
     return {
       type: 'active',

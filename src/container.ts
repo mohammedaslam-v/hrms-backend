@@ -248,7 +248,16 @@ export const createContainer = () => {
   const payrollController = new PayrollController(payrollService);
 
   const reportsRepository: IReportsRepository = new ReportsRepository(pool);
-  const reportsService: IReportsService = new ReportsService(reportsRepository, compensationService, authService);
+  // attendanceRepository and policyService are what make the attendance
+  // reports read real punches and observed slots instead of printing a fixed
+  // 10:04 for every person on every day.
+  const reportsService: IReportsService = new ReportsService(
+    reportsRepository,
+    compensationService,
+    authService,
+    attendanceRepository,
+    policyService,
+  );
   const reportsController = new ReportsController(reportsService);
 
 
