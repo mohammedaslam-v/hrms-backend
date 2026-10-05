@@ -13,6 +13,15 @@ import {
 } from './employee.model';
 import { ApiError } from '../../utils/api-error';
 
+/**
+ * Written to `admins.mobile` when nobody supplied a phone number.
+ *
+ * Shared by every such row, so it can never be treated as evidence that two
+ * records are the same person — see the duplicate check in
+ * createEmployeeTransaction.
+ */
+const PLACEHOLDER_PHONE = '0000000000';
+
 interface EmployeeRow extends RowDataPacket {
   id: number;
   employee_code: string;
@@ -102,21 +111,60 @@ export class EmployeeRepository implements IEmployeeRepository {
     await connection.beginTransaction();
 
     try {
-      // 1. Uniqueness check on work email and mobile
+      // 1. Is this person already here?
+      //
+      // `deleted_at IS NULL` on both admin checks is deliberate. `admins` soft
+      // deletes, and the Laravel portal signs in with
+      // `WHERE email = ? AND deleted_at IS NULL`, so a closed row cannot
+      // collide with a new one. Without the filter an account closed years ago
+      // was enough to refuse a rehire, and the message pointed HR at a record
+      // they could not see or reopen.
       const [existingAdmin] = await connection.query<RowDataPacket[]>(
-        `SELECT id FROM admins WHERE email = ? FOR UPDATE`,
+        `SELECT id FROM admins WHERE email = ? AND deleted_at IS NULL FOR UPDATE`,
         [dto.workEmail],
       );
       if (existingAdmin.length > 0) {
         throw ApiError.conflict(`An account with email ${dto.workEmail} already exists in the system.`);
       }
 
+      // The mobile matters as much as the email, and is the better signal: one
+      // person has several addresses but usually one phone. Checking only the
+      // email is how the same people were added twice under a work address and
+      // a personal one — seventeen of them in a single import.
+      const phone = (dto.phone ?? '').trim();
+      if (phone && phone !== PLACEHOLDER_PHONE) {
+        const [byPhone] = await connection.query<RowDataPacket[]>(
+          `SELECT id, name, email FROM admins
+            WHERE mobile = ? AND deleted_at IS NULL LIMIT 1 FOR UPDATE`,
+          [phone],
+        );
+        const clash = byPhone[0];
+        if (clash) {
+          throw ApiError.conflict(
+            `${clash.name} (${clash.email}) already uses the mobile number ${phone}. ` +
+              `If this is the same person, update that account instead of adding a second one.`,
+          );
+        }
+      }
+
+      // hrms_employees keeps no soft delete — a leaver keeps their row with
+      // date_of_leaving set — and work_email is the HRMS login, so it has to
+      // stay unique whatever the person's status. A returning employee is a
+      // reactivation of this record, not a second one, so say so.
       const [existingEmp] = await connection.query<RowDataPacket[]>(
-        `SELECT id FROM hrms_employees WHERE work_email = ? FOR UPDATE`,
+        `SELECT id, full_name, date_of_leaving FROM hrms_employees
+          WHERE work_email = ? FOR UPDATE`,
         [dto.workEmail],
       );
-      if (existingEmp.length > 0) {
-        throw ApiError.conflict(`An employee with work email ${dto.workEmail} already exists.`);
+      const priorEmp = existingEmp[0];
+      if (priorEmp) {
+        throw ApiError.conflict(
+          priorEmp.date_of_leaving
+            ? `${priorEmp.full_name} already has an employee record on this work email, ` +
+              `marked as having left on ${priorEmp.date_of_leaving}. Reactivate that record ` +
+              `rather than creating a second one.`
+            : `An employee with work email ${dto.workEmail} already exists.`,
+        );
       }
 
       // 2. Hash temporary password
@@ -132,7 +180,7 @@ export class EmployeeRepository implements IEmployeeRepository {
         [
           dto.fullName,
           dto.workEmail,
-          dto.phone || '0000000000',
+          dto.phone || PLACEHOLDER_PHONE,
           passwordHash,
           dto.dateOfBirth || null,
           dto.pan ? dto.pan.toUpperCase() : null,

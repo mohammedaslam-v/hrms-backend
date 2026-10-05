@@ -53,6 +53,10 @@ const toCompensationView = (
 const DOCUMENT_LABELS: Record<DocumentKey, string> = {
   pan: 'PAN card',
   aadhaar: 'Aadhaar card',
+  // No column for this on `admins`, so the file is recorded only against the
+  // HRMS document row — which is what the columnMap in the repository omitting
+  // it already arranges.
+  photo: 'Passport size photo',
   resume: 'Resume',
   permanentAddress: 'Permanent address proof',
   temporaryAddress: 'Current address proof',
@@ -542,6 +546,8 @@ async updateEmploymentType(
       personalEmail: personal ? record.personalEmail : null,
       dateOfBirth: personal ? record.dateOfBirth : null,
       emergencyMobile: personal ? record.emergencyMobile : null,
+      emergencyContactName: personal ? record.emergencyContactName : null,
+      emergencyContactRelation: personal ? record.emergencyContactRelation : null,
       city: personal ? record.city : null,
       panNumber: personal ? record.panNumber : null,
       aadharNumber: personal ? record.aadharNumber : null,

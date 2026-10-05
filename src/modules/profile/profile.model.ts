@@ -12,6 +12,7 @@ export type WorkMode = 'WFH' | 'WFO' | 'Hybrid';
 export type DocumentKey =
   | 'pan'
   | 'aadhaar'
+  | 'photo'
   | 'resume'
   | 'permanentAddress'
   | 'temporaryAddress'
@@ -70,6 +71,9 @@ export interface UpdatePersonalDetailsDto {
   bankName?: string | null;
   ifscCode?: string | null;
   accountNo?: string | null;
+  emergencyContactName?: string | null;
+  emergencyContactNumber?: string | null;
+  emergencyContactRelation?: string | null;
 }
 
 export interface DismissEmployeeDto {
@@ -138,7 +142,14 @@ export interface ProfileRecord {
   mobile: string | null;
   personalEmail: string | null;
   dateOfBirth: string | null;
+  /**
+   * HRMS's own value when it has one, otherwise `admins.emergency_mobile`.
+   * The name and relationship live only on `hrms_employees` — the shared table
+   * has no column for either, and this portal does not add columns to it.
+   */
   emergencyMobile: string | null;
+  emergencyContactName: string | null;
+  emergencyContactRelation: string | null;
   city: string | null;
   linkedinProfile: string | null;
   panNumber: string | null;
@@ -207,6 +218,8 @@ export interface ProfileView {
   personalEmail: string | null;
   dateOfBirth: string | null;
   emergencyMobile: string | null;
+  emergencyContactName: string | null;
+  emergencyContactRelation: string | null;
   city: string | null;
   linkedinProfile: string | null;
   panNumber: string | null;

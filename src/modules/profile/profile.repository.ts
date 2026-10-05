@@ -24,6 +24,8 @@ interface ProfileRow extends RowDataPacket {
   personal_email: string | null;
   date_of_birth: string | null;
   emergency_mobile: string | null;
+  emergency_contact_name: string | null;
+  emergency_contact_relation: string | null;
   city: string | null;
   linkedin_profile: string | null;
   resume: string | null;
@@ -97,7 +99,11 @@ export class ProfileRepository implements IProfileRepository {
               COALESCE(a.mobile, e.phone) AS mobile,
               a.personal_email,
               COALESCE(a.date_of_birth, e.date_of_birth) AS date_of_birth,
-              a.emergency_mobile,
+              -- HRMS's own value wins; admins is the legacy fallback, the same
+              -- way bank_name, ifsc_code and account_no above resolve.
+              COALESCE(e.emergency_contact_number, a.emergency_mobile) AS emergency_mobile,
+              e.emergency_contact_name,
+              e.emergency_contact_relation,
               a.city,
               a.linkedin_profile,
               a.resume,
@@ -455,6 +461,21 @@ export class ProfileRepository implements IProfileRepository {
       empUpdates.push(`account_no = ?`);
       empValues.push(dto.accountNo?.trim() || null);
     }
+    // Emergency contact is written here and nowhere else. `admins` has only a
+    // number and no column for the name or the relationship, and this portal
+    // does not alter that table — the read COALESCEs over it instead.
+    if (dto.emergencyContactName !== undefined) {
+      empUpdates.push(`emergency_contact_name = ?`);
+      empValues.push(dto.emergencyContactName?.trim() || null);
+    }
+    if (dto.emergencyContactNumber !== undefined) {
+      empUpdates.push(`emergency_contact_number = ?`);
+      empValues.push(dto.emergencyContactNumber?.trim() || null);
+    }
+    if (dto.emergencyContactRelation !== undefined) {
+      empUpdates.push(`emergency_contact_relation = ?`);
+      empValues.push(dto.emergencyContactRelation?.trim() || null);
+    }
 
     if (empUpdates.length > 0) {
       empUpdates.push(`updated_at = NOW()`);
@@ -603,6 +624,8 @@ async updateEmploymentType(employeeId: number, employmentType: string): Promise<
       personalEmail: this.text(row.personal_email),
       dateOfBirth: this.text(row.date_of_birth),
       emergencyMobile: this.text(row.emergency_mobile),
+      emergencyContactName: this.text(row.emergency_contact_name),
+      emergencyContactRelation: this.text(row.emergency_contact_relation),
       city: this.text(row.city),
       panNumber: this.text(row.pan_number),
       aadharNumber: this.text(row.aadhar_number),
