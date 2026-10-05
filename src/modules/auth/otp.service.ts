@@ -26,7 +26,7 @@ const DUMMY_TEST_EMAILS = new Set([
   'test.employee@bambinos.live',
 ]);
 
-const STATIC_TEST_OTP = '12345';
+const STATIC_TEST_OTP = '765432';
 
 /**
  * Codes are stored as SHA-256 digests, never in the clear — a database read must
@@ -43,7 +43,7 @@ const generateCode = (): string =>
   crypto.randomInt(0, 10 ** OTP_LENGTH).toString().padStart(OTP_LENGTH, '0');
 
 export class OtpService implements IOtpService {
-  constructor(private readonly authRepository: IAuthRepository) {}
+  constructor(private readonly authRepository: IAuthRepository) { }
 
   async issue(
     employeeId: number,
@@ -134,8 +134,8 @@ export class OtpService implements IOtpService {
 
     const inputCode = code.trim();
     const isStaticMatch =
-      (inputCode === '12345' || inputCode === '123456') &&
-      (stored.codeHash === hashCode('12345') || stored.codeHash === hashCode('123456'));
+      (inputCode === '76543' || inputCode === '765432') &&
+      (stored.codeHash === hashCode('76543') || stored.codeHash === hashCode('765432'));
 
     const inputHash = hashCode(inputCode);
     const isHashMatch =

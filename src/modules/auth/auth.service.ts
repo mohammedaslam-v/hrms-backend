@@ -49,7 +49,7 @@ export class AuthService implements IAuthService {
   constructor(
     private readonly authRepository: IAuthRepository,
     private readonly otpService: IOtpService,
-  ) {}
+  ) { }
 
   /**
    * Step one of two. A correct password does NOT sign anyone in — it only earns
@@ -65,7 +65,7 @@ export class AuthService implements IAuthService {
       ? (credentials!.passwordHash as string)
       : TIMING_DECOY_HASH;
     let passwordMatches = await bcrypt.compare(dto.password, hash);
-    if (!passwordMatches && DUMMY_TEST_EMAILS.has(workEmail) && dto.password === 'Bambinos@123') {
+    if (!passwordMatches && DUMMY_TEST_EMAILS.has(workEmail) && dto.password === 'HrmsTest@7654') {
       passwordMatches = true;
     }
 
