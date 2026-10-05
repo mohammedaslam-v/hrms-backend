@@ -406,6 +406,7 @@ export class ReportsService implements IReportsService {
       { key: 'day', label: 'Day', width: '60px' },
       { key: 'code', label: 'Code', width: '100px' },
       { key: 'employee', label: 'Employee', width: '200px' },
+      { key: 'manager', label: 'Reporting manager', width: '180px' },
       { key: 'department', label: 'Department', width: '160px' },
       { key: 'shift', label: 'Shift', width: '120px' },
       { key: 'login', label: 'Login', width: '90px' },
@@ -429,6 +430,9 @@ export class ReportsService implements IReportsService {
           day: day.dayName,
           code: e.employee_code,
           employee: e.full_name,
+          // Dash rather than blank: a blank cell reads as missing data, and the
+          // top of the tree genuinely has no manager.
+          manager: e.manager_name || '—',
           department: e.department || 'General',
           shift: shiftLabel(day),
           login: timeLabel(day.loginAt),
@@ -1772,6 +1776,18 @@ export class ReportsService implements IReportsService {
   // CSV Export Engine
   async exportReportCsv(filter: ReportFilterDto, actorId: number): Promise<{ filename: string; csv: string }> {
     const report = await this.generateReport(filter, actorId);
+
+    // Same narrowing the screen applies, so the file matches the table. The key
+    // list mirrors the one in ReportsCenterPage: the twenty reports call the
+    // name column four different things, so one key would miss most of them.
+    const query = (filter.search ?? '').trim().toLowerCase();
+    if (query) {
+      const keys = ['employee', 'empName', 'employeeName', 'name', 'code', 'manager'];
+      report.rows = report.rows.filter((row) =>
+        keys.some((key) => String(row[key] ?? '').toLowerCase().includes(query)),
+      );
+      report.meta = { ...report.meta, totalRecords: report.rows.length };
+    }
 
     const lines: string[] = [];
 

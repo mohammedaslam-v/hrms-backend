@@ -65,6 +65,8 @@ export class ReportsController {
       const state = req.query.state as string | undefined;
       const department = req.query.department as string | undefined;
       const employeeId = req.query.employeeId as string | undefined;
+      // The screen's search box, so the download matches the table.
+      const search = req.query.search as string | undefined;
 
       const actorId = (req as AuthenticatedRequest).employeeId || (req as any).user?.id || 1;
 
@@ -79,6 +81,7 @@ export class ReportsController {
         state,
         department,
         employeeId,
+        search,
       };
       const { filename, csv } = await this.reportsService.exportReportCsv(filter, actorId);
 

@@ -62,6 +62,13 @@ export interface ReportFilterDto {
   state?: string;
   department?: string;
   employeeId?: number | string;
+  /**
+   * The screen's search box, passed through so a download matches what the
+   * person is looking at. Filtering to one employee on screen and then getting
+   * a CSV of all 718 rows is the kind of mismatch nobody notices until the
+   * wrong file has been sent on.
+   */
+  search?: string;
 }
 
 export interface ReportCatalogItem {
