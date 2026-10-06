@@ -13,6 +13,8 @@ export interface RawEmployeeRow {
   confirmation_date?: string | null;
   total_experience?: string | null;
   employment_type?: string | null;
+  /** WFO, WFH or Hybrid. */
+  work_mode?: string | null;
   work_state?: string | null;
   pan?: string | null;
   uan?: string | null;

@@ -407,6 +407,7 @@ export class ReportsService implements IReportsService {
       { key: 'code', label: 'Code', width: '100px' },
       { key: 'employee', label: 'Employee', width: '200px' },
       { key: 'manager', label: 'Reporting manager', width: '180px' },
+      { key: 'workMode', label: 'Work mode', width: '100px' },
       { key: 'department', label: 'Department', width: '160px' },
       { key: 'shift', label: 'Shift', width: '120px' },
       { key: 'login', label: 'Login', width: '90px' },
@@ -433,6 +434,7 @@ export class ReportsService implements IReportsService {
           // Dash rather than blank: a blank cell reads as missing data, and the
           // top of the tree genuinely has no manager.
           manager: e.manager_name || '—',
+          workMode: e.work_mode || '—',
           department: e.department || 'General',
           shift: shiftLabel(day),
           login: timeLabel(day.loginAt),

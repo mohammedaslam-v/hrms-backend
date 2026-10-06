@@ -53,6 +53,7 @@ export class ReportsRepository implements IReportsRepository {
       ${expSql},
       ${pfNoSql},
       e.employment_type,
+      e.work_mode,
       e.work_state,
       e.pan,
       e.uan,
