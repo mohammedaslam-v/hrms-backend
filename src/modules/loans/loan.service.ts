@@ -95,7 +95,7 @@ export class LoanService implements ILoanService {
     return {
       employees,
       allowedStartMonths,
-      maxTenureMonths: 6,
+      maxTenureMonths: 3,
       defaultInterestRate: 0.0,
     };
   }
@@ -132,8 +132,8 @@ export class LoanService implements ILoanService {
     }
 
     const tenure = Math.round(Number(payload.tenureMonths));
-    if (isNaN(tenure) || tenure < 1 || tenure > 6) {
-      throw ApiError.badRequest('Loan repayment tenure must be between 1 and 6 months.');
+    if (isNaN(tenure) || tenure < 1 || tenure > 3) {
+      throw ApiError.badRequest('Loan repayment tenure must be between 1 and 3 months.');
     }
 
     if (!payload.startMonth || !/^\d{4}-\d{2}$/.test(payload.startMonth)) {
