@@ -26,6 +26,7 @@ interface ProfileRow extends RowDataPacket {
   emergency_mobile: string | null;
   emergency_contact_name: string | null;
   emergency_contact_relation: string | null;
+  profile_gate_exempt: number | null;
   city: string | null;
   linkedin_profile: string | null;
   resume: string | null;
@@ -104,6 +105,7 @@ export class ProfileRepository implements IProfileRepository {
               COALESCE(e.emergency_contact_number, a.emergency_mobile) AS emergency_mobile,
               e.emergency_contact_name,
               e.emergency_contact_relation,
+              e.profile_gate_exempt,
               a.city,
               a.linkedin_profile,
               a.resume,
@@ -658,6 +660,7 @@ async updateEmploymentType(employeeId: number, employmentType: string): Promise<
       emergencyMobile: this.text(row.emergency_mobile),
       emergencyContactName: this.text(row.emergency_contact_name),
       emergencyContactRelation: this.text(row.emergency_contact_relation),
+      profileGateExempt: Boolean(row.profile_gate_exempt),
       city: this.text(row.city),
       panNumber: this.text(row.pan_number),
       aadharNumber: this.text(row.aadhar_number),

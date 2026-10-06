@@ -154,6 +154,9 @@ export interface ProfileRecord {
   emergencyMobile: string | null;
   emergencyContactName: string | null;
   emergencyContactRelation: string | null;
+  /** Set per employee by HR when the profile gate cannot apply — e.g. staff
+   *  outside India with no PAN or Aadhaar to upload. */
+  profileGateExempt: boolean;
   city: string | null;
   linkedinProfile: string | null;
   panNumber: string | null;
@@ -224,6 +227,9 @@ export interface ProfileView {
   emergencyMobile: string | null;
   emergencyContactName: string | null;
   emergencyContactRelation: string | null;
+  /** Set per employee by HR when the profile gate cannot apply — e.g. staff
+   *  outside India with no PAN or Aadhaar to upload. */
+  profileGateExempt: boolean;
   city: string | null;
   linkedinProfile: string | null;
   panNumber: string | null;

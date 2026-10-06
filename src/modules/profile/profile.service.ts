@@ -576,6 +576,7 @@ async updateEmploymentType(
       emergencyMobile: personal ? record.emergencyMobile : null,
       emergencyContactName: personal ? record.emergencyContactName : null,
       emergencyContactRelation: personal ? record.emergencyContactRelation : null,
+      profileGateExempt: record.profileGateExempt,
       city: personal ? record.city : null,
       panNumber: personal ? record.panNumber : null,
       aadharNumber: personal ? record.aadharNumber : null,
