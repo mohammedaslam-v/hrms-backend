@@ -167,6 +167,18 @@ export class EmployeeRepository implements IEmployeeRepository {
         );
       }
 
+      if (dto.employeeCode && dto.employeeCode.trim()) {
+        const [byCode] = await connection.query<RowDataPacket[]>(
+          `SELECT id, full_name FROM hrms_employees WHERE employee_code = ? LIMIT 1 FOR UPDATE`,
+          [dto.employeeCode.trim().toUpperCase()],
+        );
+        if (byCode[0]) {
+          throw ApiError.conflict(
+            `Employee code ${dto.employeeCode.trim().toUpperCase()} is already assigned to ${byCode[0].full_name}.`,
+          );
+        }
+      }
+
       // 2. Hash temporary password
       const tempPassword = 'Bambinos@2026';
       const passwordHash = await bcrypt.hash(tempPassword, 10);
@@ -190,7 +202,9 @@ export class EmployeeRepository implements IEmployeeRepository {
       const adminId = adminResult.insertId;
 
       // 4. Derive sequential employee code: BAM- + 4-digit zero-padded adminId
-      const employeeCode = `BAM-${String(adminId).padStart(4, '0')}`;
+      const employeeCode = (dto.employeeCode && dto.employeeCode.trim())
+        ? dto.employeeCode.trim().toUpperCase()
+        : `BAM-${String(adminId).padStart(4, '0')}`;
 
       // 5. Insert master profile into hrms_employees
       const weeklyOffStr = (dto.weeklyOff && dto.weeklyOff.length > 0)

@@ -30,6 +30,9 @@ export class EmployeeService implements IEmployeeService {
       throw new ApiError(403, 'Only administrators can add new employees.');
     }
 
+    if (data.employeeCode && data.employeeCode.trim()) {
+      data.employeeCode = data.employeeCode.trim().toUpperCase();
+    }
     if (!data.fullName || data.fullName.trim() === '') {
       throw ApiError.badRequest('Full name is required.');
     }

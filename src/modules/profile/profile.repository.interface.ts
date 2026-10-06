@@ -3,6 +3,8 @@ import { DismissEmployeeDto, DocumentKey, ProfileRecord, UpdatePersonalDetailsDt
 export interface IProfileRepository {
   findProfile(employeeId: number): Promise<ProfileRecord | null>;
 
+  findByEmployeeCode(employeeCode: string): Promise<{ id: number; fullName: string } | null>;
+
   updateDocument(
     employeeId: number,
     adminId: number | null,

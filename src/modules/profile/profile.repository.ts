@@ -167,6 +167,15 @@ export class ProfileRepository implements IProfileRepository {
     return profile;
   }
 
+  async findByEmployeeCode(employeeCode: string): Promise<{ id: number; fullName: string } | null> {
+    const [rows] = await this.pool.execute<RowDataPacket[]>(
+      `SELECT id, full_name FROM hrms_employees WHERE employee_code = ? LIMIT 1`,
+      [employeeCode],
+    );
+    if (!rows.length) return null;
+    return { id: Number(rows[0].id), fullName: String(rows[0].full_name) };
+  }
+
   async updateDocument(
     employeeId: number,
     adminId: number | null,
@@ -369,6 +378,22 @@ export class ProfileRepository implements IProfileRepository {
     const empUpdates: string[] = [];
     const empValues: any[] = [];
 
+    if (dto.employeeCode !== undefined) {
+      empUpdates.push(`employee_code = ?`);
+      empValues.push(dto.employeeCode?.trim() ? dto.employeeCode.trim().toUpperCase() : null);
+    }
+    if (dto.fullName !== undefined) {
+      empUpdates.push(`full_name = ?`);
+      empValues.push(dto.fullName?.trim() || null);
+    }
+    if (dto.designation !== undefined) {
+      empUpdates.push(`designation = ?`);
+      empValues.push(dto.designation?.trim() || null);
+    }
+    if (dto.department !== undefined) {
+      empUpdates.push(`department = ?`);
+      empValues.push(dto.department?.trim() || null);
+    }
     if (dto.email !== undefined) {
       empUpdates.push(`work_email = ?`);
       empValues.push(dto.email?.trim() || null);
@@ -490,6 +515,10 @@ export class ProfileRepository implements IProfileRepository {
       const adminUpdates: string[] = [];
       const adminValues: any[] = [];
 
+      if (dto.fullName !== undefined) {
+        adminUpdates.push(`name = ?`);
+        adminValues.push(dto.fullName?.trim() || null);
+      }
       if (dto.email !== undefined) {
         adminUpdates.push(`email = ?`);
         adminValues.push(dto.email?.trim() || null);

@@ -51,6 +51,10 @@ export interface SaveDocumentDto {
 }
 
 export interface UpdatePersonalDetailsDto {
+  employeeCode?: string | null;
+  fullName?: string | null;
+  designation?: string | null;
+  department?: string | null;
   email?: string | null;
   mobile?: string | null;
   dateOfBirth?: string | null;

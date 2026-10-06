@@ -413,6 +413,10 @@ export class ProfileService implements IProfileService {
     }
 
     if (access !== "admin") {
+      delete dto.employeeCode;
+      delete dto.fullName;
+      delete dto.designation;
+      delete dto.department;
       delete dto.shiftStart;
       delete dto.shiftEnd;
       delete dto.weeklyOff;
@@ -428,6 +432,30 @@ export class ProfileService implements IProfileService {
       delete dto.ifscCode;
       delete dto.accountNo;
     } else {
+      if (dto.employeeCode !== undefined && dto.employeeCode !== null) {
+        const cleanCode = dto.employeeCode.trim().toUpperCase();
+        if (!cleanCode) {
+          throw ApiError.badRequest("Employee code cannot be empty.");
+        }
+        const existing = await this.profileRepository.findByEmployeeCode(cleanCode);
+        if (existing && existing.id !== subjectId) {
+          throw ApiError.conflict(`Employee code ${cleanCode} is already assigned to ${existing.fullName}.`);
+        }
+        dto.employeeCode = cleanCode;
+      }
+      if (dto.fullName !== undefined && dto.fullName !== null) {
+        const cleanName = dto.fullName.trim();
+        if (!cleanName) {
+          throw ApiError.badRequest("Full name cannot be empty.");
+        }
+        dto.fullName = cleanName;
+      }
+      if (dto.designation !== undefined && dto.designation !== null) {
+        dto.designation = dto.designation.trim() || null;
+      }
+      if (dto.department !== undefined && dto.department !== null) {
+        dto.department = dto.department.trim() || null;
+      }
       if (dto.dateOfJoining && dto.dateOfJoining.trim() && !/^\d{4}-\d{2}-\d{2}$/.test(dto.dateOfJoining.trim())) {
         throw ApiError.badRequest("Date of joining must be a valid date format (YYYY-MM-DD).");
       }

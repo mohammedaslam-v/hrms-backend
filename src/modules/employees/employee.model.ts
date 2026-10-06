@@ -42,6 +42,7 @@ export interface UpdateEmployeeDto {
 
 export interface CreateEmployeeRequestDto {
   fullName: string;
+  employeeCode?: string;
   title?: string;
   department?: string;
   managerId?: number | null;
