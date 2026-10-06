@@ -30,7 +30,7 @@ export class PayrollRepository implements IPayrollRepository {
       fullName: String(r.full_name),
       designation: String(r.designation || 'Associate'),
       department: String(r.department || 'General'),
-      employmentType: String(r.employment_type || 'Full-time'),
+      employmentType: String(r.employment_type || 'Employee'),
       workState: String(r.work_state || 'Karnataka'),
       dateOfJoining: String(r.date_of_joining),
       dateOfLeaving: r.date_of_leaving ? String(r.date_of_leaving) : null,

@@ -123,7 +123,7 @@ updateWorkMode: RequestHandler = asyncHandler(async (req, res) => {
   updateEmploymentType: RequestHandler = asyncHandler(async (req, res) => {
     const { employeeId } = req as AuthenticatedRequest;
     const subjectId = this.readId(req.params.id);
-    const employmentType = String(req.body?.employmentType || "Full-time");
+    const employmentType = String(req.body?.employmentType || "Employee");
 
     const result = await this.profileService.updateEmploymentType(employeeId, subjectId, employmentType);
     res.json({

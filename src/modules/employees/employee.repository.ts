@@ -213,7 +213,7 @@ export class EmployeeRepository implements IEmployeeRepository {
           dto.managerId || null,
           dto.department || null,
           dto.title || 'Associate',
-          dto.employmentType || 'Full-time',
+          dto.employmentType || 'Employee',
           dto.workMode || 'WFO',
           dto.workState || 'Karnataka',
           dto.shiftStart || '10:00:00',

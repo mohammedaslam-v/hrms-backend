@@ -1654,7 +1654,7 @@ export class ReportsService implements IReportsService {
         managerId: e.manager_code || (e.manager_id ? `BAM-${String(e.manager_id).padStart(4, '0')}` : '—'),
         managerName: e.manager_name || '—',
         phone: e.phone || '—',
-        employmentStatus: e.employment_type || 'Full-time',
+        employmentStatus: e.employment_type || 'Employee',
         yrsInService: tenure,
         pan: e.pan || '—',
         uan: e.uan || '—',

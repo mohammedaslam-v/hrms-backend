@@ -80,7 +80,7 @@ export class ProfileRepository implements IProfileRepository {
               e.work_email,
               e.designation,
               e.department,
-              COALESCE(e.employment_type, "Full-time") AS employment_type,
+              COALESCE(e.employment_type, "Employee") AS employment_type,
               e.work_mode,
               e.work_state,
               e.shift_start,
@@ -596,10 +596,13 @@ async updateEmploymentType(employeeId: number, employmentType: string): Promise<
       workEmail: row.work_email,
       designation: row.designation,
       department: row.department,
-      employmentType: ((row.employment_type as string) || "Full-time").toLowerCase().includes("contract") ||
-        Boolean(row.designation && row.designation.toLowerCase().includes("contract")) ||
-        Boolean(row.department && row.department.toLowerCase().includes("contract")) ? "Contract" : ((row.employment_type as string) || "Full-time"),
-      isContractor: ((row.employment_type as string) || "Full-time").toLowerCase().includes("contract") ||
+      employmentType: (() => {
+        const raw = ((row.employment_type as string) || "").toLowerCase();
+        if (raw.includes("contract") || Boolean(row.designation && row.designation.toLowerCase().includes("contract")) || Boolean(row.department && row.department.toLowerCase().includes("contract"))) return "Contractor";
+        if (raw.includes("probation")) return "Probation";
+        return "Employee";
+      })(),
+      isContractor: ((row.employment_type as string) || "").toLowerCase().includes("contract") ||
         Boolean(row.designation && row.designation.toLowerCase().includes("contract")) ||
         Boolean(row.department && row.department.toLowerCase().includes("contract")),
       workMode: row.work_mode,
