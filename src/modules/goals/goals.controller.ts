@@ -33,9 +33,16 @@ export class GoalsController {
     const { employeeId: viewerId } = req as AuthenticatedRequest;
     const body = (req.body ?? {}) as Record<string, unknown>;
 
-    const targetEmployeeId = Number(body.employeeId);
-    if (!targetEmployeeId || isNaN(targetEmployeeId)) {
-      throw ApiError.badRequest('employeeId is required and must be a number.');
+    // No employee given means "my own goal". The person proposing it is already
+    // known from the session, so My Goals need not — and should not — send an
+    // id the server would only have to check against itself. The service then
+    // files a self-set goal as pending until the manager approves it.
+    const rawEmployeeId = body.employeeId;
+    const omitted =
+      rawEmployeeId === undefined || rawEmployeeId === null || rawEmployeeId === '' || rawEmployeeId === 0;
+    const targetEmployeeId = omitted ? viewerId : Number(rawEmployeeId);
+    if (!Number.isInteger(targetEmployeeId) || targetEmployeeId <= 0) {
+      throw ApiError.badRequest('employeeId must be a valid employee id.');
     }
 
     const title = typeof body.title === 'string' ? body.title.trim() : '';
