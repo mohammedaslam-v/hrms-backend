@@ -105,4 +105,5 @@ export interface EmployeeMetaDto {
   workStates: string[];
   workModes: string[];
   esopVestingOptions: string[];
+  nextEmployeeCode: string;
 }

@@ -125,12 +125,21 @@ export class EmployeeRepository implements IEmployeeRepository {
       designation: r.designation ? String(r.designation) : null,
     }));
 
+    const [maxCodeRows] = await this.pool.query<RowDataPacket[]>(
+      `SELECT COALESCE(MAX(CAST(employee_code AS UNSIGNED)), 0) AS max_code
+       FROM hrms_employees
+       WHERE employee_code REGEXP '^[0-9]+$' AND deleted_at IS NULL`,
+    );
+    const maxNumeric = Number(maxCodeRows[0]?.max_code || 0);
+    const nextEmployeeCode = String(Math.max(762, maxNumeric + 1));
+
     return {
       departments,
       managers,
       workStates: ['Karnataka', 'Maharashtra', 'Telangana', 'Delhi', 'Tamil Nadu'],
       workModes: ['WFH', 'WFO', 'Hybrid'],
       esopVestingOptions: ['4 yr · 1 yr cliff', '3 yr · no cliff', 'Custom'],
+      nextEmployeeCode,
     };
   }
 
@@ -268,10 +277,20 @@ export class EmployeeRepository implements IEmployeeRepository {
         adminId = adminResult.insertId;
       }
 
-      // 4. Derive sequential employee code: BAM- + 4-digit zero-padded adminId
-      const employeeCode = (dto.employeeCode && dto.employeeCode.trim())
-        ? dto.employeeCode.trim().toUpperCase()
-        : `BAM-${String(adminId).padStart(4, '0')}`;
+      // 4. Employee code: custom provided or derived sequential code starting at 762
+      let employeeCode: string;
+      if (dto.employeeCode && dto.employeeCode.trim()) {
+        employeeCode = dto.employeeCode.trim().toUpperCase();
+      } else {
+        const [maxRows] = await connection.query<RowDataPacket[]>(
+          `SELECT COALESCE(MAX(CAST(employee_code AS UNSIGNED)), 0) AS max_code
+           FROM hrms_employees
+           WHERE employee_code REGEXP '^[0-9]+$' AND deleted_at IS NULL
+           FOR UPDATE`,
+        );
+        const maxNumeric = Number(maxRows[0]?.max_code || 0);
+        employeeCode = String(Math.max(762, maxNumeric + 1));
+      }
 
       // 5. Insert master profile into hrms_employees
       const weeklyOffStr = (dto.weeklyOff && dto.weeklyOff.length > 0)
