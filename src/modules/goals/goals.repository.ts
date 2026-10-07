@@ -1,7 +1,7 @@
 import { Pool, ResultSetHeader, RowDataPacket } from 'mysql2/promise';
-import { GoalDirection, GoalPeriod, GoalRecord, GoalType } from './goals.domain';
+import { GoalApprovalStatus, GoalDirection, GoalPeriod, GoalRecord, GoalType } from './goals.domain';
 import { IGoalsRepository } from './goals.repository.interface';
-import { CreateGoalDto } from './goals.model';
+import { CreateGoalDto, UpdateGoalDto } from './goals.model';
 
 interface GoalRow extends RowDataPacket {
   id: number;
@@ -19,6 +19,11 @@ interface GoalRow extends RowDataPacket {
   set_on: string | Date;
   set_by: number | null;
   setter_name: string | null;
+  approval_status: GoalApprovalStatus;
+  approved_by: number | null;
+  approved_at: string | Date | null;
+  rejection_reason: string | null;
+  approver_name: string | null;
   milestone_id: number | null;
   milestone_title: string | null;
   milestone_done: number | null;
@@ -39,12 +44,15 @@ export class GoalsRepository implements IGoalsRepository {
       `SELECT g.id, g.ref, g.employee_id, g.title, g.goal_type, g.fy, g.period,
               g.target_value, g.current_value, g.unit, g.direction, g.note,
               g.set_on, g.set_by, s.full_name AS setter_name,
+              g.approval_status, g.approved_by, g.approved_at, g.rejection_reason,
+              app.full_name AS approver_name,
               m.id         AS milestone_id,
               m.title      AS milestone_title,
               m.is_done    AS milestone_done,
               m.sort_order AS milestone_order
          FROM hrms_goals g
          LEFT JOIN hrms_employees s ON s.id = g.set_by
+         LEFT JOIN hrms_employees app ON app.id = g.approved_by
          LEFT JOIN hrms_goal_milestones m ON m.goal_id = g.id
         WHERE g.employee_id = ? AND g.fy = ?
         ORDER BY g.period, g.set_on DESC, g.id, m.sort_order, m.id`,
@@ -65,12 +73,15 @@ export class GoalsRepository implements IGoalsRepository {
       `SELECT g.id, g.ref, g.employee_id, g.title, g.goal_type, g.fy, g.period,
               g.target_value, g.current_value, g.unit, g.direction, g.note,
               g.set_on, g.set_by, s.full_name AS setter_name,
+              g.approval_status, g.approved_by, g.approved_at, g.rejection_reason,
+              app.full_name AS approver_name,
               m.id         AS milestone_id,
               m.title      AS milestone_title,
               m.is_done    AS milestone_done,
               m.sort_order AS milestone_order
          FROM hrms_goals g
          LEFT JOIN hrms_employees s ON s.id = g.set_by
+         LEFT JOIN hrms_employees app ON app.id = g.approved_by
          LEFT JOIN hrms_goal_milestones m ON m.goal_id = g.id
         WHERE g.employee_id IN (?) AND g.fy = ?
         ORDER BY g.employee_id, g.period, g.set_on DESC, g.id, m.sort_order, m.id`,
@@ -95,12 +106,15 @@ export class GoalsRepository implements IGoalsRepository {
       `SELECT g.id, g.ref, g.employee_id, g.title, g.goal_type, g.fy, g.period,
               g.target_value, g.current_value, g.unit, g.direction, g.note,
               g.set_on, g.set_by, s.full_name AS setter_name,
+              g.approval_status, g.approved_by, g.approved_at, g.rejection_reason,
+              app.full_name AS approver_name,
               m.id         AS milestone_id,
               m.title      AS milestone_title,
               m.is_done    AS milestone_done,
               m.sort_order AS milestone_order
          FROM hrms_goals g
          LEFT JOIN hrms_employees s ON s.id = g.set_by
+         LEFT JOIN hrms_employees app ON app.id = g.approved_by
          LEFT JOIN hrms_goal_milestones m ON m.goal_id = g.id
         WHERE g.id = ?
         ORDER BY m.sort_order, m.id`,
@@ -116,12 +130,16 @@ export class GoalsRepository implements IGoalsRepository {
     fy: string,
     setBy: number | null,
     setOn: string,
+    approvalStatus: GoalApprovalStatus = 'approved',
+    approvedBy: number | null = null,
+    approvedAt: string | null = null,
   ): Promise<GoalRecord> {
     const [res] = await this.pool.execute<ResultSetHeader>(
       `INSERT INTO hrms_goals (
          ref, employee_id, title, goal_type, fy, period,
-         target_value, current_value, unit, direction, note, set_by, set_on
-       ) VALUES ('', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         target_value, current_value, unit, direction, note, set_by, set_on,
+         approval_status, approved_by, approved_at
+       ) VALUES ('', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         dto.employeeId,
         dto.title.trim(),
@@ -135,6 +153,9 @@ export class GoalsRepository implements IGoalsRepository {
         dto.note?.trim() || null,
         setBy,
         setOn,
+        approvalStatus,
+        approvedBy,
+        approvedAt,
       ],
     );
 
@@ -159,6 +180,88 @@ export class GoalsRepository implements IGoalsRepository {
     const created = await this.findById(insertId);
     if (!created) throw new Error(`Goal ${insertId} not found after creation`);
     return created;
+  }
+
+  async update(id: number, dto: UpdateGoalDto, resetApproval = false): Promise<GoalRecord> {
+    if (resetApproval) {
+      await this.pool.execute(
+        `UPDATE hrms_goals
+            SET title = ?, goal_type = ?, period = ?,
+                target_value = ?, current_value = ?, unit = ?, direction = ?, note = ?,
+                approval_status = 'pending', rejection_reason = NULL, approved_by = NULL, approved_at = NULL
+          WHERE id = ?`,
+        [
+          dto.title.trim(),
+          dto.goalType,
+          dto.period,
+          dto.goalType === 'metric' ? (dto.targetValue ?? null) : null,
+          dto.goalType === 'metric' ? (dto.currentValue ?? 0) : 0,
+          dto.goalType === 'metric' ? (dto.unit ?? null) : null,
+          dto.goalType === 'metric' ? (dto.direction ?? 'up') : 'up',
+          dto.note?.trim() || null,
+          id,
+        ],
+      );
+    } else {
+      await this.pool.execute(
+        `UPDATE hrms_goals
+            SET title = ?, goal_type = ?, period = ?,
+                target_value = ?, current_value = ?, unit = ?, direction = ?, note = ?
+          WHERE id = ?`,
+        [
+          dto.title.trim(),
+          dto.goalType,
+          dto.period,
+          dto.goalType === 'metric' ? (dto.targetValue ?? null) : null,
+          dto.goalType === 'metric' ? (dto.currentValue ?? 0) : 0,
+          dto.goalType === 'metric' ? (dto.unit ?? null) : null,
+          dto.goalType === 'metric' ? (dto.direction ?? 'up') : 'up',
+          dto.note?.trim() || null,
+          id,
+        ],
+      );
+    }
+
+    if (dto.goalType === 'milestone' && dto.milestones) {
+      await this.pool.execute(`DELETE FROM hrms_goal_milestones WHERE goal_id = ?`, [id]);
+      for (let i = 0; i < dto.milestones.length; i++) {
+        const mTitle = dto.milestones[i].trim();
+        if (!mTitle) continue;
+        await this.pool.execute(
+          `INSERT INTO hrms_goal_milestones (goal_id, title, is_done, sort_order)
+           VALUES (?, ?, 0, ?)`,
+          [id, mTitle, i],
+        );
+      }
+    }
+
+    const updated = await this.findById(id);
+    if (!updated) throw new Error(`Goal ${id} not found after update`);
+    return updated;
+  }
+
+  async approve(id: number, approverId: number): Promise<void> {
+    await this.pool.execute(
+      `UPDATE hrms_goals
+          SET approval_status = 'approved',
+              approved_by = ?,
+              approved_at = NOW(),
+              rejection_reason = NULL
+        WHERE id = ?`,
+      [approverId, id],
+    );
+  }
+
+  async reject(id: number, approverId: number, reason: string | null = null): Promise<void> {
+    await this.pool.execute(
+      `UPDATE hrms_goals
+          SET approval_status = 'rejected',
+              approved_by = ?,
+              approved_at = NOW(),
+              rejection_reason = ?
+        WHERE id = ?`,
+      [approverId, reason?.trim() || null, id],
+    );
   }
 
   async updateMetric(id: number, currentValue: number): Promise<void> {
@@ -211,6 +314,11 @@ export class GoalsRepository implements IGoalsRepository {
           setOn: fmtDate(row.set_on),
           setBy: row.set_by,
           setterName: row.setter_name ?? (row.set_by ? null : 'Board'),
+          approvalStatus: row.approval_status || 'approved',
+          approvedBy: row.approved_by,
+          approvedAt: fmtDate(row.approved_at),
+          rejectionReason: row.rejection_reason,
+          approverName: row.approver_name,
           milestones: [],
         };
         byId.set(row.id, goal);

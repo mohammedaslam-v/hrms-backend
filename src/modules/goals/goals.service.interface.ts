@@ -1,4 +1,4 @@
-import { GoalView, MyGoalsSummaryView, TeamGoalsSummaryView, CreateGoalDto } from './goals.model';
+import { GoalView, MyGoalsSummaryView, TeamGoalsSummaryView, CreateGoalDto, UpdateGoalDto } from './goals.model';
 
 export interface TeamGoalsFilter {
   period?: string;
@@ -27,6 +27,21 @@ export interface IGoalsService {
    * Create a new goal for an employee (requires manager or admin).
    */
   createGoal(viewerId: number, dto: CreateGoalDto): Promise<GoalView>;
+
+  /**
+   * Update full goal definition (title, type, period, target, milestones, notes).
+   */
+  updateGoal(viewerId: number, goalId: number, dto: UpdateGoalDto): Promise<GoalView>;
+
+  /**
+   * Approve a pending goal (manager in reporting tree or admin).
+   */
+  approveGoal(viewerId: number, goalId: number): Promise<GoalView>;
+
+  /**
+   * Reject a pending goal with an optional reason (manager in reporting tree or admin).
+   */
+  rejectGoal(viewerId: number, goalId: number, reason?: string | null): Promise<GoalView>;
 
   /**
    * Update current value of a metric goal (employee themselves, manager or admin).

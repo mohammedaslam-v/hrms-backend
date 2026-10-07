@@ -1438,7 +1438,9 @@ export class ReportsService implements IReportsService {
       const ctc = comp ? comp.ctc : 600000;
       const s = payStructure(ctc, comp?.components);
 
-      const pfBasic = Math.min(s.basicM, 15000);
+      // The PF wage the contribution was worked out on — capped by the
+      // structure, not by a number repeated here.
+      const pfBasic = s.pfWage;
       const empPf = s.eePfM;
       const empVpf = 0;
       const emprEps = s.epsM;

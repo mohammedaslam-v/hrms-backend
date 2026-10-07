@@ -19,6 +19,7 @@ import { addDays, addMonths, daysBetween } from '../../shared/dates';
 export type GoalType = 'metric' | 'milestone';
 export type GoalPeriod = 'Q1' | 'Q2' | 'Q3' | 'Q4' | 'H1' | 'H2' | 'FY';
 export type GoalDirection = 'up' | 'down';
+export type GoalApprovalStatus = 'pending' | 'approved' | 'rejected';
 
 /** Derived from progress against time elapsed. Never typed in by anyone. */
 export type GoalStatus = 'Achieved' | 'Missed' | 'Not started' | 'At risk' | 'On track';
@@ -48,6 +49,11 @@ export interface GoalRecord {
   setOn?: string;
   setBy?: number | null;
   setterName?: string | null;
+  approvalStatus: GoalApprovalStatus;
+  approvedBy?: number | null;
+  approvedAt?: string | null;
+  rejectionReason?: string | null;
+  approverName?: string | null;
   milestones: Milestone[];
 }
 
@@ -85,11 +91,13 @@ const monthNameOf = (date: string): string => MONTHS[Number(date.slice(5, 7)) - 
  * its financial year.
  */
 export function periodWindow(period: GoalPeriod, fyStart: string): PeriodWindow {
+  const year = fyStart.slice(0, 4);
+  const calStart = `${year}-01-01`;
   const [startMonth, endMonth] = PERIOD_MONTHS[period];
-  const from = addMonths(fyStart, startMonth);
+  const from = addMonths(calStart, startMonth);
   // The day before the next period begins — so months of different lengths and
   // leap years need no special handling.
-  const to = addDays(addMonths(fyStart, endMonth), -1);
+  const to = addDays(addMonths(calStart, endMonth), -1);
 
   const label =
     period === 'FY'

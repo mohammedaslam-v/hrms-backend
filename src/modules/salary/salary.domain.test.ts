@@ -11,8 +11,8 @@ import {
 
 /*
  * The salary rules HR specified: Basic 40% of Gross, HRA 50% of Basic, Special
- * the balance, PF 12% of Basic on a wage capped at ₹15,000, Gratuity 4.81% of
- * Basic, and CTC = Gross + Employer PF + Gratuity.
+ * the balance, PF 12% of Basic on a wage capped at ₹25,000, Gratuity 4.81% of
+ * Basic, and CTC = Gross + Employer PF + Gratuity. PF wage capped at ₹25,000.
  */
 
 test('the parts add back to the CTC exactly, monthly and annually', () => {
@@ -35,24 +35,38 @@ test('₹3,00,000: Basic is 40% of Gross and HRA half of Basic', () => {
   assert.equal(s.gratM, 451);
 });
 
-test('₹6,00,000: Basic is above the ₹15,000 cap, so PF is 12% of ₹15,000', () => {
-  // Capped line: Gross = (50,000 − 1,800) / (1 + 0.40 × 0.0481) = 47,290.
+test('₹6,00,000: Basic of ₹18,740 is under the ₹25,000 cap, so PF is 12% of Basic', () => {
   const s = structure(600000);
-  assert.equal(s.grossM, 47290);
-  assert.equal(s.basicM, 18916);
-  assert.equal(s.hraM, 9458);
-  assert.equal(s.pfWage, 15000);
-  assert.equal(s.erPfM, 1800);
-  assert.equal(s.eePfM, 1800);
+  assert.equal(s.grossM, 46850);
+  assert.equal(s.basicM, 18740);
+  assert.equal(s.hraM, 9370);
+  assert.equal(s.pfWage, 18740);
+  assert.equal(s.erPfM, 2249);
+  assert.equal(s.eePfM, 2249);
   assert.equal(s.grossM + s.erPfM + s.gratM, 50000);
 });
 
-test('PF never exceeds 12% of the ₹15,000 wage ceiling', () => {
-  for (const ctc of [600000, 1500000, 4200000]) {
+test('₹15,00,000: Basic is over the cap, so PF stops at 12% of ₹25,000', () => {
+  // Capped line: Gross = (1,25,000 − 3,000) / (1 + 0.40 × 0.0481) = 1,19,697.
+  const s = structure(1500000);
+  assert.equal(s.grossM, 119697);
+  assert.equal(s.pfWage, 25000);
+  assert.equal(s.erPfM, 3000);
+  assert.equal(s.grossM + s.erPfM + s.gratM, 125000);
+});
+
+test('PF never exceeds 12% of the ₹25,000 wage ceiling', () => {
+  for (const ctc of [1500000, 4200000]) {
     const s = structure(ctc);
-    assert.equal(s.erPfM, 1800, `employer ${ctc}`);
-    assert.equal(s.eePfM, 1800, `employee ${ctc}`);
+    assert.equal(s.erPfM, 3000, `employer ${ctc}`);
+    assert.equal(s.eePfM, 3000, `employee ${ctc}`);
   }
+});
+
+test('the pension (EPS) slice stays on the statutory ₹15,000', () => {
+  const s = structure(1500000);
+  assert.equal(s.epsM, 1250);
+  assert.equal(s.erEpfM, 3000 - 1250);
 });
 
 test('gratuity is 4.81% of Basic', () => {

@@ -212,7 +212,12 @@ export class SalaryService implements ISalaryService {
         const gross = basic + hra + special;
 
         const pt = ptOf(comp?.components, emp.workState, s.grossM, targetMonth);
-        const eePf = Math.min(Math.round(basic * 0.12), 1800);
+        // Employee PF on the Basic actually earned this month, under the same
+        // cap the structure uses. HR's own figure, when they set one, is
+        // pro-rated the same way the earnings are.
+        const eePf = comp?.components
+          ? Math.round(s.eePfM * factor)
+          : Math.round(Math.min(basic, COMPANY_CONFIG.pfCeiling) * COMPANY_CONFIG.pfRate);
         const tds = tax.monthly;
         const totalDeductions = eePf + pt + tds + loanEmi;
         const net = Math.max(0, gross - totalDeductions);

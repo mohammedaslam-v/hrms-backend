@@ -5,9 +5,10 @@ import { IAccessService } from '../access/access.service.interface';
 import { canRecordAbout } from '../access/access.domain';
 import { IOrgRepository } from '../org/org.repository.interface';
 import { ApiError } from '../../utils/api-error';
-import { GoalRecord, goalProgress, goalStatus, periodWindow } from './goals.domain';
+import { GoalApprovalStatus, GoalRecord, goalProgress, goalStatus, periodWindow } from './goals.domain';
 import {
   CreateGoalDto,
+  UpdateGoalDto,
   GoalView,
   MemberGoalsGroup,
   MyGoalsSummaryView,
@@ -136,7 +137,18 @@ export class GoalsService implements IGoalsService {
 
       const filteredGoals = memberViews.filter((g) => {
         if (filterPeriod && g.period !== filterPeriod) return false;
-        if (filterStatus && g.status.toLowerCase() !== filterStatus) return false;
+        if (filterStatus) {
+          if (filterStatus === 'pending' || filterStatus === 'pending approval') {
+            return g.approvalStatus === 'pending';
+          }
+          if (filterStatus === 'rejected') {
+            return g.approvalStatus === 'rejected';
+          }
+          if (filterStatus === 'approved') {
+            return g.approvalStatus === 'approved';
+          }
+          if (g.status.toLowerCase() !== filterStatus) return false;
+        }
         return true;
       });
 
@@ -182,27 +194,134 @@ export class GoalsService implements IGoalsService {
         throw new ApiError(400, 'Metric goals require a numeric target value.');
       }
     } else if (dto.goalType === 'milestone') {
+      if (!dto.milestones || dto.milestones.filter((m: string) => m.trim().length > 0).length === 0) {
+        throw new ApiError(400, 'Checklist goals require at least one milestone.');
+      }
+    }
+
+    const isSelf = viewerId === dto.employeeId;
+    let approvalStatus: GoalApprovalStatus = 'approved';
+    let approvedBy: number | null = viewerId;
+    const today = await this.clock.today();
+    let approvedAt: string | null = today;
+
+    if (isSelf) {
+      approvalStatus = 'pending';
+      approvedBy = null;
+      approvedAt = null;
+    } else {
+      const access = await this.accessService.require(viewerId, dto.employeeId);
+      if (!canRecordAbout(access)) {
+        throw new ApiError(403, 'Only a manager or admin may set a goal for an employee.');
+      }
+    }
+
+    const policy = await this.policyService.getForDate(today);
+
+    const created = await this.goalsRepository.create(
+      dto,
+      policy.fy,
+      viewerId,
+      today,
+      approvalStatus,
+      approvedBy,
+      approvedAt,
+    );
+    return this.toView(created, policy.fyStart, today, policy.goalRiskTolerancePct);
+  }
+
+  async updateGoal(viewerId: number, goalId: number, dto: UpdateGoalDto): Promise<GoalView> {
+    const goal = await this.goalsRepository.findById(goalId);
+    if (!goal) {
+      throw new ApiError(404, 'Goal not found.');
+    }
+
+    if (!dto.title?.trim() || !dto.period || !dto.goalType) {
+      throw new ApiError(400, 'Please provide title, period, and goalType.');
+    }
+
+    if (dto.goalType === 'metric') {
+      if (dto.targetValue === undefined || dto.targetValue === null || isNaN(Number(dto.targetValue))) {
+        throw new ApiError(400, 'Metric goals require a numeric target value.');
+      }
+    } else if (dto.goalType === 'milestone') {
       if (!dto.milestones || dto.milestones.filter((m) => m.trim().length > 0).length === 0) {
         throw new ApiError(400, 'Checklist goals require at least one milestone.');
       }
     }
 
-    const access = await this.accessService.require(viewerId, dto.employeeId);
-    if (!canRecordAbout(access)) {
-      throw new ApiError(403, 'Only a manager or admin may set a goal for an employee.');
+    const isSelf = viewerId === goal.employeeId;
+    let resetApproval = false;
+
+    if (isSelf) {
+      if (goal.approvalStatus === 'rejected') {
+        resetApproval = true;
+      }
+    } else {
+      const access = await this.accessService.require(viewerId, goal.employeeId);
+      if (!canRecordAbout(access)) {
+        throw new ApiError(403, 'Only the employee, their manager, or an admin may edit this goal.');
+      }
     }
 
+    const updated = await this.goalsRepository.update(goalId, dto, resetApproval);
     const today = await this.clock.today();
     const policy = await this.policyService.getForDate(today);
+    return this.toView(updated, policy.fyStart, today, policy.goalRiskTolerancePct);
+  }
 
-    const created = await this.goalsRepository.create(dto, policy.fy, viewerId, today);
-    return this.toView(created, policy.fyStart, today, policy.goalRiskTolerancePct);
+  async approveGoal(viewerId: number, goalId: number): Promise<GoalView> {
+    const goal = await this.goalsRepository.findById(goalId);
+    if (!goal) {
+      throw new ApiError(404, 'Goal not found.');
+    }
+
+    if (viewerId === goal.employeeId) {
+      throw new ApiError(403, 'You cannot approve your own goal.');
+    }
+
+    const access = await this.accessService.require(viewerId, goal.employeeId);
+    if (!canRecordAbout(access)) {
+      throw new ApiError(403, 'Only a manager or admin may approve this goal.');
+    }
+
+    await this.goalsRepository.approve(goalId, viewerId);
+    const updated = await this.goalsRepository.findById(goalId);
+    const today = await this.clock.today();
+    const policy = await this.policyService.getForDate(today);
+    return this.toView(updated!, policy.fyStart, today, policy.goalRiskTolerancePct);
+  }
+
+  async rejectGoal(viewerId: number, goalId: number, reason?: string | null): Promise<GoalView> {
+    const goal = await this.goalsRepository.findById(goalId);
+    if (!goal) {
+      throw new ApiError(404, 'Goal not found.');
+    }
+
+    if (viewerId === goal.employeeId) {
+      throw new ApiError(403, 'You cannot reject your own goal.');
+    }
+
+    const access = await this.accessService.require(viewerId, goal.employeeId);
+    if (!canRecordAbout(access)) {
+      throw new ApiError(403, 'Only a manager or admin may reject this goal.');
+    }
+
+    await this.goalsRepository.reject(goalId, viewerId, reason);
+    const updated = await this.goalsRepository.findById(goalId);
+    const today = await this.clock.today();
+    const policy = await this.policyService.getForDate(today);
+    return this.toView(updated!, policy.fyStart, today, policy.goalRiskTolerancePct);
   }
 
   async updateMetric(viewerId: number, goalId: number, value: number): Promise<GoalView> {
     const goal = await this.goalsRepository.findById(goalId);
     if (!goal) {
       throw new ApiError(404, 'Goal not found.');
+    }
+
+    if (goal.approvalStatus !== 'approved') {
+      throw new ApiError(400, 'Cannot update progress on a goal that is pending approval or rejected.');
     }
 
     if (goal.goalType !== 'metric') {
@@ -213,9 +332,7 @@ export class GoalsService implements IGoalsService {
       throw new ApiError(400, 'Current value must be a non-negative number.');
     }
 
-    // Must be employee themselves, their manager, or admin
     await this.accessService.require(viewerId, goal.employeeId);
-
     await this.goalsRepository.updateMetric(goalId, value);
 
     const updated = await this.goalsRepository.findById(goalId);
@@ -236,14 +353,16 @@ export class GoalsService implements IGoalsService {
       throw new ApiError(404, 'Goal not found.');
     }
 
+    if (goal.approvalStatus !== 'approved') {
+      throw new ApiError(400, 'Cannot update milestones on a goal that is pending approval or rejected.');
+    }
+
     const milestone = goal.milestones.find((m) => m.id === milestoneId);
     if (!milestone) {
       throw new ApiError(404, 'Milestone not found for this goal.');
     }
 
-    // Must be employee themselves, their manager, or admin
     await this.accessService.require(viewerId, goal.employeeId);
-
     await this.goalsRepository.toggleMilestone(milestoneId, isDone, viewerId);
 
     const updated = await this.goalsRepository.findById(goalId);
@@ -259,9 +378,12 @@ export class GoalsService implements IGoalsService {
       throw new ApiError(404, 'Goal not found.');
     }
 
-    const access = await this.accessService.require(viewerId, goal.employeeId);
-    if (!canRecordAbout(access)) {
-      throw new ApiError(403, 'Only a manager or admin may delete a goal.');
+    const isSelf = viewerId === goal.employeeId;
+    if (!isSelf) {
+      const access = await this.accessService.require(viewerId, goal.employeeId);
+      if (!canRecordAbout(access)) {
+        throw new ApiError(403, 'Only the employee, a manager, or admin may delete a goal.');
+      }
     }
 
     await this.goalsRepository.delete(goalId);
@@ -293,6 +415,11 @@ export class GoalsService implements IGoalsService {
       note: goal.note,
       setOn: goal.setOn || today,
       setterName: goal.setterName ?? (goal.setBy ? null : 'Board'),
+      approvalStatus: goal.approvalStatus,
+      approvedBy: goal.approvedBy ?? null,
+      approvedAt: goal.approvedAt ?? null,
+      rejectionReason: goal.rejectionReason ?? null,
+      approverName: goal.approverName ?? null,
       milestonesDone: goal.milestones.filter((m) => m.isDone).length,
       milestonesTotal: goal.milestones.length,
       milestones: goal.milestones,

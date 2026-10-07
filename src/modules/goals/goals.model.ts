@@ -1,4 +1,6 @@
-import { GoalDirection, GoalPeriod, GoalStatus, GoalType, Milestone } from './goals.domain';
+import { GoalApprovalStatus, GoalDirection, GoalPeriod, GoalStatus, GoalType, Milestone } from './goals.domain';
+
+export { GoalApprovalStatus };
 
 export interface GoalView {
   id: number;
@@ -23,6 +25,11 @@ export interface GoalView {
 
   setOn: string;
   setterName: string | null;
+  approvalStatus: GoalApprovalStatus;
+  approvedBy?: number | null;
+  approvedAt?: string | null;
+  rejectionReason?: string | null;
+  approverName?: string | null;
 
   /** Only meaningful for a checklist goal; zero and zero for a metric. */
   milestonesDone: number;
@@ -68,4 +75,21 @@ export interface CreateGoalDto {
   direction?: GoalDirection;
   note?: string | null;
   milestones?: string[];
+}
+
+
+export interface UpdateGoalDto {
+  title: string;
+  goalType: GoalType;
+  period: GoalPeriod;
+  targetValue?: number | null;
+  currentValue?: number | null;
+  unit?: string | null;
+  direction?: GoalDirection;
+  note?: string | null;
+  milestones?: string[];
+}
+
+export interface RejectGoalDto {
+  reason?: string | null;
 }

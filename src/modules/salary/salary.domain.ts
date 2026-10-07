@@ -7,8 +7,12 @@ export const COMPANY_CONFIG = {
   ay: "2027-28",
   fyStart: "2026-04-01",
   fyEnd: "2027-03-31",
-  pfCeiling: 15000,
+  // Company policy: PF on Basic up to ₹25,000 — above the ₹15,000 statutory
+  // wage ceiling, so employees and the company both contribute more.
+  pfCeiling: 25000,
   pfRate: 0.12,
+  // The pension (EPS) slice stays on the statutory ₹15,000 regardless of the
+  // PF cap above: EPS is capped by law, not by company choice.
   epsCeiling: 15000,
   epsRate: 0.0833,
   stdDeduction: 75000,
@@ -61,7 +65,7 @@ export function fyMonths(uptoMonthKey?: string): string[] {
  *   Basic              40% of Gross
  *   HRA                50% of Basic
  *   Special allowance  the balance of Gross
- *   Employer PF        12% of Basic, on a PF wage capped at ₹15,000/month
+ *   Employer PF        12% of Basic, on a PF wage capped at ₹25,000/month
  *   Gratuity           4.81% of Basic
  *   Employee PF        12% of Basic, same cap
  *   Net                Gross − Employee PF − Professional Tax
