@@ -1,15 +1,7 @@
 import { ApiError } from "../../utils/api-error";
 import { IAccessService } from "../access/access.service.interface";
 import { ICompensationService } from "../compensation/compensation.service.interface";
-import {
-  COMPANY_CONFIG,
-  computeTax,
-  fyMonths,
-  monthLabel,
-  ptFor,
-  structure,
-  words,
-} from "./salary.domain";
+import { COMPANY_CONFIG, computeTax, fyMonths, monthLabel, payStructure, ptOf, words } from "./salary.domain";
 import {
   AnnualStructureView,
   EmployeeLoanView,
@@ -99,7 +91,7 @@ export class SalaryService implements ISalaryService {
     const isPaidInMonth = targetMonth >= dojMonth && (!dolMonth || targetMonth <= dolMonth);
 
     const frozenSlip = await this.salaryRepository.findFrozenPayslip(subjectId, targetMonth);
-    const s = structure(ctc);
+    const s = payStructure(ctc, comp?.components);
     const tax = computeTax(s.grossA + variablePay + bonus);
 
     let slip: SalarySlip | null = null;
@@ -219,7 +211,7 @@ export class SalaryService implements ISalaryService {
         const special = Math.round(s.specialM * factor);
         const gross = basic + hra + special;
 
-        const pt = ptFor(emp.workState, s.grossM, targetMonth);
+        const pt = ptOf(comp?.components, emp.workState, s.grossM, targetMonth);
         const eePf = Math.min(Math.round(basic * 0.12), 1800);
         const tds = tax.monthly;
         const totalDeductions = eePf + pt + tds + loanEmi;

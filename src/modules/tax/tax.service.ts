@@ -2,7 +2,7 @@ import { IAccessService } from "../access/access.service.interface";
 import { IAuthService } from "../auth/auth.service.interface";
 import { ICompensationService } from "../compensation/compensation.service.interface";
 import { ApiError } from "../../utils/api-error";
-import { structure } from "../salary/salary.domain";
+import { payStructure } from "../salary/salary.domain";
 import { computeTaxComputation, computeTdsSchedule, TAX_CONFIG } from "./tax.domain";
 import { MyTaxResponse, TaxRegisterResponse, TaxRegisterRow } from "./tax.model";
 import { ITaxRepository } from "./tax.repository.interface";
@@ -42,7 +42,7 @@ export class TaxService implements ITaxService {
       hraAnnual = 0;
       specialAnnual = 0;
     } else {
-      const s = structure(ctc);
+      const s = payStructure(ctc, comp?.components);
       basicAnnual = s.basicA;
       hraAnnual = s.hraA;
       specialAnnual = s.specialA;
@@ -121,7 +121,7 @@ export class TaxService implements ITaxService {
       // A contractor's whole fee is taxable; an employee's CTC splits first.
       const s = employee.isContractor
         ? { basicA: ctc, hraA: 0, specialA: 0 }
-        : structure(ctc);
+        : payStructure(ctc, comp?.components);
 
       const { computation } = computeTaxComputation(
         s.basicA,

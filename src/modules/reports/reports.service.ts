@@ -33,7 +33,7 @@ const PAYROLL_REPORT_TYPES: ReadonlySet<ReportType> = new Set([
   'income_tax',
   'appraisals',
 ]);
-import { structure } from '../salary/salary.domain';
+import { payStructure, ptOf } from '../salary/salary.domain';
 import { computeTaxComputation, TAX_CONFIG } from '../tax/tax.domain';
 import { ptFor } from '../salary/salary.domain';
 
@@ -758,10 +758,10 @@ export class ReportsService implements IReportsService {
     const rows = employees.map((e) => {
       const comp = compMap.get(e.id);
       const ctc = comp ? comp.ctc : 600000;
-      const s = structure(ctc);
+      const s = payStructure(ctc, comp?.components);
       const gross = Math.round(ctc / 12);
       const pf = s.eePfM;
-      const pt = ptFor(e.work_state || 'Karnataka', gross);
+      const pt = ptOf(comp?.components, e.work_state || 'Karnataka', gross);
       const loanEmi = loanMap.get(e.id) ?? 0;
 
       const taxComp = computeTaxComputation(s.basicA, s.hraA, s.specialA, comp?.variablePay ?? 0, comp?.bonus ?? 0);
@@ -854,7 +854,7 @@ export class ReportsService implements IReportsService {
     const rows = employees.map((e) => {
       const comp = compMap.get(e.id);
       const ctc = comp ? comp.ctc : 600000;
-      const s = structure(ctc);
+      const s = payStructure(ctc, comp?.components);
 
       const taxComp = computeTaxComputation(s.basicA, s.hraA, s.specialA, comp?.variablePay ?? 0, comp?.bonus ?? 0);
       const c = taxComp.computation;
@@ -1154,7 +1154,7 @@ export class ReportsService implements IReportsService {
     const rows = employees.map((e, index) => {
       const comp = compMap.get(e.id);
       const ctc = comp ? comp.ctc : 600000;
-      const s = structure(ctc);
+      const s = payStructure(ctc, comp?.components);
       const monthlyGross = Math.round(ctc / 12);
 
       const isContractor = (e.employment_type || '').toLowerCase().includes('contract');
@@ -1360,10 +1360,10 @@ export class ReportsService implements IReportsService {
     const rows = employees.map((e) => {
       const comp = compMap.get(e.id);
       const ctc = comp ? comp.ctc : 600000;
-      const s = structure(ctc);
+      const s = payStructure(ctc, comp?.components);
       const gross = Math.round(ctc / 12);
       const pf = s.eePfM;
-      const pt = ptFor(e.work_state || 'Karnataka', gross);
+      const pt = ptOf(comp?.components, e.work_state || 'Karnataka', gross);
       const loanEmi = loanMap.get(e.id) ?? 0;
 
       const taxComp = computeTaxComputation(s.basicA, s.hraA, s.specialA, comp?.variablePay ?? 0, comp?.bonus ?? 0);
@@ -1436,7 +1436,7 @@ export class ReportsService implements IReportsService {
     const rows = employees.map((e, index) => {
       const comp = compMap.get(e.id);
       const ctc = comp ? comp.ctc : 600000;
-      const s = structure(ctc);
+      const s = payStructure(ctc, comp?.components);
 
       const pfBasic = Math.min(s.basicM, 15000);
       const empPf = s.eePfM;

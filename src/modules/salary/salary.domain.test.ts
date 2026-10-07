@@ -1,6 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { SALARY_RULES, grossFromCtc, structure } from './salary.domain';
+import {
+  SALARY_RULES,
+  grossFromCtc,
+  payStructure,
+  ptOf,
+  structure,
+  structureFromComponents,
+} from './salary.domain';
 
 /*
  * The salary rules HR specified: Basic 40% of Gross, HRA 50% of Basic, Special
@@ -68,4 +75,35 @@ test('a zero or missing CTC gives an all-zero structure', () => {
   assert.equal(s.grossM, 0);
   assert.equal(s.erPfM, 0);
   assert.equal(s.basicA, 0);
+});
+
+// ── Saved components (HR overrode the formula at onboarding) ──────────────────
+
+const edited = {
+  basicM: 30000, hraM: 15000, specialM: 26618,
+  employerPfM: 1800, gratuityM: 1443, employeePfM: 1800, professionalTaxM: null,
+};
+
+test('saved components are used as-is, and annual is twelve months', () => {
+  const s = structureFromComponents(900000, edited);
+  assert.equal(s.basicM, 30000);
+  assert.equal(s.hraM, 15000);
+  assert.equal(s.grossM, 71618);
+  assert.equal(s.basicA, 360000);
+  assert.equal(s.erPfM, 1800);
+});
+
+test('payStructure falls back to the formula when nothing is saved', () => {
+  assert.deepEqual(payStructure(900000, null), payStructure(900000, undefined));
+  assert.equal(payStructure(900000, null).hraM, Math.round(payStructure(900000, null).basicM * 0.5));
+});
+
+test('payStructure prefers saved components over the formula', () => {
+  assert.equal(payStructure(900000, edited).basicM, 30000);
+});
+
+test('professional tax: HR figure when set, state slab otherwise', () => {
+  assert.equal(ptOf({ ...edited, professionalTaxM: 150 }, 'Karnataka', 71618), 150);
+  assert.equal(ptOf(edited, 'Karnataka', 71618), 200);
+  assert.equal(ptOf(null, 'Karnataka', 20000), 0);
 });

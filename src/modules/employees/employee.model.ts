@@ -1,3 +1,4 @@
+import type { SalaryComponents } from '../salary/salary.domain';
 export type EmployeeStatus = 'active' | 'inactive';
 export type WorkMode = 'WFH' | 'WFO' | 'Hybrid';
 export type HrmsRole = 'employee' | 'admin';
@@ -63,6 +64,11 @@ export interface CreateEmployeeRequestDto {
   bonus?: number;
   esopUnits?: number;
   esopVesting?: string;
+  /**
+   * Monthly components as shown on the form, when HR has them saved with the
+   * employee. Absent means payroll derives them from the CTC.
+   */
+  components?: SalaryComponents;
 
   workMode?: WorkMode;
   shiftStart?: string;

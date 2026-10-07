@@ -12,6 +12,7 @@ import {
   UpdateEmployeeDto,
 } from './employee.model';
 import { ApiError } from '../../utils/api-error';
+import type { SalaryComponents } from '../salary/salary.domain';
 
 /**
  * Written to `admins.mobile` when nobody supplied a phone number.
@@ -21,6 +22,36 @@ import { ApiError } from '../../utils/api-error';
  * createEmployeeTransaction.
  */
 const PLACEHOLDER_PHONE = '0000000000';
+
+/**
+ * Components from the form, checked before anything is saved.
+ *
+ * The form keeps them balanced, but payroll reads them straight onto payslips,
+ * so a payload that does not add up to the CTC must be refused here rather than
+ * discovered on someone's salary. ₹12 a year of slack covers rounding a CTC
+ * that does not divide evenly by twelve.
+ */
+function validComponents(
+  ctc: number,
+  c: SalaryComponents | undefined,
+): SalaryComponents | null {
+  if (!c) return null;
+  const money = [c.basicM, c.hraM, c.specialM, c.employerPfM, c.gratuityM, c.employeePfM];
+  if (money.some((v) => typeof v !== 'number' || !Number.isFinite(v) || v < 0)) {
+    throw ApiError.badRequest('Salary components must all be zero or more.');
+  }
+  if (c.professionalTaxM != null && (!Number.isFinite(c.professionalTaxM) || c.professionalTaxM < 0)) {
+    throw ApiError.badRequest('Professional tax must be zero or more.');
+  }
+  const monthlyCtc = c.basicM + c.hraM + c.specialM + c.employerPfM + c.gratuityM;
+  if (Math.abs(monthlyCtc * 12 - Number(ctc)) > 12) {
+    throw ApiError.badRequest(
+      `The salary components add up to ₹${(monthlyCtc * 12).toLocaleString('en-IN')} a year, ` +
+        `not the CTC of ₹${Number(ctc).toLocaleString('en-IN')}.`,
+    );
+  }
+  return c;
+}
 
 interface EmployeeRow extends RowDataPacket {
   id: number;
@@ -107,6 +138,10 @@ export class EmployeeRepository implements IEmployeeRepository {
     dto: CreateEmployeeRequestDto,
     creatorId: number,
   ): Promise<CreateEmployeeResult> {
+    // Checked before the transaction opens: a bad payload should not take a
+    // connection, lock rows, or leave anything half-written.
+    const components = validComponents(dto.ctc, dto.components);
+
     const connection = await this.pool.getConnection();
     await connection.beginTransaction();
 
@@ -280,8 +315,10 @@ export class EmployeeRepository implements IEmployeeRepository {
       await connection.execute(
         `INSERT INTO hrms_employee_compensation (
           employee_id, effective_from, ctc, variable_pay, bonus, esop_units,
-          esop_vested_pct, revision_note, created_by, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 0.00, 'Initial joining offer', ?, NOW())`,
+          esop_vested_pct, revision_note, created_by, created_at,
+          basic_monthly, hra_monthly, special_monthly, employer_pf_monthly,
+          gratuity_monthly, employee_pf_monthly, professional_tax_monthly
+        ) VALUES (?, ?, ?, ?, ?, ?, 0.00, 'Initial joining offer', ?, NOW(), ?, ?, ?, ?, ?, ?, ?)`,
         [
           employeeId,
           dto.dateOfJoining,
@@ -290,6 +327,13 @@ export class EmployeeRepository implements IEmployeeRepository {
           dto.bonus || 0,
           dto.esopUnits || 0,
           creatorId,
+          components?.basicM ?? null,
+          components?.hraM ?? null,
+          components?.specialM ?? null,
+          components?.employerPfM ?? null,
+          components?.gratuityM ?? null,
+          components?.employeePfM ?? null,
+          components?.professionalTaxM ?? null,
         ],
       );
 

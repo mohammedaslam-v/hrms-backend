@@ -1,3 +1,5 @@
+import type { SalaryComponents } from '../salary/salary.domain';
+
 /**
  * What an employee is paid, as at a date.
  *
@@ -21,4 +23,6 @@ export interface CompensationRecord {
   esopVestedPct: number;
   revisionNote: string | null;
   createdAt: string;
+  /** Monthly components HR set by hand; null means use the formula. */
+  components?: SalaryComponents | null;
 }

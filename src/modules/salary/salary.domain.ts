@@ -142,6 +142,76 @@ export function structure(ctc: number) {
   };
 }
 
+/**
+ * Monthly components HR typed in at onboarding, when they chose to override the
+ * formula. Every field is present or none is — a half-saved set would have no
+ * defensible meaning, so the repository maps it to null unless Basic is set.
+ */
+export interface SalaryComponents {
+  basicM: number;
+  hraM: number;
+  specialM: number;
+  employerPfM: number;
+  gratuityM: number;
+  employeePfM: number;
+  /** Null means "as applicable" — derive from the work state as usual. */
+  professionalTaxM: number | null;
+}
+
+/**
+ * The same shape as structure(), built from saved components instead of the
+ * formula. Annual figures are the monthly ones times twelve: once HR has fixed
+ * the month, that is the number that is paid twelve times.
+ */
+export function structureFromComponents(ctc: number, c: SalaryComponents) {
+  const grossM = c.basicM + c.hraM + c.specialM;
+  const pfWage = Math.min(c.basicM, COMPANY_CONFIG.pfCeiling);
+  const epsM = Math.min(
+    Math.round(Math.min(pfWage, COMPANY_CONFIG.epsCeiling) * COMPANY_CONFIG.epsRate),
+    1250,
+    c.employerPfM,
+  );
+  return {
+    ctc: Math.max(0, Math.round(ctc || 0)),
+    basicA: c.basicM * 12,
+    basicM: c.basicM,
+    hraA: c.hraM * 12,
+    hraM: c.hraM,
+    pfWage,
+    eePfA: c.employeePfM * 12,
+    eePfM: c.employeePfM,
+    erPfA: c.employerPfM * 12,
+    erPfM: c.employerPfM,
+    epsM,
+    erEpfM: c.employerPfM - epsM,
+    gratA: c.gratuityM * 12,
+    gratM: c.gratuityM,
+    specialA: c.specialM * 12,
+    specialM: c.specialM,
+    grossA: grossM * 12,
+    grossM,
+  };
+}
+
+/**
+ * What every payslip, register and report should call. Saved components win;
+ * without them the formula applies, so employees onboarded before components
+ * were stored carry on exactly as before.
+ */
+export function payStructure(ctc: number, components?: SalaryComponents | null) {
+  return components ? structureFromComponents(ctc, components) : structure(ctc);
+}
+
+/** Professional tax: HR's figure if they set one, otherwise the state slab. */
+export function ptOf(
+  components: SalaryComponents | null | undefined,
+  state: string,
+  grossM: number,
+  mKey?: string,
+): number {
+  return components?.professionalTaxM != null ? components.professionalTaxM : ptFor(state, grossM, mKey);
+}
+
 export function ptFor(state: string, gross: number, mKey?: string): number {
   const isFeb = mKey && mKey.slice(5) === "02";
   switch ((state || "").toLowerCase()) {
