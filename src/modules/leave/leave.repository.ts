@@ -44,6 +44,9 @@ interface RequestRow extends RowDataPacket {
   reason: string;
   applied_on: string;
   decided_by_name: string | null;
+  employee_name?: string | null;
+  employee_code?: string | null;
+  designation?: string | null;
 }
 
 interface SumRow extends RowDataPacket {
@@ -52,11 +55,15 @@ interface SumRow extends RowDataPacket {
 
 const REQUEST_COLUMNS = `l.id, l.employee_id, l.ref, l.leave_type, l.from_date, l.to_date,
   l.days, l.unpaid_days, l.is_half_day, l.half_day_session,
-  l.status, l.reason, l.applied_on, d.full_name AS decided_by_name`;
+  l.status, l.reason, l.applied_on, d.full_name AS decided_by_name,
+  e.full_name AS employee_name, e.employee_code, e.designation`;
 
 const mapRequest = (row: RequestRow): StoredLeaveRequest => ({
   id: row.id,
   employeeId: row.employee_id,
+  employeeName: row.employee_name ?? undefined,
+  employeeCode: row.employee_code ?? undefined,
+  designation: row.designation ?? null,
   ref: row.ref,
   leaveType: row.leave_type,
   fromDate: row.from_date,
@@ -133,6 +140,7 @@ export class LeaveRepository implements ILeaveRepository {
     const [rows] = await this.pool.execute<RequestRow[]>(
       `SELECT ${REQUEST_COLUMNS}
          FROM hrms_leave_requests l
+         LEFT JOIN hrms_employees e ON e.id = l.employee_id
          LEFT JOIN hrms_employees d ON d.id = l.decided_by
         WHERE l.employee_id = ? AND l.from_date <= ? AND l.to_date >= ?
         ORDER BY l.from_date DESC, l.id DESC`,
@@ -157,6 +165,7 @@ export class LeaveRepository implements ILeaveRepository {
     const [rows] = await this.pool.execute<RequestRow[]>(
       `SELECT ${REQUEST_COLUMNS}
          FROM hrms_leave_requests l
+         LEFT JOIN hrms_employees e ON e.id = l.employee_id
          LEFT JOIN hrms_employees d ON d.id = l.decided_by
         WHERE l.employee_id = ?
           AND l.status IN ('Pending','Approved')
@@ -200,6 +209,7 @@ export class LeaveRepository implements ILeaveRepository {
     const [rows] = await this.pool.execute<RequestRow[]>(
       `SELECT ${REQUEST_COLUMNS}
          FROM hrms_leave_requests l
+         LEFT JOIN hrms_employees e ON e.id = l.employee_id
          LEFT JOIN hrms_employees d ON d.id = l.decided_by
         WHERE l.id = ?`,
       [requestId],
@@ -218,37 +228,50 @@ export class LeaveRepository implements ILeaveRepository {
 
   // ---------------------------------------------------------------- approvals
 
-  async findPendingForEmployees(employeeIds: number[]): Promise<StoredLeaveRequest[]> {
-    if (employeeIds.length === 0) return [];
-    const placeholders = employeeIds.map(() => '?').join(',');
+  async findPendingForEmployees(employeeIds?: number[]): Promise<StoredLeaveRequest[]> {
+    if (employeeIds && employeeIds.length === 0) return [];
+    const hasIds = Array.isArray(employeeIds) && employeeIds.length > 0;
+    const placeholders = hasIds ? employeeIds.map(() => '?').join(',') : '';
+    const where = hasIds
+      ? `WHERE l.status = 'Pending' AND l.employee_id IN (${placeholders})`
+      : `WHERE l.status = 'Pending'`;
+    const params = hasIds ? employeeIds : [];
     const [rows] = await this.pool.query<RequestRow[]>(
       `SELECT ${REQUEST_COLUMNS}
          FROM hrms_leave_requests l
+         LEFT JOIN hrms_employees e ON e.id = l.employee_id
          LEFT JOIN hrms_employees d ON d.id = l.decided_by
-        WHERE l.status = 'Pending' AND l.employee_id IN (${placeholders})
+        ${where}
         ORDER BY l.from_date ASC, l.id ASC`,
-      employeeIds,
+      params,
     );
     return rows.map(mapRequest);
   }
 
   async findRequestsForEmployees(
-    employeeIds: number[],
+    employeeIds: number[] | undefined,
     yearStart: string,
     yearEnd: string,
     limit: number,
   ): Promise<StoredLeaveRequest[]> {
-    if (employeeIds.length === 0) return [];
-    const placeholders = employeeIds.map(() => '?').join(',');
+    if (employeeIds && employeeIds.length === 0) return [];
+    const hasIds = Array.isArray(employeeIds) && employeeIds.length > 0;
+    const placeholders = hasIds ? employeeIds.map(() => '?').join(',') : '';
+    const where = hasIds
+      ? `WHERE l.employee_id IN (${placeholders}) AND l.from_date <= ? AND l.to_date >= ?`
+      : `WHERE l.from_date <= ? AND l.to_date >= ?`;
+    const params = hasIds
+      ? [...employeeIds, yearEnd, yearStart, limit]
+      : [yearEnd, yearStart, limit];
     const [rows] = await this.pool.query<RequestRow[]>(
       `SELECT ${REQUEST_COLUMNS}
          FROM hrms_leave_requests l
+         LEFT JOIN hrms_employees e ON e.id = l.employee_id
          LEFT JOIN hrms_employees d ON d.id = l.decided_by
-        WHERE l.employee_id IN (${placeholders})
-          AND l.from_date <= ? AND l.to_date >= ?
+        ${where}
         ORDER BY l.from_date DESC, l.id DESC
         LIMIT ?`,
-      [...employeeIds, yearEnd, yearStart, limit],
+      params,
     );
     return rows.map(mapRequest);
   }

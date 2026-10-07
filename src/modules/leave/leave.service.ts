@@ -233,6 +233,9 @@ export class LeaveService implements ILeaveService {
   // ---------------------------------------------------------------- approvals
 
   async getApprovals(managerId: number): Promise<ApprovalsView> {
+    const viewer = this.authService ? await this.authService.getCurrentEmployee(managerId) : null;
+    const isAdmin = viewer?.tiers.includes('admin') ?? false;
+
     const team = await this.orgRepository.findReportingTree(managerId);
     const teamIds = team.map((t) => t.id);
 
@@ -242,18 +245,31 @@ export class LeaveService implements ILeaveService {
       throw new ApiError(503, 'Leave policy is not configured for the current leave year.');
     }
 
-    // The ledger for each report, so the queue can show the consequence of a
-    // decision and the balances table can be built from the same numbers.
+    // When an admin is logged in, show all pending leave approval requests.
+    // For managers, only their reporting tree's requests are shown.
+    const pendingRequests = isAdmin
+      ? await this.leaveRepository.findPendingForEmployees()
+      : await this.leaveRepository.findPendingForEmployees(teamIds);
+
+    // The ledger for each report, plus any applicant whose request is pending,
+    // so the queue can show the consequence of a decision and the balances table can be built.
     const ledgers = new Map<number, Awaited<ReturnType<LeaveService['resolve']>>>();
     for (const member of team) {
       ledgers.set(member.id, await this.resolve(member.id));
     }
-
-    const pendingRequests = await this.leaveRepository.findPendingForEmployees(teamIds);
+    for (const req of pendingRequests) {
+      if (!ledgers.has(req.employeeId)) {
+        ledgers.set(req.employeeId, await this.resolve(req.employeeId));
+      }
+    }
 
     const pending: PendingApproval[] = pendingRequests.map((request) => {
       const resolved = ledgers.get(request.employeeId)!;
-      const member = team.find((t) => t.id === request.employeeId)!;
+      const member = team.find((t) => t.id === request.employeeId);
+      const employeeName = member?.fullName ?? request.employeeName ?? '—';
+      const employeeCode = member?.employeeCode ?? request.employeeCode ?? '—';
+      const designation = member?.designation ?? request.designation ?? null;
+
       // Project the request through the month-by-month simulation, excluding it
       // from the baseline so it is not counted twice.
       const projected = this.project(resolved, request);
@@ -262,9 +278,9 @@ export class LeaveService implements ILeaveService {
         id: request.id,
         ref: request.ref,
         employeeId: request.employeeId,
-        employeeName: member.fullName,
-        employeeCode: member.employeeCode,
-        designation: member.designation,
+        employeeName,
+        employeeCode,
+        designation,
         leaveType: request.leaveType,
         fromDate: request.fromDate,
         toDate: request.toDate,
@@ -281,7 +297,21 @@ export class LeaveService implements ILeaveService {
       };
     });
 
-    const balances: TeamBalanceRow[] = team.map((member) => {
+    const balanceMembers = [...team];
+    if (isAdmin) {
+      for (const req of pendingRequests) {
+        if (!balanceMembers.some((m) => m.id === req.employeeId)) {
+          balanceMembers.push({
+            id: req.employeeId,
+            employeeCode: req.employeeCode ?? '—',
+            fullName: req.employeeName ?? '—',
+            designation: req.designation ?? null,
+          });
+        }
+      }
+    }
+
+    const balances: TeamBalanceRow[] = balanceMembers.map((member) => {
       const l = ledgers.get(member.id)!.ledger;
       return {
         employeeId: member.id,
@@ -299,7 +329,7 @@ export class LeaveService implements ILeaveService {
     });
 
     const logRows = await this.leaveRepository.findRequestsForEmployees(
-      teamIds,
+      isAdmin ? undefined : teamIds,
       year.startDate,
       year.endDate,
       200,
@@ -318,7 +348,7 @@ export class LeaveService implements ILeaveService {
         days: r.days,
         unpaidDays: r.unpaidDays,
         status: r.status,
-        employeeName: nameOf.get(r.employeeId) ?? '—',
+        employeeName: r.employeeName ?? nameOf.get(r.employeeId) ?? '—',
         reason: r.reason,
         appliedOn: r.appliedOn,
         decidedBy: r.decidedBy,
@@ -330,6 +360,7 @@ export class LeaveService implements ILeaveService {
         carryCap: year.carryCap,
       },
       teamSize: team.length,
+      isAdmin,
     };
   }
 
@@ -337,13 +368,18 @@ export class LeaveService implements ILeaveService {
     const request = await this.leaveRepository.findById(dto.requestId);
     if (!request) throw ApiError.notFound('That request could not be found.');
 
-    // Scope check: the request must belong to someone in this manager's tree.
+    const viewer = this.authService ? await this.authService.getCurrentEmployee(managerId) : null;
+    const isAdmin = viewer?.tiers.includes('admin') ?? false;
+
+    // Scope check: the request must belong to someone in this manager's tree, unless viewer is admin.
     // A manager cannot decide their own leave, and the tree excludes them.
-    const team = await this.orgRepository.findReportingTree(managerId);
-    const member = team.find((t) => t.id === request.employeeId);
-    if (!member) {
-      // Same response as a missing request, so this cannot be used to probe ids.
-      throw ApiError.notFound('That request could not be found.');
+    if (!isAdmin) {
+      const team = await this.orgRepository.findReportingTree(managerId);
+      const member = team.find((t) => t.id === request.employeeId);
+      if (!member) {
+        // Same response as a missing request, so this cannot be used to probe ids.
+        throw ApiError.notFound('That request could not be found.');
+      }
     }
 
     if (request.status !== 'Pending') {

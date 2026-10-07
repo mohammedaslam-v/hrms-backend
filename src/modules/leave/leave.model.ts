@@ -153,6 +153,7 @@ export interface ApprovalsView {
     carryCap: number;
   };
   teamSize: number;
+  isAdmin?: boolean;
 }
 
 export interface DecideLeaveDto {

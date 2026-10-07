@@ -3,6 +3,9 @@ import { ApplyLeaveDto, HolidayRecord, LeaveContext, LeaveYearConfig } from './l
 
 export interface StoredLeaveRequest extends LeaveRequestRecord {
   employeeId: number;
+  employeeName?: string;
+  employeeCode?: string;
+  designation?: string | null;
   isHalfDay: boolean;
   halfDaySession: 'first' | 'second' | null;
   reason: string;
@@ -46,11 +49,11 @@ export interface ILeaveRepository {
 
 
   /** Pending requests belonging to the given employees, oldest first. */
-  findPendingForEmployees(employeeIds: number[]): Promise<StoredLeaveRequest[]>;
+  findPendingForEmployees(employeeIds?: number[]): Promise<StoredLeaveRequest[]>;
 
   /** Decided requests for the log, most recent first. */
   findRequestsForEmployees(
-    employeeIds: number[],
+    employeeIds: number[] | undefined,
     yearStart: string,
     yearEnd: string,
     limit: number,
