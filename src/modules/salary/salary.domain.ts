@@ -55,51 +55,90 @@ export function fyMonths(uptoMonthKey?: string): string[] {
   return out;
 }
 
+/**
+ * The salary rules, as HR specified them:
+ *
+ *   Basic              40% of Gross
+ *   HRA                50% of Basic
+ *   Special allowance  the balance of Gross
+ *   Employer PF        12% of Basic, on a PF wage capped at ₹15,000/month
+ *   Gratuity           4.81% of Basic
+ *   Employee PF        12% of Basic, same cap
+ *   Net                Gross − Employee PF − Professional Tax
+ *   CTC                Gross + Employer PF + Gratuity
+ *
+ * Only CTC is entered, so Gross is solved for. Basic is a fixed share of
+ * Gross and both PF and gratuity are shares of Basic, so CTC is a straight
+ * line in Gross — until Basic crosses the PF wage cap, after which PF stops
+ * growing and the line changes slope. `grossFromCtc` picks the right piece.
+ */
+export const SALARY_RULES = {
+  basicPctOfGross: 0.40,
+  hraPctOfBasic: 0.50,
+  pfRate: 0.12,
+  gratuityPctOfBasic: 0.0481,
+} as const;
+
+/** Gross for a given CTC over the same period (a month, or a year). */
+export function grossFromCtc(ctc: number, pfWageCeiling: number): number {
+  const { basicPctOfGross: b, pfRate: pf, gratuityPctOfBasic: gr } = SALARY_RULES;
+  const uncapped = ctc / (1 + b * pf + b * gr);
+  if (b * uncapped <= pfWageCeiling) return uncapped;
+  return (ctc - pf * pfWageCeiling) / (1 + b * gr);
+}
+
+/**
+ * One period's split. Every component is rounded, and Gross is then taken as
+ * whatever CTC is left after employer PF and gratuity — so the parts always
+ * add back to the CTC to the rupee, with Special absorbing the rounding.
+ */
+function split(ctc: number, pfWageCeiling: number) {
+  const r = SALARY_RULES;
+  const basic = Math.round(grossFromCtc(ctc, pfWageCeiling) * r.basicPctOfGross);
+  const hra = Math.round(basic * r.hraPctOfBasic);
+  const pfWage = Math.min(basic, pfWageCeiling);
+  const pf = Math.round(pfWage * r.pfRate);
+  const gratuity = Math.round(basic * r.gratuityPctOfBasic);
+  const gross = Math.round(ctc) - pf - gratuity;
+  const special = Math.max(0, gross - basic - hra);
+  return { basic, hra, special, gross, pf, pfWage, gratuity };
+}
+
 export function structure(ctc: number) {
   const annualCtc = Math.max(0, Math.round(ctc || 0));
-  const basicA = Math.round(annualCtc * 0.40);
-  const basicM = Math.round(basicA / 12);
-  const hraA = Math.round(basicA * 0.40);
-  const hraM = Math.round(hraA / 12);
+  const ceilingM = COMPANY_CONFIG.pfCeiling;
 
-  const pfWage = Math.min(basicM, COMPANY_CONFIG.pfCeiling);
-  const eePfM = Math.min(Math.round(basicM * 0.12), 1800);
-  const eePfA = eePfM * 12;
+  // The month and the year are each split from their own CTC rather than one
+  // being the other times twelve, so a CTC that does not divide by 12 still
+  // balances exactly in both views.
+  const m = split(annualCtc / 12, ceilingM);
+  const a = split(annualCtc, ceilingM * 12);
 
-  const erPfA = Math.round(basicA * 0.048);
-  const erPfM = Math.round(erPfA / 12);
-
-  const epsM = Math.min(Math.round(Math.min(pfWage, COMPANY_CONFIG.epsCeiling) * COMPANY_CONFIG.epsRate), 1250);
-  const erEpfM = erPfM - epsM;
-
-  const gratA = Math.round(basicA * 0.0481);
-  const gratM = Math.round(gratA / 12);
-
-  const specialA = Math.max(0, annualCtc - (basicA + hraA + eePfA + erPfA + gratA));
-  const specialM = Math.max(0, Math.round(annualCtc / 12) - (basicM + hraM + eePfM + erPfM + gratM));
-
-  const grossA = basicA + hraA + specialA;
-  const grossM = basicM + hraM + specialM;
+  // EPS is the pension slice carved out of the employer's PF; the rest is EPF.
+  const epsM = Math.min(
+    Math.round(Math.min(m.pfWage, COMPANY_CONFIG.epsCeiling) * COMPANY_CONFIG.epsRate),
+    1250,
+  );
 
   return {
     ctc: annualCtc,
-    basicA,
-    basicM,
-    hraA,
-    hraM,
-    pfWage,
-    eePfA,
-    eePfM,
-    erPfA,
-    erPfM,
+    basicA: a.basic,
+    basicM: m.basic,
+    hraA: a.hra,
+    hraM: m.hra,
+    pfWage: m.pfWage,
+    eePfA: a.pf,
+    eePfM: m.pf,
+    erPfA: a.pf,
+    erPfM: m.pf,
     epsM,
-    erEpfM,
-    gratA,
-    gratM,
-    specialA,
-    specialM,
-    grossA,
-    grossM,
+    erEpfM: m.pf - epsM,
+    gratA: a.gratuity,
+    gratM: m.gratuity,
+    specialA: a.special,
+    specialM: m.special,
+    grossA: a.gross,
+    grossM: m.gross,
   };
 }
 

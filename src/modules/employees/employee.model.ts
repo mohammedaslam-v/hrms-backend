@@ -76,7 +76,13 @@ export interface CreateEmployeeResult {
   employeeCode: string;
   fullName: string;
   workEmail: string;
-  temporaryPassword: string;
+  /** Null when an existing portal login was linked — no new password issued. */
+  temporaryPassword: string | null;
+  /**
+   * True when the person already had a live `admins` account (typically made
+   * in the old admin portal) and only the HRMS record was created for it.
+   */
+  linkedExistingAccount: boolean;
 }
 
 export interface ManagerOption {

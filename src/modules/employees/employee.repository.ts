@@ -119,32 +119,56 @@ export class EmployeeRepository implements IEmployeeRepository {
       // collide with a new one. Without the filter an account closed years ago
       // was enough to refuse a rehire, and the message pointed HR at a record
       // they could not see or reopen.
-      const [existingAdmin] = await connection.query<RowDataPacket[]>(
-        `SELECT id FROM admins WHERE email = ? AND deleted_at IS NULL FOR UPDATE`,
+      const [byEmail] = await connection.query<RowDataPacket[]>(
+        `SELECT id, name, email FROM admins
+          WHERE email = ? AND deleted_at IS NULL LIMIT 1 FOR UPDATE`,
         [dto.workEmail],
       );
-      if (existingAdmin.length > 0) {
-        throw ApiError.conflict(`An account with email ${dto.workEmail} already exists in the system.`);
-      }
 
       // The mobile matters as much as the email, and is the better signal: one
       // person has several addresses but usually one phone. Checking only the
       // email is how the same people were added twice under a work address and
       // a personal one — seventeen of them in a single import.
       const phone = (dto.phone ?? '').trim();
+      let byPhoneRow: RowDataPacket | null = null;
       if (phone && phone !== PLACEHOLDER_PHONE) {
         const [byPhone] = await connection.query<RowDataPacket[]>(
           `SELECT id, name, email FROM admins
             WHERE mobile = ? AND deleted_at IS NULL LIMIT 1 FOR UPDATE`,
           [phone],
         );
-        const clash = byPhone[0];
-        if (clash) {
+        byPhoneRow = byPhone[0] ?? null;
+      }
+
+      // Email and mobile pointing at two different live accounts means the
+      // form describes nobody we can safely pick. Refuse rather than guess.
+      if (byEmail[0] && byPhoneRow && byPhoneRow.id !== byEmail[0].id) {
+        throw ApiError.conflict(
+          `The email belongs to ${byEmail[0].name} but the mobile ${phone} belongs to ` +
+            `${byPhoneRow.name} (${byPhoneRow.email}). Check which person this is.`,
+        );
+      }
+
+      // An existing portal login is normal, not a duplicate. CSRs and SSMs are
+      // onboarded in the old admin portal first and added to HRMS afterwards,
+      // so a live admin with no employee record gets linked — never a second
+      // admin row, which is how 164 duplicates were made on 1 October. Only an
+      // admin that is already somebody's employee record is a real conflict.
+      const existingAdmin = byEmail[0] ?? byPhoneRow;
+      let linkAdminId: number | null = null;
+      if (existingAdmin) {
+        const [linked] = await connection.query<RowDataPacket[]>(
+          `SELECT employee_code, full_name FROM hrms_employees
+            WHERE admin_id = ? LIMIT 1 FOR UPDATE`,
+          [existingAdmin.id],
+        );
+        if (linked[0]) {
           throw ApiError.conflict(
-            `${clash.name} (${clash.email}) already uses the mobile number ${phone}. ` +
-              `If this is the same person, update that account instead of adding a second one.`,
+            `${existingAdmin.name} (${existingAdmin.email}) is already in HRMS as ` +
+              `${linked[0].full_name}, ${linked[0].employee_code}.`,
           );
         }
+        linkAdminId = Number(existingAdmin.id);
       }
 
       // hrms_employees keeps no soft delete — a leaver keeps their row with
@@ -179,27 +203,35 @@ export class EmployeeRepository implements IEmployeeRepository {
         }
       }
 
-      // 2. Hash temporary password
-      const tempPassword = 'Bambinos@2026';
-      const passwordHash = await bcrypt.hash(tempPassword, 10);
-
-      // 3. Insert account into admins
-      const [adminResult] = await connection.execute<ResultSetHeader>(
-        `INSERT INTO admins (
-          name, email, mobile, password, date_of_birth, pan, role,
-          paid_booking_access, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, NOW(), NOW())`,
-        [
-          dto.fullName,
-          dto.workEmail,
-          dto.phone || PLACEHOLDER_PHONE,
-          passwordHash,
-          dto.dateOfBirth || null,
-          dto.pan ? dto.pan.toUpperCase() : null,
-          dto.hrmsRole === 'admin' ? 'Admin' : 'CSR',
-        ],
-      );
-      const adminId = adminResult.insertId;
+      // 2–3. A portal account: reuse the existing one, or create it.
+      //
+      // When linking, the admins row is not touched at all — its password,
+      // role and `access` belong to the old portal, which the person is already
+      // signing into. The details from this form go to hrms_employees only.
+      let adminId: number;
+      let tempPassword: string | null = null;
+      if (linkAdminId !== null) {
+        adminId = linkAdminId;
+      } else {
+        tempPassword = 'Bambinos@2026';
+        const passwordHash = await bcrypt.hash(tempPassword, 10);
+        const [adminResult] = await connection.execute<ResultSetHeader>(
+          `INSERT INTO admins (
+            name, email, mobile, password, date_of_birth, pan, role,
+            paid_booking_access, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, NOW(), NOW())`,
+          [
+            dto.fullName,
+            dto.workEmail,
+            dto.phone || PLACEHOLDER_PHONE,
+            passwordHash,
+            dto.dateOfBirth || null,
+            dto.pan ? dto.pan.toUpperCase() : null,
+            dto.hrmsRole === 'admin' ? 'Admin' : 'CSR',
+          ],
+        );
+        adminId = adminResult.insertId;
+      }
 
       // 4. Derive sequential employee code: BAM- + 4-digit zero-padded adminId
       const employeeCode = (dto.employeeCode && dto.employeeCode.trim())
@@ -270,6 +302,7 @@ export class EmployeeRepository implements IEmployeeRepository {
         fullName: dto.fullName,
         workEmail: dto.workEmail,
         temporaryPassword: tempPassword,
+        linkedExistingAccount: linkAdminId !== null,
       };
     } catch (error) {
       await connection.rollback();
