@@ -8,6 +8,7 @@ export interface SalarySlipEmployee {
   pan: string;
   uan: string;
   bankAccount: string;
+  ifsc: string;
   workState: string;
 }
 

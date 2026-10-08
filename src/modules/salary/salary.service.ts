@@ -115,6 +115,7 @@ export class SalaryService implements ISalaryService {
           pan: emp.pan,
           uan: emp.uan,
           bankAccount: emp.bankAccount,
+          ifsc: emp.ifsc,
           workState: emp.workState,
         },
         earnings: {
@@ -175,6 +176,7 @@ export class SalaryService implements ISalaryService {
             pan: emp.pan,
             uan: emp.uan,
             bankAccount: emp.bankAccount,
+            ifsc: emp.ifsc,
             workState: emp.workState,
           },
           earnings: {
@@ -240,6 +242,7 @@ export class SalaryService implements ISalaryService {
             pan: emp.pan,
             uan: emp.uan,
             bankAccount: emp.bankAccount,
+            ifsc: emp.ifsc,
             workState: emp.workState,
           },
           earnings: {

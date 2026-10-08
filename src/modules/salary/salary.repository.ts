@@ -17,6 +17,7 @@ interface EmpRow extends RowDataPacket {
   pan: string | null;
   uan: string | null;
   account_no: string | null;
+  ifsc_code: string | null;
   work_state: string;
   employment_type: string;
 }
@@ -34,7 +35,7 @@ export class SalaryRepository implements ISalaryRepository {
   async findEmployeeMeta(employeeId: number): Promise<EmployeeSalaryMeta | null> {
     const [rows] = await this.pool.execute<EmpRow[]>(
       `SELECT id, employee_code, full_name, designation, department,
-              date_of_joining, date_of_leaving, pan, uan, account_no,
+              date_of_joining, date_of_leaving, pan, uan, account_no, ifsc_code,
               work_state, employment_type
          FROM hrms_employees
         WHERE id = ?`,
@@ -59,6 +60,7 @@ export class SalaryRepository implements ISalaryRepository {
       pan: r.pan || "PENDING",
       uan: r.uan || "—",
       bankAccount: r.account_no || "—",
+      ifsc: r.ifsc_code || "—",
       workState: r.work_state || "Karnataka",
       isContractor,
     };

@@ -47,6 +47,7 @@ export interface EmployeeSalaryMeta {
   pan: string;
   uan: string;
   bankAccount: string;
+  ifsc: string;
   workState: string;
   isContractor: boolean;
 }
