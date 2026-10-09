@@ -19,6 +19,7 @@ export interface TeamMember {
 export interface RosterMember extends TeamMember {
   department: string | null;
   /** Resolved by a self join. Null for the people at the top. */
+  managerId: number | null;
   managerName: string | null;
   workMode: WorkMode;
   shiftStart: string;

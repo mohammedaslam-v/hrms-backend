@@ -13,6 +13,7 @@ interface TreeRow extends RowDataPacket {
 
 interface RosterRow extends TreeRow {
   department: string | null;
+  manager_id: number | null;
   manager_name: string | null;
   work_mode: WorkMode;
   shift_start: string;
@@ -74,7 +75,7 @@ export class OrgRepository implements IOrgRepository {
     const includeLeavers = scope.includeLeavers ?? false;
     const hasDeleted = await this.checkDeletedCol();
 
-    const columns = `e.id, e.employee_code, e.full_name, e.designation, e.department,
+    const columns = `e.id, e.employee_code, e.full_name, e.designation, e.department, e.manager_id,
               m.full_name AS manager_name,
               e.work_mode, e.shift_start, e.shift_end, e.weekly_off,
               e.date_of_joining, e.date_of_leaving`;
@@ -104,6 +105,7 @@ export class OrgRepository implements IOrgRepository {
       fullName: row.full_name,
       designation: row.designation,
       department: row.department,
+      managerId: row.manager_id ? Number(row.manager_id) : null,
       managerName: row.manager_name,
       workMode: row.work_mode,
       shiftStart: row.shift_start.slice(0, 5),

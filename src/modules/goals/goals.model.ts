@@ -51,6 +51,8 @@ export interface MemberGoalsGroup {
   fullName: string;
   designation: string | null;
   department: string | null;
+  managerId?: number | null;
+  managerName?: string | null;
   goalsCount: number;
   averageProgress: number;
   goals: GoalView[];

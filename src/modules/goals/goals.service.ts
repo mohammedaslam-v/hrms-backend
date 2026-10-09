@@ -169,6 +169,8 @@ export class GoalsService implements IGoalsService {
         fullName: member.fullName,
         designation: member.designation,
         department: member.department,
+        managerId: member.managerId ?? null,
+        managerName: member.managerName ?? null,
         goalsCount,
         averageProgress,
         goals: filteredGoals,
