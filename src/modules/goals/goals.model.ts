@@ -2,6 +2,23 @@ import { GoalApprovalStatus, GoalDirection, GoalPeriod, GoalStatus, GoalType, Mi
 
 export { GoalApprovalStatus };
 
+/**
+ * The column widths in `hrms_goals`, named once.
+ *
+ * MySQL rejects an over-long value outright rather than truncating it, and that
+ * error reached the browser as a bare "Internal server error" — a paragraph
+ * typed into Notes was enough to trigger it, back when that column was 500.
+ *
+ * These numbers must match the column widths in `hrms_goals` — note was
+ * widened to varchar(1000) on 9 Oct 2026. Raising one here without running the
+ * matching ALTER on the database puts the trap straight back.
+ */
+export const GOAL_LIMITS = {
+  title: 255,
+  unit: 10,
+  note: 1000,
+} as const;
+
 export interface GoalView {
   id: number;
   ref: string;

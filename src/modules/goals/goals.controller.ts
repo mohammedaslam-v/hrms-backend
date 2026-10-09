@@ -3,8 +3,24 @@ import { AuthenticatedRequest } from '../../middlewares/auth.middleware';
 import { ApiError } from '../../utils/api-error';
 import { asyncHandler } from '../../utils/async-handler';
 import { IGoalsService } from './goals.service.interface';
-import { CreateGoalDto, UpdateGoalDto } from './goals.model';
+import { CreateGoalDto, GOAL_LIMITS, UpdateGoalDto } from './goals.model';
 import { GoalDirection, GoalPeriod, GoalType } from './goals.domain';
+
+/**
+ * Rejects a value the column cannot hold, naming the field and the limit.
+ *
+ * Checked here rather than left to MySQL because the database's complaint
+ * arrives as an unhandled error with the column name and nothing a person can
+ * act on. "Notes must be 1000 characters or fewer — you have 1,240" is a
+ * sentence someone can do something about.
+ */
+const assertFits = (label: string, value: string, max: number): void => {
+  if (value.length > max) {
+    throw ApiError.badRequest(
+      `${label} must be ${max} characters or fewer — you have ${value.length.toLocaleString('en-IN')}.`,
+    );
+  }
+};
 
 export class GoalsController {
   constructor(private readonly goalsService: IGoalsService) {}
@@ -49,6 +65,9 @@ export class GoalsController {
     if (!title) {
       throw ApiError.badRequest('Goal title is required.');
     }
+    assertFits('Goal title', title, GOAL_LIMITS.title);
+    assertFits('Unit', typeof body.unit === 'string' ? body.unit.trim() : '', GOAL_LIMITS.unit);
+    assertFits('Notes', typeof body.note === 'string' ? body.note.trim() : '', GOAL_LIMITS.note);
 
     const goalType = body.goalType as GoalType;
     if (goalType !== 'metric' && goalType !== 'milestone') {
@@ -124,6 +143,9 @@ export class GoalsController {
     if (!title) {
       throw ApiError.badRequest('Goal title is required.');
     }
+    assertFits('Goal title', title, GOAL_LIMITS.title);
+    assertFits('Unit', typeof body.unit === 'string' ? body.unit.trim() : '', GOAL_LIMITS.unit);
+    assertFits('Notes', typeof body.note === 'string' ? body.note.trim() : '', GOAL_LIMITS.note);
 
     const goalType = body.goalType as GoalType;
     if (goalType !== 'metric' && goalType !== 'milestone') {
