@@ -13,6 +13,32 @@ import {
 } from '../attendance/attendance.domain';
 
 /**
+ * The reports say 'No login' where the domain says 'Absent'. They record what
+ * the system saw, not a verdict: someone with no punch may still have been
+ * working, and HR decides that. A working day with no login and no leave is
+ * 'No login' once the shift has started; before then it is 'Not in yet'.
+ */
+export type ReportDayStatus = Exclude<AttendanceStatus, 'Absent'> | 'No login';
+
+/** The current date and HH:MM in India, whatever zone the server runs in. */
+export function istNow(at: Date = new Date()): { date: string; time: string } {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(at);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '00';
+  return {
+    date: `${get('year')}-${get('month')}-${get('day')}`,
+    time: `${get('hour')}:${get('minute')}`,
+  };
+}
+
+/**
  * One day of one person's attendance, as the reports need it.
  *
  * Reports used to print `10:04` for everybody on every day — a literal in the
@@ -31,7 +57,7 @@ export interface AttendanceDay {
   logoutAt: string | null;
   activeHours: number;
   lateByMinutes: number;
-  status: AttendanceStatus;
+  status: ReportDayStatus;
   /** True when the hours came from observed slots rather than a punch. */
   fromActivity: boolean;
 }
@@ -61,6 +87,8 @@ export async function loadAttendanceDays(
   to: string,
   today: string,
   lateGraceMinutes: number,
+  /** HH:MM in India now — decides whether today's shift has started. */
+  nowTime: string,
 ): Promise<Map<number, Map<string, AttendanceDay>>> {
   const byEmployee = new Map<number, Map<string, AttendanceDay>>();
   if (employeeIds.length === 0) return byEmployee;
@@ -124,7 +152,7 @@ export async function loadAttendanceDays(
         (l) => l.employeeId === employeeId && date >= l.fromDate && date <= l.toDate,
       );
 
-      const status = resolveDayStatus({
+      const resolved = resolveDayStatus({
         date,
         today,
         weeklyOff,
@@ -135,6 +163,13 @@ export async function loadAttendanceDays(
         shiftStart,
         lateGraceMinutes,
       });
+      // Today only stays 'Not in yet' until the shift starts; days to come
+      // keep it.
+      const shiftStarted = date === today && nowTime >= shiftStart.slice(0, 5);
+      const status: ReportDayStatus =
+        resolved === 'Absent' || (resolved === 'Not in yet' && shiftStarted)
+          ? 'No login'
+          : resolved;
 
       // Hours follow whichever source the person is measured by. A punch still
       // supplies the login and logout times either way — somebody on activity

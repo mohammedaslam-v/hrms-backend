@@ -13,6 +13,7 @@ import { IAttendanceRepository } from '../attendance/attendance.repository.inter
 import { IPolicyService } from '../policy/policy.service.interface';
 import {
   datesBetween,
+  istNow,
   loadAttendanceDays,
   shiftLabel,
   timeLabel,
@@ -152,14 +153,16 @@ export class ReportsService implements IReportsService {
     to: string,
   ): Promise<Map<number, Map<string, AttendanceDay>>> {
     if (!this.attendanceRepository) return new Map();
-    const today = new Date().toISOString().slice(0, 10);
+    // India time: the UTC date is still yesterday until 05:30 IST.
+    const now = istNow();
     return loadAttendanceDays(
       this.attendanceRepository,
       employees.map((e) => e.id),
       from,
       to,
-      today,
+      now.date,
       await this.lateGrace(to),
+      now.time,
     );
   }
 
@@ -496,9 +499,9 @@ export class ReportsService implements IReportsService {
       const onTime = count('On time');
       const late = count('Late');
       const halfDay = count('Half day');
-      // A day still in progress is not an absence; it is also not yet a
-      // working day anyone can be judged on, so it stays out of both.
-      const noLogin = count('Absent');
+      // A day whose shift has not started is not yet a working day anyone can
+      // be judged on, so 'Not in yet' stays out of both.
+      const noLogin = count('No login');
       const weeklyOff = count('Weekly off');
       const holiday = count('Holiday');
       const leave = count('Leave');
@@ -621,13 +624,13 @@ export class ReportsService implements IReportsService {
 
     const facts = await this.attendanceFor(employees, range.from, range.to);
 
-    // 'Absent' is a finished working day with nothing on it — the domain has
-    // already taken out weekly offs, holidays, approved leave and days still
-    // in progress, which is exactly what the note below promises.
+    // 'No login' is a working day with nothing on it once the shift has
+    // started — weekly offs, holidays and approved leave are already taken
+    // out, which is exactly what the note below promises.
     const rows = employees
       .flatMap((e) =>
         [...(facts.get(e.id)?.values() ?? [])]
-          .filter((d) => d.status === 'Absent')
+          .filter((d) => d.status === 'No login')
           .map((d) => ({
             date: formatDisplayDate(d.date),
             day: d.dayName,
