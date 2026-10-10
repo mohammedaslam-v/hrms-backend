@@ -75,7 +75,8 @@ function resolveRange(filter: ReportFilterDto): { from: string; to: string; labe
   const today = '2026-09-28';
 
   // If a specific date is selected (e.g. in Attendance day by day or specific date filter)
-  if (filter.date && (p === 'daily' || p === 'monthly' || filter.type === 'attendance' || filter.type === 'late' || filter.type === 'nologin' || filter.type === 'active')) {
+  // A week, range or year-to-date ignores it: the period the person picked wins.
+  if (filter.date && (p === 'daily' || p === 'monthly')) {
     const d = filter.date;
     return { from: d, to: d, label: formatDisplayDate(d) };
   }
