@@ -4,7 +4,7 @@ import {
   ILeaveRepository,
   StoredLeaveRequest,
 } from './leave.repository.interface';
-import { ApplyLeaveDto, HolidayRecord, LeaveContext, LeaveYearConfig } from './leave.model';
+import { ApplyLeaveDto, HolidayRecord, LeaveContext, LeaveYearConfig, OnLeaveEmployee } from './leave.model';
 import { recordAudit } from '../../shared/audit';
 
 interface LeaveYearRow extends RowDataPacket {
@@ -296,6 +296,46 @@ export class LeaveRepository implements ILeaveRepository {
         WHERE id = ? AND status = 'Pending'`,
       [decision, decidedBy, note, decision === 'Approved' ? unpaidDays : 0, requestId],
     );
+  }
+
+
+  async findOnLeaveToday(today: string): Promise<OnLeaveEmployee[]> {
+    interface OnLeaveRow extends RowDataPacket {
+      employee_id: number;
+      full_name: string;
+      employee_code: string;
+      department: string | null;
+      designation: string | null;
+      leave_type: LeaveType;
+      from_date: string;
+      to_date: string;
+      is_half_day: number;
+      half_day_session: 'first' | 'second' | null;
+    }
+
+    const [rows] = await this.pool.query<OnLeaveRow[]>(
+      `SELECT l.employee_id, e.full_name, e.employee_code, e.department, e.designation,
+              l.leave_type, l.from_date, l.to_date, l.is_half_day, l.half_day_session
+         FROM hrms_leave_requests l
+         JOIN hrms_employees e ON e.id = l.employee_id
+        WHERE l.status = 'Approved'
+          AND ? BETWEEN l.from_date AND l.to_date
+        ORDER BY e.full_name ASC`,
+      [today],
+    );
+
+    return rows.map((r) => ({
+      employeeId: r.employee_id,
+      fullName: r.full_name,
+      employeeCode: r.employee_code,
+      department: r.department,
+      designation: r.designation,
+      leaveType: r.leave_type,
+      isHalfDay: r.is_half_day === 1,
+      halfDaySession: r.half_day_session,
+      fromDate: String(r.from_date).slice(0, 10),
+      toDate: String(r.to_date).slice(0, 10),
+    }));
   }
 
   async recordAudit(

@@ -16,6 +16,11 @@ export class LeaveController {
     private readonly authService: IAuthService,
   ) {}
 
+
+  getOnLeaveToday: RequestHandler = asyncHandler(async (_req, res) => {
+    res.json({ success: true, data: await this.leaveService.getOnLeaveToday() });
+  });
+
   getMine: RequestHandler = asyncHandler(async (req, res) => {
     const { employeeId } = req as AuthenticatedRequest;
     res.json({ success: true, data: await this.leaveService.getMyLeave(employeeId) });

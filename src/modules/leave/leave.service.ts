@@ -29,6 +29,7 @@ import {
   PendingApproval,
   TeamBalanceRow,
   MyLeaveView,
+  OnLeaveEmployee,
 } from './leave.model';
 import { ApiError } from '../../utils/api-error';
 
@@ -231,6 +232,18 @@ export class LeaveService implements ILeaveService {
   }
 
   // ---------------------------------------------------------------- approvals
+
+
+  async getOnLeaveToday(): Promise<OnLeaveEmployee[]> {
+    const today = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date());
+
+    return this.leaveRepository.findOnLeaveToday(today);
+  }
 
   async getApprovals(managerId: number): Promise<ApprovalsView> {
     const viewer = this.authService ? await this.authService.getCurrentEmployee(managerId) : null;

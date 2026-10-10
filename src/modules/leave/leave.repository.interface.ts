@@ -1,5 +1,5 @@
 import { LeaveRequestRecord } from './leave.domain';
-import { ApplyLeaveDto, HolidayRecord, LeaveContext, LeaveYearConfig } from './leave.model';
+import { ApplyLeaveDto, HolidayRecord, LeaveContext, LeaveYearConfig, OnLeaveEmployee } from './leave.model';
 
 export interface StoredLeaveRequest extends LeaveRequestRecord {
   employeeId: number;
@@ -70,6 +70,8 @@ export interface ILeaveRepository {
     note: string | null,
     unpaidDays: number,
   ): Promise<void>;
+
+  findOnLeaveToday(today: string): Promise<OnLeaveEmployee[]>;
 
   recordAudit(
     actorEmployeeId: number,

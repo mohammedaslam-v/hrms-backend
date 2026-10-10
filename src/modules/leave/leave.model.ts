@@ -168,3 +168,16 @@ export interface DecisionResult {
   message: string;
   convertedToUnpaid: boolean;
 }
+
+export interface OnLeaveEmployee {
+  employeeId: number;
+  fullName: string;
+  employeeCode: string;
+  department: string | null;
+  designation: string | null;
+  leaveType: LeaveType;
+  isHalfDay: boolean;
+  halfDaySession: HalfDaySession | null;
+  fromDate: string;
+  toDate: string;
+}

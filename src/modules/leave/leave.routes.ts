@@ -19,6 +19,7 @@ export const createLeaveRouter = (controller: LeaveController): Router => {
 
   // Manager tier. Scoping is enforced in the service against the reporting tree,
   // so an employee with no reports simply sees an empty queue.
+  router.get('/on-leave-today', controller.getOnLeaveToday);
   router.get('/approvals', controller.getApprovals);
   router.post('/approvals/:id/decide', controller.decide);
 

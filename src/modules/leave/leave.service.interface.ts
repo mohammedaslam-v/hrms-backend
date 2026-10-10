@@ -6,6 +6,7 @@ import {
   DecisionResult,
   LeavePreview,
   MyLeaveView,
+  OnLeaveEmployee,
 } from './leave.model';
 
 export interface ILeaveService {
@@ -50,6 +51,8 @@ export interface ILeaveService {
     requestId: number,
     byName: string,
   ): Promise<MyLeaveView>;
+
+  getOnLeaveToday(): Promise<OnLeaveEmployee[]>;
 
   // ---------------------------------------------------------------- approvals
 
