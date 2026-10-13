@@ -24,6 +24,17 @@ import type { SalaryComponents } from '../salary/salary.domain';
 const PLACEHOLDER_PHONE = '0000000000';
 
 /**
+ * Strips formatting, spaces, and leading zeros from a phone number for matching.
+ * Returns null if the number has fewer than 7 digits or is composed entirely of zeros.
+ */
+function cleanPhoneDigits(phone?: string | null): string | null {
+  if (!phone) return null;
+  const digits = phone.replace(/[^0-9]/g, '').replace(/^0+/, '');
+  if (digits.length < 7 || /^0+$/.test(digits)) return null;
+  return digits;
+}
+
+/**
  * Components from the form, checked before anything is saved.
  *
  * The form keeps them balanced, but payroll reads them straight onto payslips,
@@ -163,23 +174,31 @@ export class EmployeeRepository implements IEmployeeRepository {
       // collide with a new one. Without the filter an account closed years ago
       // was enough to refuse a rehire, and the message pointed HR at a record
       // they could not see or reopen.
+      const incomingEmail = dto.workEmail.trim().toLowerCase();
+      // Check both email and personal_email so portal accounts under official or personal addresses are matched
       const [byEmail] = await connection.query<RowDataPacket[]>(
-        `SELECT id, name, email FROM admins
-          WHERE email = ? AND deleted_at IS NULL LIMIT 1 FOR UPDATE`,
-        [dto.workEmail],
+        `SELECT id, name, email, personal_email, mobile FROM admins
+          WHERE (email = ? OR personal_email = ?) AND deleted_at IS NULL LIMIT 1 FOR UPDATE`,
+        [incomingEmail, incomingEmail],
       );
 
       // The mobile matters as much as the email, and is the better signal: one
-      // person has several addresses but usually one phone. Checking only the
-      // email is how the same people were added twice under a work address and
-      // a personal one — seventeen of them in a single import.
-      const phone = (dto.phone ?? '').trim();
+      // person has several addresses but usually one phone.
+      // Suffix/clean-digits match handles any international country code (+91, +971, +65, etc.) and spaces.
+      const cleanPhone = cleanPhoneDigits(dto.phone);
       let byPhoneRow: RowDataPacket | null = null;
-      if (phone && phone !== PLACEHOLDER_PHONE) {
+      if (cleanPhone) {
         const [byPhone] = await connection.query<RowDataPacket[]>(
-          `SELECT id, name, email FROM admins
-            WHERE mobile = ? AND deleted_at IS NULL LIMIT 1 FOR UPDATE`,
-          [phone],
+          `SELECT id, name, email, personal_email, mobile FROM admins
+            WHERE deleted_at IS NULL
+              AND LENGTH(REGEXP_REPLACE(mobile, '[^0-9]', '')) >= 7
+              AND (
+                REGEXP_REPLACE(mobile, '[^0-9]', '') = ?
+                OR REGEXP_REPLACE(mobile, '[^0-9]', '') LIKE CONCAT('%', ?)
+                OR ? LIKE CONCAT('%', REGEXP_REPLACE(mobile, '[^0-9]', ''))
+              )
+            LIMIT 1 FOR UPDATE`,
+          [cleanPhone, cleanPhone, cleanPhone],
         );
         byPhoneRow = byPhone[0] ?? null;
       }
@@ -188,7 +207,7 @@ export class EmployeeRepository implements IEmployeeRepository {
       // form describes nobody we can safely pick. Refuse rather than guess.
       if (byEmail[0] && byPhoneRow && byPhoneRow.id !== byEmail[0].id) {
         throw ApiError.conflict(
-          `The email belongs to ${byEmail[0].name} but the mobile ${phone} belongs to ` +
+          `The email belongs to ${byEmail[0].name} but the phone belongs to ` +
             `${byPhoneRow.name} (${byPhoneRow.email}). Check which person this is.`,
         );
       }
@@ -213,6 +232,16 @@ export class EmployeeRepository implements IEmployeeRepository {
           );
         }
         linkAdminId = Number(existingAdmin.id);
+
+        // If the existing admin row has no personal_email, and the incoming email is a personal email
+        // or differs from their official portal email, backfill personal_email so both systems stay in sync.
+        const existingPersonal = (existingAdmin.personal_email ?? '').trim();
+        if (!existingPersonal && incomingEmail !== existingAdmin.email?.toLowerCase()) {
+          await connection.execute(
+            `UPDATE admins SET personal_email = ?, updated_at = NOW() WHERE id = ?`,
+            [incomingEmail, existingAdmin.id],
+          );
+        }
       }
 
       // hrms_employees keeps no soft delete — a leaver keeps their row with
@@ -259,14 +288,18 @@ export class EmployeeRepository implements IEmployeeRepository {
       } else {
         tempPassword = 'Bambinos@2026';
         const passwordHash = await bcrypt.hash(tempPassword, 10);
+        const isBambinosEmail = /@bambinos\.live$/i.test(incomingEmail);
+        const personalEmail = isBambinosEmail ? null : incomingEmail;
+
         const [adminResult] = await connection.execute<ResultSetHeader>(
           `INSERT INTO admins (
-            name, email, mobile, password, date_of_birth, pan, role,
+            name, email, personal_email, mobile, password, date_of_birth, pan, role,
             paid_booking_access, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, NOW(), NOW())`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, NOW(), NOW())`,
           [
             dto.fullName,
             dto.workEmail,
+            personalEmail,
             dto.phone || PLACEHOLDER_PHONE,
             passwordHash,
             dto.dateOfBirth || null,
