@@ -31,3 +31,11 @@ export interface PolicyFilter {
   status?: string;
   category?: string;
 }
+
+export interface PolicyAttachmentUploadResult {
+  url: string;
+  key: string;
+  fileName: string;
+  fileSize: number;
+  mimeType: string;
+}

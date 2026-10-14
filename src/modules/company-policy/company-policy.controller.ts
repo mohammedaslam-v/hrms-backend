@@ -66,4 +66,27 @@ export class CompanyPolicyController {
       message: 'Policy deleted successfully.',
     });
   });
+
+  uploadAttachment: RequestHandler = asyncHandler(async (req, res) => {
+    const { employeeId } = req as AuthenticatedRequest;
+    const { fileName, fileBase64 } = req.body;
+    const result = await this.service.uploadAttachment(employeeId, fileName, fileBase64);
+    res.status(201).json({
+      success: true,
+      data: result,
+      message: 'Attachment uploaded successfully.',
+    });
+  });
+
+  getAttachmentFile: RequestHandler = asyncHandler(async (req, res) => {
+    // In express, /files/* captures the remaining path in req.params[0]
+    const key = (req.params as any)[0] || req.params.key || (req.query.key as string);
+    const { buffer, mimeType, filename } = await this.service.getAttachmentFile(key);
+    res.setHeader('Content-Type', mimeType);
+    res.setHeader(
+      'Content-Disposition',
+      `inline; filename="${encodeURIComponent(filename)}"`,
+    );
+    res.send(buffer);
+  });
 }

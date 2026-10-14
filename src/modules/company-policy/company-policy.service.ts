@@ -1,8 +1,17 @@
+import crypto from 'crypto';
+import path from 'path';
 import { ApiError } from '../../utils/api-error';
+import {
+  contentTypeFor,
+  getObject,
+  objectExists,
+  putObject,
+} from '../../utils/object-storage';
 import { IAuthService } from '../auth/auth.service.interface';
 import {
   CompanyPolicy,
   CreatePolicyPayload,
+  PolicyAttachmentUploadResult,
   PolicyFilter,
   UpdatePolicyPayload,
 } from './company-policy.model';
@@ -138,5 +147,78 @@ export class CompanyPolicyService implements ICompanyPolicyService {
     if (!success) {
       throw ApiError.badRequest('Failed to delete policy.');
     }
+  }
+
+  async uploadAttachment(
+    viewerId: number,
+    fileName: string,
+    fileBase64: string,
+  ): Promise<PolicyAttachmentUploadResult> {
+    await this.assertAdmin(viewerId);
+
+    if (!fileName || !fileBase64) {
+      throw ApiError.badRequest('File name and file content are required.');
+    }
+
+    let mimeType = 'application/octet-stream';
+    let buffer: Buffer;
+    let ext = 'bin';
+
+    const matches = fileBase64.match(/^data:([^;]+);base64,(.+)$/);
+    if (matches) {
+      mimeType = matches[1];
+      buffer = Buffer.from(matches[2], 'base64');
+    } else {
+      buffer = Buffer.from(fileBase64, 'base64');
+    }
+
+    if (fileName.includes('.')) {
+      ext = fileName.split('.').pop()!.toLowerCase();
+      if (!matches) {
+        mimeType = contentTypeFor(ext);
+      }
+    }
+
+    // 25 MB max
+    if (buffer.length > 25 * 1024 * 1024) {
+      throw ApiError.badRequest('Attachment file must not exceed 25 MB.');
+    }
+
+    const safeLabel = fileName.replace(/[^a-zA-Z0-9_.-]/g, '_');
+    const nonce = crypto.randomBytes(6).toString('hex');
+    const key = `hrms/policies/${Date.now()}_${nonce}_${safeLabel}`;
+
+    await putObject(key, buffer, mimeType);
+
+    const downloadUrl = `/api/v1/company-policies/files/${encodeURIComponent(key)}`;
+
+    return {
+      url: downloadUrl,
+      key,
+      fileName,
+      fileSize: buffer.length,
+      mimeType,
+    };
+  }
+
+  async getAttachmentFile(
+    key: string,
+  ): Promise<{ buffer: Buffer; mimeType: string; filename: string }> {
+    if (!key) {
+      throw ApiError.badRequest('Invalid file key.');
+    }
+
+    const decodedKey = decodeURIComponent(key);
+    const exists = await objectExists(decodedKey);
+    if (!exists) {
+      throw ApiError.notFound('Policy attachment file not found.');
+    }
+
+    const buffer = await getObject(decodedKey);
+    const filename = decodedKey.split('_').slice(2).join('_') || path.basename(decodedKey);
+    const ext = filename.split('.').pop()?.toLowerCase() || 'bin';
+    const mimeType = contentTypeFor(ext);
+
+    return { buffer, mimeType, filename };
   }
 }

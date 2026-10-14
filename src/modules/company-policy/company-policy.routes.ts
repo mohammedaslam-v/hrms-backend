@@ -8,6 +8,8 @@ export const createCompanyPolicyRouter = (controller: CompanyPolicyController): 
   router.use(requireAuth);
 
   router.get('/', controller.getAll);
+  router.post('/upload', controller.uploadAttachment);
+  router.get('/files/*', controller.getAttachmentFile);
   router.get('/:id', controller.getById);
   router.post('/', controller.create);
   router.put('/:id', controller.update);
