@@ -204,18 +204,19 @@ export class CompanyPolicyService implements ICompanyPolicyService {
   async getAttachmentFile(
     key: string,
   ): Promise<{ buffer: Buffer; mimeType: string; filename: string }> {
-    if (!key) {
+    // Express already decodes the route param, so the key arrives decoded.
+    // Only policy attachments are served here, never other bucket objects.
+    if (!key || !key.startsWith('hrms/policies/') || key.includes('..')) {
       throw ApiError.badRequest('Invalid file key.');
     }
 
-    const decodedKey = decodeURIComponent(key);
-    const exists = await objectExists(decodedKey);
+    const exists = await objectExists(key);
     if (!exists) {
       throw ApiError.notFound('Policy attachment file not found.');
     }
 
-    const buffer = await getObject(decodedKey);
-    const filename = decodedKey.split('_').slice(2).join('_') || path.basename(decodedKey);
+    const buffer = await getObject(key);
+    const filename = key.split('_').slice(2).join('_') || path.basename(key);
     const ext = filename.split('.').pop()?.toLowerCase() || 'bin';
     const mimeType = contentTypeFor(ext);
 

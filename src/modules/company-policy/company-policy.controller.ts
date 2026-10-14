@@ -79,8 +79,10 @@ export class CompanyPolicyController {
   });
 
   getAttachmentFile: RequestHandler = asyncHandler(async (req, res) => {
-    // In express, /files/* captures the remaining path in req.params[0]
-    const key = (req.params as any)[0] || req.params.key || (req.query.key as string);
+    // Express 5: /files/*key captures the remaining path as an array of
+    // already-decoded segments in req.params.key
+    const raw = (req.params as { key?: string | string[] }).key;
+    const key = Array.isArray(raw) ? raw.join('/') : raw || (req.query.key as string);
     const { buffer, mimeType, filename } = await this.service.getAttachmentFile(key);
     res.setHeader('Content-Type', mimeType);
     res.setHeader(
