@@ -1,3 +1,8 @@
+import { ICompanyPolicyRepository } from "./modules/company-policy/company-policy.repository.interface";
+import { ICompanyPolicyService } from "./modules/company-policy/company-policy.service.interface";
+import { CompanyPolicyRepository } from "./modules/company-policy/company-policy.repository";
+import { CompanyPolicyService } from "./modules/company-policy/company-policy.service";
+import { CompanyPolicyController } from "./modules/company-policy/company-policy.controller";
 import { ReportsRepository } from './modules/reports/reports.repository';
 import { IReportsRepository } from './modules/reports/reports.repository.interface';
 import { ReportsService } from './modules/reports/reports.service';
@@ -259,6 +264,13 @@ export const createContainer = () => {
     policyService,
   );
   const reportsController = new ReportsController(reportsService);
+  const companyPolicyRepository: ICompanyPolicyRepository = new CompanyPolicyRepository(pool);
+  const companyPolicyService: ICompanyPolicyService = new CompanyPolicyService(
+    companyPolicyRepository,
+    authService,
+  );
+  const companyPolicyController = new CompanyPolicyController(companyPolicyService);
+
 
 
 
@@ -280,6 +292,8 @@ export const createContainer = () => {
     payoutController,
     payrollController,
     reportsController,
+    companyPolicyController,
+    companyPolicyService,
     reportsService,
     payoutService,
     payrollService,

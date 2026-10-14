@@ -1,3 +1,4 @@
+import { createCompanyPolicyRouter } from "./modules/company-policy/company-policy.routes";
 import { createReportsRouter } from './modules/reports/reports.routes';
 import { createPayoutRouter } from './modules/payout/payout.routes';
 import { createPayrollRouter } from './modules/payroll/payroll.routes';
@@ -38,6 +39,7 @@ export const createApiRouter = (container: Container): Router => {
   router.use('/payouts', createPayoutRouter(container.payoutController));
   router.use('/payroll', createPayrollRouter(container.payrollController));
   router.use('/reports', createReportsRouter(container.reportsController));
+  router.use('/company-policies', createCompanyPolicyRouter(container.companyPolicyController));
 
   return router;
 };
