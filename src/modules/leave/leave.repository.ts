@@ -176,6 +176,71 @@ export class LeaveRepository implements ILeaveRepository {
     return rows[0] ? mapRequest(rows[0]) : null;
   }
 
+  async findOverlappingExcluding(
+    employeeId: number,
+    fromDate: string,
+    toDate: string,
+    excludeRequestId: number,
+  ): Promise<StoredLeaveRequest | null> {
+    const [rows] = await this.pool.execute<RequestRow[]>(
+      `SELECT ${REQUEST_COLUMNS}
+         FROM hrms_leave_requests l
+         LEFT JOIN hrms_employees e ON e.id = l.employee_id
+         LEFT JOIN hrms_employees d ON d.id = l.decided_by
+        WHERE l.employee_id = ?
+          AND l.status IN ('Pending','Approved')
+          AND l.id != ?
+          AND l.from_date <= ? AND l.to_date >= ?
+        LIMIT 1`,
+      [employeeId, excludeRequestId, toDate, fromDate],
+    );
+    return rows[0] ? mapRequest(rows[0]) : null;
+  }
+
+  async updateApprovedLeave(
+    requestId: number,
+    updates: {
+      fromDate: string;
+      toDate: string;
+      days: number;
+      unpaidDays: number;
+      isHalfDay: boolean;
+      halfDaySession: HalfDaySession | null;
+      leaveType: LeaveType;
+      adminNote: string;
+      adminName: string;
+    },
+  ): Promise<void> {
+    const noteEntry = `[Admin Edit by ${updates.adminName} on ${new Date().toISOString().slice(0, 10)}]: ${updates.adminNote}`;
+    await this.pool.execute(
+      `UPDATE hrms_leave_requests
+          SET from_date = ?,
+              to_date = ?,
+              days = ?,
+              unpaid_days = ?,
+              is_half_day = ?,
+              half_day_session = ?,
+              leave_type = ?,
+              decision_note = CASE 
+                WHEN decision_note IS NULL OR decision_note = '' THEN ?
+                ELSE CONCAT(decision_note, '\n', ?)
+              END
+        WHERE id = ? AND status = 'Approved'`,
+      [
+        updates.fromDate,
+        updates.toDate,
+        updates.days,
+        updates.unpaidDays,
+        updates.isHalfDay ? 1 : 0,
+        updates.isHalfDay ? updates.halfDaySession : null,
+        updates.leaveType,
+        noteEntry,
+        noteEntry,
+        requestId,
+      ],
+    );
+  }
+
   async create(employeeId: number, dto: ApplyLeaveDto, days: number): Promise<StoredLeaveRequest> {
     const [result] = await this.pool.execute<ResultSetHeader>(
       `INSERT INTO hrms_leave_requests

@@ -22,6 +22,8 @@ import {
   ApprovalsView,
   DecideLeaveDto,
   DecisionResult,
+  EditApprovedLeaveDto,
+  EditApprovedResult,
   HolidayRecord,
   LeaveContext,
   LeavePreview,
@@ -449,6 +451,155 @@ export class LeaveService implements ILeaveService {
    * simulation as the ledger. The request is removed from the baseline first so
    * it is not counted twice.
    */
+  async editApproved(adminId: number, dto: EditApprovedLeaveDto): Promise<EditApprovedResult> {
+    const viewer = this.authService ? await this.authService.getCurrentEmployee(adminId) : null;
+    const isAdmin = viewer?.tiers.includes('admin') ?? false;
+    if (!isAdmin) {
+      throw ApiError.forbidden('Only administrators can edit approved leave requests.');
+    }
+
+    const request = await this.leaveRepository.findById(dto.requestId);
+    if (!request) {
+      throw ApiError.notFound('That leave request could not be found.');
+    }
+
+    if (request.status !== 'Approved') {
+      throw ApiError.badRequest(
+        `Only approved leave requests can be edited. This request is currently ${request.status.toLowerCase()}.`,
+      );
+    }
+
+    // Validation
+    if (!dto.fromDate || !dto.toDate) {
+      throw ApiError.badRequest('From date and To date are required.');
+    }
+    if (dto.fromDate > dto.toDate) {
+      throw ApiError.badRequest('From date cannot be after To date.');
+    }
+
+    if (dto.isHalfDay) {
+      if (dto.fromDate !== dto.toDate) {
+        throw ApiError.badRequest('A half-day leave cannot span multiple calendar dates.');
+      }
+      if (!dto.halfDaySession) {
+        throw ApiError.badRequest('Half-day session (first half or second half) is required for half-day leave.');
+      }
+    }
+
+    const trimmedNote = (dto.adminNote || '').trim();
+    if (!trimmedNote || trimmedNote.length < 3) {
+      throw ApiError.badRequest('A valid admin reason / modification note is required.');
+    }
+
+    const resolved = await this.resolve(request.employeeId);
+    let newDays: number;
+    if (dto.isHalfDay) {
+      newDays = 0.5;
+    } else {
+      newDays = workingDaysBetween(
+        dto.fromDate,
+        dto.toDate,
+        resolved.context.weeklyOff,
+        resolved.holidaySet,
+      );
+    }
+
+    if (newDays <= 0) {
+      throw ApiError.badRequest(
+        'Selected date range contains no working days (all days fall on weekly offs or declared holidays).',
+      );
+    }
+
+    // Constraint: Extension beyond original duration is excluded
+    if (newDays > request.days) {
+      throw ApiError.badRequest(
+        `Leave duration cannot be extended beyond the original approved duration of ${request.days} day(s). The requested changes result in ${newDays} working day(s). If additional days are needed, please apply for a new leave.`,
+      );
+    }
+
+    // Overlap check with other leaves of this employee (excluding this request)
+    const overlap = await this.leaveRepository.findOverlappingExcluding(
+      request.employeeId,
+      dto.fromDate,
+      dto.toDate,
+      request.id,
+    );
+    if (overlap) {
+      throw ApiError.badRequest(
+        `The requested dates conflict with another ${overlap.status.toLowerCase()} leave request (${overlap.ref}: ${overlap.fromDate} to ${overlap.toDate}).`,
+      );
+    }
+
+    // Calculate unpaid days / LOP
+    let newUnpaidDays = 0;
+    if (dto.leaveType === 'Unpaid') {
+      newUnpaidDays = newDays;
+    } else {
+      const updatedMockRequest: StoredLeaveRequest = {
+        ...request,
+        fromDate: dto.fromDate,
+        toDate: dto.toDate,
+        days: newDays,
+        leaveType: dto.leaveType,
+        isHalfDay: dto.isHalfDay,
+        halfDaySession: dto.isHalfDay ? (dto.halfDaySession as any) : null,
+      };
+      const projected = this.project(resolved, updatedMockRequest);
+      newUnpaidDays = projected.lopDays;
+    }
+
+    const adminName = viewer?.fullName || 'Admin';
+    await this.leaveRepository.updateApprovedLeave(request.id, {
+      fromDate: dto.fromDate,
+      toDate: dto.toDate,
+      days: newDays,
+      unpaidDays: newUnpaidDays,
+      isHalfDay: dto.isHalfDay,
+      halfDaySession: dto.isHalfDay ? (dto.halfDaySession as any) : null,
+      leaveType: dto.leaveType,
+      adminNote: trimmedNote,
+      adminName,
+    });
+
+    await this.leaveRepository.recordAudit(
+      adminId,
+      'leave.approved_edited',
+      request.id,
+      {
+        fromDate: request.fromDate,
+        toDate: request.toDate,
+        days: request.days,
+        unpaidDays: request.unpaidDays,
+        leaveType: request.leaveType,
+        isHalfDay: request.isHalfDay,
+        halfDaySession: request.halfDaySession,
+      },
+      {
+        fromDate: dto.fromDate,
+        toDate: dto.toDate,
+        days: newDays,
+        unpaidDays: newUnpaidDays,
+        leaveType: dto.leaveType,
+        isHalfDay: dto.isHalfDay,
+        halfDaySession: dto.isHalfDay ? dto.halfDaySession : null,
+        adminNote: trimmedNote,
+      },
+    );
+
+    const updatedRequest = await this.leaveRepository.findById(request.id);
+    const daysDiff = Math.round((request.days - newDays) * 10) / 10;
+    let message = `${request.ref} updated successfully.`;
+    if (daysDiff > 0) {
+      message += ` Duration reduced by ${daysDiff} day(s), restored to employee balance.`;
+    }
+
+    return {
+      view: await this.getApprovals(adminId),
+      message,
+      updatedRequest: updatedRequest!,
+    };
+  }
+
   private project(resolved: Resolved, request: StoredLeaveRequest) {
     const baseline = {
       ...resolved.ledgerInput,

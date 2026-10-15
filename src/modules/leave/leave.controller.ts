@@ -1,5 +1,5 @@
 import { RequestHandler } from 'express';
-import { LeaveType } from './leave.domain';
+import { HalfDaySession, LeaveType } from './leave.domain';
 import { IAuthService } from '../auth/auth.service.interface';
 import { ILeaveService } from './leave.service.interface';
 import { AuthenticatedRequest } from '../../middlewares/auth.middleware';
@@ -150,6 +150,34 @@ export class LeaveController {
     const { employeeId } = req as AuthenticatedRequest;
     const view = await this.leaveService.getApprovals(employeeId);
     res.json({ success: true, data: view });
+  });
+
+  editApproved: RequestHandler = asyncHandler(async (req, res) => {
+    const { employeeId } = req as AuthenticatedRequest;
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const requestId = this.readId(req.params.id);
+
+    const fromDate = typeof body.fromDate === 'string' ? body.fromDate.trim() : '';
+    const toDate = typeof body.toDate === 'string' ? body.toDate.trim() : '';
+    const isHalfDay = Boolean(body.isHalfDay);
+    const halfDaySession =
+      body.halfDaySession === 'first' || body.halfDaySession === 'second'
+        ? (body.halfDaySession as HalfDaySession)
+        : null;
+    const leaveType = body.leaveType as LeaveType;
+    const adminNote = typeof body.adminNote === 'string' ? body.adminNote.trim() : '';
+
+    const result = await this.leaveService.editApproved(employeeId, {
+      requestId,
+      fromDate,
+      toDate,
+      isHalfDay,
+      halfDaySession,
+      leaveType,
+      adminNote,
+    });
+
+    res.json({ success: true, data: result });
   });
 
   decide: RequestHandler = asyncHandler(async (req, res) => {

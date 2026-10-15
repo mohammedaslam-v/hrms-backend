@@ -4,6 +4,8 @@ import {
   ApprovalsView,
   DecideLeaveDto,
   DecisionResult,
+  EditApprovedLeaveDto,
+  EditApprovedResult,
   LeavePreview,
   MyLeaveView,
   OnLeaveEmployee,
@@ -64,4 +66,12 @@ export interface ILeaveService {
    * excess to loss of pay; the balance itself never goes below zero.
    */
   decide(managerId: number, dto: DecideLeaveDto): Promise<DecisionResult>;
+
+  /**
+   * Admin-only: Edit an already approved leave request.
+   * Shortens duration, shifts dates, or changes leave type/session.
+   * Excludes extension beyond original approved duration.
+   */
+  editApproved(adminId: number, dto: EditApprovedLeaveDto): Promise<EditApprovedResult>;
+
 }

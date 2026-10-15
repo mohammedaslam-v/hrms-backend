@@ -1,4 +1,4 @@
-import { LeaveRequestRecord } from './leave.domain';
+import { HalfDaySession, LeaveRequestRecord, LeaveType } from './leave.domain';
 import { ApplyLeaveDto, HolidayRecord, LeaveContext, LeaveYearConfig, OnLeaveEmployee } from './leave.model';
 
 export interface StoredLeaveRequest extends LeaveRequestRecord {
@@ -33,6 +33,30 @@ export interface ILeaveRepository {
   sumAdjustments(employeeId: number, leaveYear: number): Promise<number>;
 
   /** A pending or approved request touching the same dates blocks a new one. */
+  /** Checks for overlap with other pending or approved requests of the employee, excluding the given request. */
+  findOverlappingExcluding(
+    employeeId: number,
+    fromDate: string,
+    toDate: string,
+    excludeRequestId: number,
+  ): Promise<StoredLeaveRequest | null>;
+
+  /** Updates an approved leave request with adjusted dates, duration, type, half-day, and admin note. */
+  updateApprovedLeave(
+    requestId: number,
+    updates: {
+      fromDate: string;
+      toDate: string;
+      days: number;
+      unpaidDays: number;
+      isHalfDay: boolean;
+      halfDaySession: HalfDaySession | null;
+      leaveType: LeaveType;
+      adminNote: string;
+      adminName: string;
+    },
+  ): Promise<void>;
+
   findOverlapping(
     employeeId: number,
     fromDate: string,

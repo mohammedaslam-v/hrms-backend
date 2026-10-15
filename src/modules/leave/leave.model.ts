@@ -156,6 +156,22 @@ export interface ApprovalsView {
   isAdmin?: boolean;
 }
 
+export interface EditApprovedLeaveDto {
+  requestId: number;
+  fromDate: string;
+  toDate: string;
+  isHalfDay: boolean;
+  halfDaySession?: HalfDaySession | null;
+  leaveType: LeaveType;
+  adminNote: string;
+}
+
+export interface EditApprovedResult {
+  view: ApprovalsView;
+  message: string;
+  updatedRequest: LeaveRequestRecord;
+}
+
 export interface DecideLeaveDto {
   requestId: number;
   decision: 'Approved' | 'Rejected';

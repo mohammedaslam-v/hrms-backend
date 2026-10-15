@@ -22,6 +22,7 @@ export const createLeaveRouter = (controller: LeaveController): Router => {
   router.get('/on-leave-today', controller.getOnLeaveToday);
   router.get('/approvals', controller.getApprovals);
   router.post('/approvals/:id/decide', controller.decide);
+  router.put('/approvals/:id/edit', controller.editApproved);
 
   // Employee-specific endpoints (for manager/admin access)
   router.get('/:id', controller.getForEmployee);
