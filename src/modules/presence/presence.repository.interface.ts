@@ -1,0 +1,20 @@
+import { PresenceRow } from './presence.model';
+
+/**
+ * Reads `admin_panel_presence`, which the new admin panel writes.
+ *
+ * Read-only on purpose: the admin panel is the one place presence is recorded.
+ * HRMS neither pings nor creates the table.
+ */
+export interface IPresenceRepository {
+  /**
+   * Everyone seen within the last `withinSeconds`, newest first.
+   *
+   * `adminIds` null means everyone; an array limits it to those admins (an
+   * empty array returns nothing without a query).
+   */
+  findRecent(withinSeconds: number, adminIds: number[] | null): Promise<PresenceRow[]>;
+
+  /** The admin accounts linked to these HRMS employees. */
+  findAdminIdsFor(employeeIds: number[]): Promise<number[]>;
+}

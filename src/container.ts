@@ -1,4 +1,9 @@
 import { ICompanyPolicyRepository } from "./modules/company-policy/company-policy.repository.interface";
+import { PresenceController } from './modules/presence/presence.controller';
+import { IPresenceRepository } from './modules/presence/presence.repository.interface';
+import { PresenceRepository } from './modules/presence/presence.repository';
+import { IPresenceService } from './modules/presence/presence.service.interface';
+import { PresenceService } from './modules/presence/presence.service';
 import { ICompanyPolicyService } from "./modules/company-policy/company-policy.service.interface";
 import { CompanyPolicyRepository } from "./modules/company-policy/company-policy.repository";
 import { CompanyPolicyService } from "./modules/company-policy/company-policy.service";
@@ -271,6 +276,16 @@ export const createContainer = () => {
   );
   const companyPolicyController = new CompanyPolicyController(companyPolicyService);
 
+  // The header's who-is-online pill. Reads the table the new admin panel
+  // writes; the reporting tree narrows it for managers.
+  const presenceRepository: IPresenceRepository = new PresenceRepository(pool);
+  const presenceService: IPresenceService = new PresenceService(
+    presenceRepository,
+    authService,
+    orgRepository,
+  );
+  const presenceController = new PresenceController(presenceService);
+
 
 
 
@@ -293,6 +308,7 @@ export const createContainer = () => {
     payrollController,
     reportsController,
     companyPolicyController,
+    presenceController,
     companyPolicyService,
     reportsService,
     payoutService,

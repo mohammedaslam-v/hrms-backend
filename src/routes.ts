@@ -18,6 +18,7 @@ import { createSalaryRouter } from './modules/salary/salary.routes';
 import { createReimbursementRouter } from './modules/reimbursement/reimbursement.routes';
 import { createTaxRouter } from './modules/tax/tax.routes';
 import { createLoanRouter } from './modules/loans/loan.routes';
+import { createPresenceRouter } from './modules/presence/presence.routes';
 
 export const createApiRouter = (container: Container): Router => {
   const router = Router();
@@ -40,6 +41,7 @@ export const createApiRouter = (container: Container): Router => {
   router.use('/payroll', createPayrollRouter(container.payrollController));
   router.use('/reports', createReportsRouter(container.reportsController));
   router.use('/company-policies', createCompanyPolicyRouter(container.companyPolicyController));
+  router.use('/presence', createPresenceRouter(container.presenceController));
 
   return router;
 };
