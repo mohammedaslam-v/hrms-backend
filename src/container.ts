@@ -283,6 +283,7 @@ export const createContainer = () => {
     presenceRepository,
     authService,
     orgRepository,
+    accessService,
   );
   const presenceController = new PresenceController(presenceService);
 

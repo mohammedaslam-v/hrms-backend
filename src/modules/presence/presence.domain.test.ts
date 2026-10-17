@@ -6,6 +6,7 @@ import { PresenceService } from './presence.service';
 import { IPresenceRepository } from './presence.repository.interface';
 import { IAuthService } from '../auth/auth.service.interface';
 import { IOrgRepository } from '../org/org.repository.interface';
+import { IAccessService } from '../access/access.service.interface';
 import { AccessTier } from '../auth/auth.model';
 
 const row = (over: Partial<PresenceRow> = {}): PresenceRow => ({
@@ -61,6 +62,18 @@ function serviceFor(tiers: AccessTier[], team: number[] = []) {
       asked.adminIds = adminIds;
       return [];
     },
+    async findDays() {
+      return [];
+    },
+    async findLatest() {
+      return {
+        last_path: '/tickets/show/9',
+        seconds_ago: 400,
+        session_minutes: 50,
+        signed_off: 0,
+        last_seen_ist: '2026-10-16 18:40',
+      };
+    },
     async findAdminIdsFor(employeeIds) {
       // Employee 5 is the pilot viewer, linked to admin 327.
       return employeeIds.map((id) => (id === 5 ? 327 : id + 1000));
@@ -76,7 +89,12 @@ function serviceFor(tiers: AccessTier[], team: number[] = []) {
       return team.map((id) => ({ id, employeeCode: '', fullName: '', designation: null }));
     },
   } as unknown as IOrgRepository;
-  return { service: new PresenceService(repo, auth, org), asked };
+  const access = {
+    async require() {
+      return 'self';
+    },
+  } as unknown as IAccessService;
+  return { service: new PresenceService(repo, auth, org, access), asked };
 }
 
 test('an admin sees everyone, people without an HRMS record included', async () => {
@@ -101,4 +119,32 @@ test('an employee sees only themselves', async () => {
 test('only the pilot admins may see the list for now', async () => {
   const { service } = serviceFor(['employee', 'manager', 'admin']);
   await assert.rejects(service.getOnline(6), (err: { statusCode?: number }) => err.statusCode === 403);
+});
+
+test('admin activity: last seen splits into India date and time, status as the list', async () => {
+  const { service } = serviceFor(['employee']);
+  const a = await service.getAdminActivity(5, 5, '2026-10-12', '2026-10-18');
+  assert.equal(a.linked, true);
+  assert.deepEqual(a.now, {
+    status: 'away',
+    secondsAgo: 400,
+    sessionMinutes: 50,
+    page: { path: '/tickets/show/9', name: 'Ticket' },
+    lastSeenDate: '2026-10-16',
+    lastSeenTime: '18:40',
+  });
+});
+
+test('admin activity: refuses bad or overlong ranges', async () => {
+  const { service } = serviceFor(['employee']);
+  const status = (err: { statusCode?: number }) => err.statusCode === 400;
+  await assert.rejects(service.getAdminActivity(5, 5, '2026-10-18', '2026-10-12'), status);
+  await assert.rejects(service.getAdminActivity(5, 5, 'yesterday', '2026-10-12'), status);
+  await assert.rejects(service.getAdminActivity(5, 5, '2026-09-01', '2026-10-12'), status);
+});
+
+test('admin activity: outside the pilot is refused', async () => {
+  const { service } = serviceFor(['employee', 'manager', 'admin']);
+  await assert.rejects(service.getAdminActivity(6, 6, '2026-10-12', '2026-10-18'),
+    (err: { statusCode?: number }) => err.statusCode === 403);
 });

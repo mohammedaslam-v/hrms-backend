@@ -1,4 +1,4 @@
-import { PresenceSummary } from './presence.model';
+import { AdminPanelActivity, PresenceSummary } from './presence.model';
 
 export interface IPresenceService {
   /**
@@ -8,4 +8,15 @@ export interface IPresenceService {
    * their reporting tree, skip-level included; anyone else sees only themselves.
    */
   getOnline(viewerId: number): Promise<PresenceSummary>;
+
+  /**
+   * `subjectId`'s time on the admin panel per day, and where they are now —
+   * for whoever may open their My Page (self, their manager, an admin).
+   */
+  getAdminActivity(
+    viewerId: number,
+    subjectId: number,
+    from: string,
+    to: string,
+  ): Promise<AdminPanelActivity>;
 }

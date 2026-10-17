@@ -39,3 +39,43 @@ export interface PresenceRow {
   /** 1 when the last thing they did was log out. */
   signed_off: number;
 }
+
+/** One India date on the admin panel, from `admin_panel_presence_day`. */
+export interface AdminPanelDay {
+  date: string;
+  /** HH:MM, India time. */
+  firstSeen: string;
+  lastSeen: string;
+  activeSeconds: number;
+  /** Visits that day: a gap of more than 10 minutes starts a new one. */
+  sessions: number;
+}
+
+/** Where the person is on the admin panel now, or when they were last there. */
+export interface AdminPanelNow {
+  status: PresenceStatus;
+  secondsAgo: number;
+  sessionMinutes: number;
+  page: { path: string | null; name: string | null };
+  /** India date and HH:MM of the last ping. */
+  lastSeenDate: string;
+  lastSeenTime: string;
+}
+
+/** The admin-panel side of My Page's week chart. */
+export interface AdminPanelActivity {
+  /** False when the employee has no admin account, so nothing can be recorded. */
+  linked: boolean;
+  days: AdminPanelDay[];
+  /** Null when they have never been on the new admin panel. */
+  now: AdminPanelNow | null;
+}
+
+/** The latest `admin_panel_presence` row, ages computed by MySQL. */
+export interface LatestPresenceRow {
+  last_path: string | null;
+  seconds_ago: number;
+  session_minutes: number;
+  signed_off: number;
+  last_seen_ist: string;
+}

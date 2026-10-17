@@ -1,4 +1,11 @@
-import { PresencePerson, PresenceRow, PresenceStatus, PresenceSummary } from './presence.model';
+import {
+  AdminPanelNow,
+  LatestPresenceRow,
+  PresencePerson,
+  PresenceRow,
+  PresenceStatus,
+  PresenceSummary,
+} from './presence.model';
 
 /*
  * A copy of the new admin's rules (admin-backend src/presence/presence.service.ts).
@@ -107,3 +114,19 @@ export function summarise(rows: PresenceRow[], now: Date = new Date()): Presence
     generated_at: now.toISOString(),
   };
 }
+
+/** The latest row as "now": the same status rule as the list. */
+export function nowFrom(r: LatestPresenceRow): AdminPanelNow {
+  const [lastSeenDate, lastSeenTime] = r.last_seen_ist.split(' ');
+  return {
+    status: r.signed_off ? 'signed_off' : r.seconds_ago <= ONLINE_WINDOW_SECONDS ? 'online' : 'away',
+    secondsAgo: r.seconds_ago,
+    sessionMinutes: r.session_minutes,
+    page: { path: r.last_path, name: pageNameFor(r.last_path) },
+    lastSeenDate,
+    lastSeenTime,
+  };
+}
+
+/** Longest range My Page may ask for at once. */
+export const MAX_ACTIVITY_RANGE_DAYS = 31;

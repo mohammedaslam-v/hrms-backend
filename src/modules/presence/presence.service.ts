@@ -1,8 +1,15 @@
+import { IAccessService } from '../access/access.service.interface';
 import { IAuthService } from '../auth/auth.service.interface';
 import { IOrgRepository } from '../org/org.repository.interface';
 import { ApiError } from '../../utils/api-error';
-import { PRESENCE_PILOT_ADMIN_IDS, RECENT_WINDOW_SECONDS, summarise } from './presence.domain';
-import { PresenceSummary } from './presence.model';
+import {
+  MAX_ACTIVITY_RANGE_DAYS,
+  PRESENCE_PILOT_ADMIN_IDS,
+  RECENT_WINDOW_SECONDS,
+  nowFrom,
+  summarise,
+} from './presence.domain';
+import { AdminPanelActivity, PresenceSummary } from './presence.model';
 import { IPresenceRepository } from './presence.repository.interface';
 import { IPresenceService } from './presence.service.interface';
 
@@ -18,18 +25,25 @@ export class PresenceService implements IPresenceService {
     private readonly repository: IPresenceRepository,
     private readonly authService: IAuthService,
     private readonly orgRepository: IOrgRepository,
+    private readonly accessService: IAccessService,
   ) {}
+
+  /** The pilot gate, by the viewer's own admin account(s). Returns them. */
+  private async pilotAdminIds(viewerId: number): Promise<number[]> {
+    const myAdminIds = await this.repository.findAdminIdsFor([viewerId]);
+    if (!myAdminIds.some((id) => PRESENCE_PILOT_ADMIN_IDS.includes(id))) {
+      throw new ApiError(403, 'Admin panel activity is not available on your account yet.');
+    }
+    return myAdminIds;
+  }
 
   async getOnline(viewerId: number): Promise<PresenceSummary> {
     const viewer = await this.authService.getCurrentEmployee(viewerId);
 
+    const myAdminIds = await this.pilotAdminIds(viewerId);
+
     // Null means everyone — including admin-panel users with no HRMS record,
     // so an admin sees exactly what the admin panel's header shows.
-    const myAdminIds = await this.repository.findAdminIdsFor([viewerId]);
-    if (!myAdminIds.some((id) => PRESENCE_PILOT_ADMIN_IDS.includes(id))) {
-      throw new ApiError(403, 'Who is online is not available on your account yet.');
-    }
-
     let adminIds: number[] | null = null;
     if (!viewer.tiers.includes('admin')) {
       adminIds = [...myAdminIds];
@@ -47,5 +61,35 @@ export class PresenceService implements IPresenceService {
       ...summarise(await this.repository.findRecent(RECENT_WINDOW_SECONDS, adminIds)),
       viewer_admin_ids: myAdminIds,
     };
+  }
+
+  async getAdminActivity(
+    viewerId: number,
+    subjectId: number,
+    from: string,
+    to: string,
+  ): Promise<AdminPanelActivity> {
+    await this.pilotAdminIds(viewerId);
+    // The same rule as the week chart this sits in: self, their manager, an admin.
+    await this.accessService.require(viewerId, subjectId);
+
+    const isDate = (d: string) => /^\d{4}-\d{2}-\d{2}$/.test(d) && !Number.isNaN(Date.parse(d));
+    if (!isDate(from) || !isDate(to) || from > to) {
+      throw new ApiError(400, 'from and to must be dates (YYYY-MM-DD), from on or before to.');
+    }
+    const span = (Date.parse(to) - Date.parse(from)) / 86_400_000;
+    if (span >= MAX_ACTIVITY_RANGE_DAYS) {
+      throw new ApiError(400, `Ask for ${MAX_ACTIVITY_RANGE_DAYS} days or fewer at a time.`);
+    }
+
+    // `hrms_employees.admin_id` is one column, so one account at most.
+    const [adminId] = await this.repository.findAdminIdsFor([subjectId]);
+    if (!adminId) return { linked: false, days: [], now: null };
+
+    const [days, latest] = await Promise.all([
+      this.repository.findDays(adminId, from, to),
+      this.repository.findLatest(adminId),
+    ]);
+    return { linked: true, days, now: latest ? nowFrom(latest) : null };
   }
 }

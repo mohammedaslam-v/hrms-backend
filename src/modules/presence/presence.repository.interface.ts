@@ -1,4 +1,4 @@
-import { PresenceRow } from './presence.model';
+import { AdminPanelDay, LatestPresenceRow, PresenceRow } from './presence.model';
 
 /**
  * Reads `admin_panel_presence`, which the new admin panel writes.
@@ -17,4 +17,10 @@ export interface IPresenceRepository {
 
   /** The admin accounts linked to these HRMS employees. */
   findAdminIdsFor(employeeIds: number[]): Promise<number[]>;
+
+  /** One admin's days on the panel between two India dates, inclusive. */
+  findDays(adminId: number, from: string, to: string): Promise<AdminPanelDay[]>;
+
+  /** One admin's latest presence, however long ago. Null if never seen. */
+  findLatest(adminId: number): Promise<LatestPresenceRow | null>;
 }
