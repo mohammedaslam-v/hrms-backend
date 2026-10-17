@@ -141,10 +141,13 @@ export interface ApprovalsView {
   pending: PendingApproval[];
   balances: TeamBalanceRow[];
   log: (LeaveRequestRecord & {
+    employeeId: number;
     employeeName: string;
     reason: string;
     appliedOn: string;
     decidedBy: string | null;
+    isHalfDay: boolean;
+    halfDaySession: HalfDaySession | null;
   })[];
   policy: {
     leaveYear: number;

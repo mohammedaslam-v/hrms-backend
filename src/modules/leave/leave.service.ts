@@ -357,6 +357,7 @@ export class LeaveService implements ILeaveService {
       log: logRows.map((r) => ({
         id: r.id,
         ref: r.ref,
+        employeeId: r.employeeId,
         leaveType: r.leaveType,
         fromDate: r.fromDate,
         toDate: r.toDate,
@@ -367,6 +368,8 @@ export class LeaveService implements ILeaveService {
         reason: r.reason,
         appliedOn: r.appliedOn,
         decidedBy: r.decidedBy,
+        isHalfDay: r.isHalfDay,
+        halfDaySession: r.halfDaySession,
       })),
       policy: {
         leaveYear: year.leaveYear,
