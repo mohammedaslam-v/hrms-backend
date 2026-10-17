@@ -425,6 +425,18 @@ export class AttendanceRepository implements IAttendanceRepository {
       return this.findByDate(input.employeeId, input.date);
     }
 
+    // 2. An employee who already checked out earlier today is checking back in.
+    //    Clear logout_at and reset active_hours so the punch session is active again.
+    const [reopened] = await this.pool.execute<ResultSetHeader>(
+      `UPDATE hrms_attendance
+          SET logout_at = NULL, active_hours = 0.00, source = 'app'
+        WHERE employee_id = ? AND att_date = ? AND login_at IS NOT NULL AND logout_at IS NOT NULL`,
+      [input.employeeId, input.date],
+    );
+    if (reopened.affectedRows === 1) {
+      return this.findByDate(input.employeeId, input.date);
+    }
+
     // 2. No row for the day at all. Insert one — and let the unique key decide
     //    the race: whoever loses gets a duplicate-key error, which is the
     //    correct answer of "somebody already checked in".

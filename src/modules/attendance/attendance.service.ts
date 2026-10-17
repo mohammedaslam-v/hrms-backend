@@ -165,7 +165,7 @@ export class AttendanceService implements IAttendanceService {
       lateByMinutes: day.lateByMinutes,
       shiftStart: schedule.shiftStart,
       shiftEnd: schedule.shiftEnd,
-      canCheckIn: !stored?.loginAt,
+      canCheckIn: !stored?.loginAt || Boolean(stored?.logoutAt),
       canCheckOut: Boolean(stored?.loginAt && !stored.logoutAt),
     };
   }
