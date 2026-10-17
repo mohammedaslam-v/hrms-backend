@@ -59,6 +59,46 @@ export class PresenceRepository implements IPresenceRepository {
     return rows.map((r) => Number(r.admin_id)).filter((id) => Number.isInteger(id) && id > 0);
   }
 
+  async findAdminIdMap(employeeIds: number[]): Promise<Map<number, number>> {
+    const map = new Map<number, number>();
+    if (employeeIds.length === 0) return map;
+    const [rows] = await this.pool.query<RowDataPacket[]>(
+      `SELECT id, admin_id FROM hrms_employees
+        WHERE admin_id IS NOT NULL AND id IN (${employeeIds.map(() => '?').join(', ')})`,
+      employeeIds,
+    );
+    for (const r of rows) map.set(Number(r.id), Number(r.admin_id));
+    return map;
+  }
+
+  async findDaysForMany(adminIds: number[], from: string, to: string): Promise<Map<number, AdminPanelDay[]>> {
+    const byAdmin = new Map<number, AdminPanelDay[]>();
+    if (adminIds.length === 0) return byAdmin;
+    const [rows] = await this.pool.query<RowDataPacket[]>(
+      `SELECT admin_id,
+              DATE_FORMAT(day, '%Y-%m-%d')         AS day,
+              DATE_FORMAT(first_seen_at, '%H:%i') AS first_seen,
+              DATE_FORMAT(last_seen_at, '%H:%i')  AS last_seen,
+              active_seconds, sessions
+         FROM admin_panel_presence_day
+        WHERE admin_id IN (${adminIds.map(() => '?').join(', ')}) AND day BETWEEN ? AND ?`,
+      [...adminIds, from, to],
+    );
+    for (const r of rows) {
+      const id = Number(r.admin_id);
+      const list = byAdmin.get(id) ?? [];
+      list.push({
+        date: String(r.day),
+        firstSeen: String(r.first_seen),
+        lastSeen: String(r.last_seen),
+        activeSeconds: Number(r.active_seconds) || 0,
+        sessions: Number(r.sessions) || 0,
+      });
+      byAdmin.set(id, list);
+    }
+    return byAdmin;
+  }
+
   async findDays(adminId: number, from: string, to: string): Promise<AdminPanelDay[]> {
     // The admin panel writes this table in India time, so the dates and times
     // are read as they are.

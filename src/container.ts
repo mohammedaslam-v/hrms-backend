@@ -1,4 +1,9 @@
 import { ICompanyPolicyRepository } from "./modules/company-policy/company-policy.repository.interface";
+import { WorkActivityController } from './modules/work-activity/work-activity.controller';
+import { IWorkActivityRepository } from './modules/work-activity/work-activity.repository.interface';
+import { WorkActivityRepository } from './modules/work-activity/work-activity.repository';
+import { IWorkActivityService } from './modules/work-activity/work-activity.service.interface';
+import { WorkActivityService } from './modules/work-activity/work-activity.service';
 import { PresenceController } from './modules/presence/presence.controller';
 import { IPresenceRepository } from './modules/presence/presence.repository.interface';
 import { PresenceRepository } from './modules/presence/presence.repository';
@@ -257,25 +262,6 @@ export const createContainer = () => {
   const payrollService: IPayrollService = new PayrollService(payrollRepository, salaryService);
   const payrollController = new PayrollController(payrollService);
 
-  const reportsRepository: IReportsRepository = new ReportsRepository(pool);
-  // attendanceRepository and policyService are what make the attendance
-  // reports read real punches and observed slots instead of printing a fixed
-  // 10:04 for every person on every day.
-  const reportsService: IReportsService = new ReportsService(
-    reportsRepository,
-    compensationService,
-    authService,
-    attendanceRepository,
-    policyService,
-  );
-  const reportsController = new ReportsController(reportsService);
-  const companyPolicyRepository: ICompanyPolicyRepository = new CompanyPolicyRepository(pool);
-  const companyPolicyService: ICompanyPolicyService = new CompanyPolicyService(
-    companyPolicyRepository,
-    authService,
-  );
-  const companyPolicyController = new CompanyPolicyController(companyPolicyService);
-
   // The header's who-is-online pill. Reads the table the new admin panel
   // writes; the reporting tree narrows it for managers.
   const presenceRepository: IPresenceRepository = new PresenceRepository(pool);
@@ -286,6 +272,37 @@ export const createContainer = () => {
     accessService,
   );
   const presenceController = new PresenceController(presenceService);
+
+  // Calls and outside meetings an employee records from the Today card.
+  const workActivityRepository: IWorkActivityRepository = new WorkActivityRepository(pool);
+  const workActivityService: IWorkActivityService = new WorkActivityService(
+    workActivityRepository,
+    accessService,
+    attendanceRepository,
+  );
+  const workActivityController = new WorkActivityController(workActivityService);
+
+  const reportsRepository: IReportsRepository = new ReportsRepository(pool);
+  // attendanceRepository and policyService are what make the attendance
+  // reports read real punches and observed slots instead of printing a fixed
+  // 10:04 for every person on every day.
+  const reportsService: IReportsService = new ReportsService(
+    reportsRepository,
+    compensationService,
+    authService,
+    attendanceRepository,
+    policyService,
+    workActivityRepository,
+    presenceService,
+  );
+  const reportsController = new ReportsController(reportsService);
+  const companyPolicyRepository: ICompanyPolicyRepository = new CompanyPolicyRepository(pool);
+  const companyPolicyService: ICompanyPolicyService = new CompanyPolicyService(
+    companyPolicyRepository,
+    authService,
+  );
+  const companyPolicyController = new CompanyPolicyController(companyPolicyService);
+
 
 
 
@@ -310,6 +327,7 @@ export const createContainer = () => {
     reportsController,
     companyPolicyController,
     presenceController,
+    workActivityController,
     companyPolicyService,
     reportsService,
     payoutService,

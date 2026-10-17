@@ -23,4 +23,10 @@ export interface IPresenceRepository {
 
   /** One admin's latest presence, however long ago. Null if never seen. */
   findLatest(adminId: number): Promise<LatestPresenceRow | null>;
+
+  /** HRMS employee → linked admin account, for those that have one. */
+  findAdminIdMap(employeeIds: number[]): Promise<Map<number, number>>;
+
+  /** Several admins' days at once: admin id → their days. */
+  findDaysForMany(adminIds: number[], from: string, to: string): Promise<Map<number, AdminPanelDay[]>>;
 }

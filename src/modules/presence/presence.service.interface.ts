@@ -1,4 +1,4 @@
-import { AdminPanelActivity, PresenceSummary } from './presence.model';
+import { AdminPanelActivity, AdminPanelDay, PresenceSummary } from './presence.model';
 
 export interface IPresenceService {
   /**
@@ -19,4 +19,14 @@ export interface IPresenceService {
     from: string,
     to: string,
   ): Promise<AdminPanelActivity>;
+
+  /**
+   * Admin-panel days for many employees, for a report: employee id → date →
+   * day. The caller decides who may run the report.
+   */
+  adminPanelForReport(
+    employeeIds: number[],
+    from: string,
+    to: string,
+  ): Promise<Map<number, Map<string, AdminPanelDay>>>;
 }

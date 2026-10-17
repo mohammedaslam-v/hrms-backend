@@ -11,6 +11,9 @@ import { ICompensationService } from '../compensation/compensation.service.inter
 import { IAuthService } from '../auth/auth.service.interface';
 import { IAttendanceRepository } from '../attendance/attendance.repository.interface';
 import { IPolicyService } from '../policy/policy.service.interface';
+import { IWorkActivityRepository } from '../work-activity/work-activity.repository.interface';
+import { IPresenceService } from '../presence/presence.service.interface';
+import { addedMinutes, coveredMinutes } from '../work-activity/work-activity.domain';
 import {
   datesBetween,
   istNow,
@@ -34,6 +37,9 @@ const PAYROLL_REPORT_TYPES: ReadonlySet<ReportType> = new Set([
   'income_tax',
   'appraisals',
 ]);
+/** Attendance-side reports that only admins may open. */
+const ADMIN_ONLY_REPORT_TYPES: ReadonlySet<ReportType> = new Set(['activity_log']);
+
 import { payStructure, ptOf } from '../salary/salary.domain';
 import { computeTaxComputation, TAX_CONFIG } from '../tax/tax.domain';
 import { ptFor } from '../salary/salary.domain';
@@ -137,6 +143,10 @@ export class ReportsService implements IReportsService {
      */
     private readonly attendanceRepository?: IAttendanceRepository,
     private readonly policyService?: IPolicyService,
+    /** The activity log report's recorded calls and meetings. */
+    private readonly workActivityRepository?: IWorkActivityRepository,
+    /** The activity log report's admin-panel columns. */
+    private readonly presenceService?: IPresenceService,
   ) {}
 
   /**
@@ -186,10 +196,10 @@ export class ReportsService implements IReportsService {
     try {
       const viewer = await this.authService.getCurrentEmployee(actorId);
       if (!viewer.tiers.includes('admin')) {
-        return all.filter((item) => item.category !== 'Payroll');
+        return all.filter((item) => item.category !== 'Payroll' && !ADMIN_ONLY_REPORT_TYPES.has(item.type));
       }
     } catch {
-      return all.filter((item) => item.category !== 'Payroll');
+      return all.filter((item) => item.category !== 'Payroll' && !ADMIN_ONLY_REPORT_TYPES.has(item.type));
     }
     return all;
   }
@@ -230,6 +240,13 @@ export class ReportsService implements IReportsService {
         title: 'Daily active hours',
         category: 'Attendance',
         description: 'Recorded active hours per person across days.',
+        filterType: 'period',
+      },
+      {
+        type: 'activity_log',
+        title: 'Activity log',
+        category: 'Attendance',
+        description: 'Per employee per day: check-in and check-out, recorded calls and meetings, and admin-panel time.',
         filterType: 'period',
       },
 
@@ -347,7 +364,16 @@ export class ReportsService implements IReportsService {
       }
     }
 
+    if (ADMIN_ONLY_REPORT_TYPES.has(filter.type)) {
+      const viewer = this.authService && actorId ? await this.authService.getCurrentEmployee(actorId) : null;
+      if (!viewer?.tiers.includes('admin')) {
+        throw ApiError.forbidden('Only administrators can access this report.');
+      }
+    }
+
     switch (filter.type) {
+      case 'activity_log':
+        return this.buildActivityLog(filter);
       case 'attendance':
         return this.buildAttendance(filter);
       case 'attsummary':
@@ -392,6 +418,145 @@ export class ReportsService implements IReportsService {
       default:
         return this.buildAllEmployees(filter);
     }
+  }
+
+  /**
+   * Activity log — admins only. One row per employee per day: the check-in
+   * stretch, calls and meetings they recorded, and time on the new admin panel.
+   *
+   * Recorded activities add only the time outside check-in, as on My Page. The
+   * admin-panel table holds a daily total, not times, so its overlap with the
+   * rest cannot be taken out: the total adds it as it is, and says so.
+   */
+  private async buildActivityLog(filter: ReportFilterDto): Promise<ReportResult> {
+    const range = resolveRange(filter);
+    let employees = await this.repository.findActiveEmployees(filter.department);
+    if (filter.department && filter.department !== 'ALL') {
+      employees = employees.filter((e) => e.department === filter.department);
+    }
+    if (filter.employeeId && filter.employeeId !== 'ALL') {
+      employees = employees.filter(
+        (e) => e.id === Number(filter.employeeId) || e.employee_code === String(filter.employeeId),
+      );
+    }
+    const ids = employees.map((e) => e.id);
+    const now = istNow();
+
+    const [facts, recorded, adminPanel] = await Promise.all([
+      this.attendanceFor(employees, range.from, range.to),
+      this.workActivityRepository
+        ? this.workActivityRepository.findRangeForMany(ids, range.from, range.to)
+        : Promise.resolve(new Map()),
+      this.presenceService
+        ? this.presenceService.adminPanelForReport(ids, range.from, range.to)
+        : Promise.resolve(null),
+    ]);
+    const showAdmin = adminPanel !== null;
+
+    const LABEL: Record<string, string> = {
+      phone_call: 'Phone call',
+      external_meeting: 'External meeting',
+      other: 'Other',
+    };
+    const hours = (minutes: number) => Number((minutes / 60).toFixed(2));
+
+    const columns: ReportColumn[] = [
+      { key: 'date', label: 'Date', width: '110px' },
+      { key: 'day', label: 'Day', width: '60px' },
+      { key: 'code', label: 'Code', width: '100px' },
+      { key: 'employee', label: 'Employee', width: '200px' },
+      { key: 'department', label: 'Department', width: '150px' },
+      { key: 'status', label: 'Status', width: '110px' },
+      { key: 'login', label: 'Check-in', width: '90px' },
+      { key: 'logout', label: 'Check-out', width: '90px' },
+      { key: 'checkedInHours', label: 'Checked-in hours', isNumeric: true },
+      { key: 'activityCount', label: 'Activities', isNumeric: true },
+      { key: 'activityHours', label: 'Activity hours (added)', isNumeric: true },
+      { key: 'activityDetails', label: 'Activity details', width: '320px' },
+      ...(showAdmin
+        ? [
+            { key: 'adminHours', label: 'Admin panel hours', isNumeric: true },
+            { key: 'adminFirst', label: 'Admin first seen', width: '100px' },
+            { key: 'adminLast', label: 'Admin last seen', width: '100px' },
+            { key: 'adminVisits', label: 'Admin visits', isNumeric: true },
+          ]
+        : []),
+      { key: 'totalHours', label: 'Total active hours', isNumeric: true },
+    ];
+
+    const rows: Record<string, any>[] = [];
+    for (const d of datesBetween(range.from, range.to, 62)) {
+      for (const e of employees) {
+        const day = facts.get(e.id)?.get(d);
+        // No entry means the person had already left before this date.
+        if (!day) continue;
+
+        const punch = day.loginAt ? [{ from: day.loginAt, to: day.logoutAt }] : [];
+        // Still checked in today: count up to now, as the hover box does.
+        const checkedInMin =
+          day.loginAt && !day.logoutAt && d === now.date
+            ? coveredMinutes(punch, now.time)
+            : Math.round(day.activeHours * 60);
+
+        const acts = ((recorded.get(e.id) ?? []) as {
+          date: string; type: string; startTime: string; endTime: string; note: string | null;
+        }[]).filter((a) => a.date === d);
+        const addedMin = addedMinutes(
+          punch,
+          acts.map((a) => ({ from: a.startTime, to: a.endTime })),
+          now.time,
+        );
+        const panel = showAdmin ? adminPanel.get(e.id)?.get(d) : undefined;
+        const adminMin = panel ? Math.round(panel.activeSeconds / 60) : 0;
+
+        rows.push({
+          date: formatDisplayDate(d),
+          day: day.dayName,
+          code: e.employee_code,
+          employee: e.full_name,
+          department: e.department || 'General',
+          status: day.status,
+          login: timeLabel(day.loginAt),
+          logout: day.loginAt && !day.logoutAt ? 'still in' : timeLabel(day.logoutAt),
+          checkedInHours: hours(checkedInMin),
+          activityCount: acts.length,
+          activityHours: hours(addedMin),
+          activityDetails:
+            acts
+              .map((a) => `${a.startTime}–${a.endTime} ${LABEL[a.type] ?? a.type}${a.note ? `: ${a.note}` : ''}`)
+              .join('; ') || '—',
+          ...(showAdmin
+            ? {
+                adminHours: hours(adminMin),
+                adminFirst: panel?.firstSeen ?? '—',
+                adminLast: panel?.lastSeen ?? '—',
+                adminVisits: panel?.sessions ?? 0,
+              }
+            : {}),
+          totalHours: hours(checkedInMin + addedMin + adminMin),
+        });
+      }
+    }
+
+    const note = showAdmin
+      ? 'Total = checked-in + recorded activities (only time outside check-in) + admin-panel time. Admin-panel time is a daily total without times, so where it overlaps check-in it is counted twice. Admin-panel data starts 17 Oct 2026.'
+      : 'Total = checked-in + recorded activities (only time outside check-in).';
+
+    return {
+      type: 'activity_log',
+      meta: {
+        companyName: COMPANY_HEADER.name,
+        companyAddress: COMPANY_HEADER.address,
+        reportTitle: 'Activity log',
+        periodLabel: range.label,
+        generatedAt: new Date().toISOString(),
+        totalRecords: employees.length,
+        note,
+      },
+      note,
+      columns,
+      rows,
+    };
   }
 
   // Attendance - day by day

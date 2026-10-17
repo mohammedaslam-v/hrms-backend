@@ -1,4 +1,5 @@
 export type ReportType =
+  | 'activity_log'
   | 'attendance'
   | 'attsummary'
   | 'late'

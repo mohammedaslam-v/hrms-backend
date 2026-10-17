@@ -65,6 +65,12 @@ function serviceFor(tiers: AccessTier[], team: number[] = []) {
     async findDays() {
       return [];
     },
+    async findAdminIdMap() {
+      return new Map();
+    },
+    async findDaysForMany() {
+      return new Map();
+    },
     async findLatest() {
       return {
         last_path: '/tickets/show/9',
@@ -75,7 +81,7 @@ function serviceFor(tiers: AccessTier[], team: number[] = []) {
       };
     },
     async findAdminIdsFor(employeeIds) {
-      // Employee 5 is the pilot viewer, linked to admin 327.
+      // Employee 5 is linked to admin 327.
       return employeeIds.map((id) => (id === 5 ? 327 : id + 1000));
     },
   };
@@ -116,10 +122,6 @@ test('an employee sees only themselves', async () => {
   assert.deepEqual(asked.adminIds, [327]);
 });
 
-test('only the pilot admins may see the list for now', async () => {
-  const { service } = serviceFor(['employee', 'manager', 'admin']);
-  await assert.rejects(service.getOnline(6), (err: { statusCode?: number }) => err.statusCode === 403);
-});
 
 test('admin activity: last seen splits into India date and time, status as the list', async () => {
   const { service } = serviceFor(['employee']);
@@ -143,8 +145,9 @@ test('admin activity: refuses bad or overlong ranges', async () => {
   await assert.rejects(service.getAdminActivity(5, 5, '2026-09-01', '2026-10-12'), status);
 });
 
-test('admin activity: outside the pilot is refused', async () => {
-  const { service } = serviceFor(['employee', 'manager', 'admin']);
-  await assert.rejects(service.getAdminActivity(6, 6, '2026-10-12', '2026-10-18'),
-    (err: { statusCode?: number }) => err.statusCode === 403);
+
+test('anyone may see their own scope — there is no allow-list', async () => {
+  const { service, asked } = serviceFor(['employee']);
+  await service.getOnline(6);
+  assert.deepEqual(asked.adminIds, [1006]);
 });

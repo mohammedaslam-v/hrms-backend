@@ -13,13 +13,6 @@ import {
  * the admin panel changes them, change them here too.
  */
 
-/**
- * Who may see the pill for now, by `hrms_employees.admin_id`. A pilot: everyone
- * else gets a 403 and no pill. Remove the check in PresenceService to open it
- * to everyone.
- */
-export const PRESENCE_PILOT_ADMIN_IDS: readonly number[] = [327, 1262];
-
 /** Seen within this many seconds = "online now" (the panel pings every 60 s). */
 export const ONLINE_WINDOW_SECONDS = 180;
 /** The "recently" list covers the last hour. */

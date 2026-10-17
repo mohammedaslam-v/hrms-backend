@@ -19,6 +19,7 @@ import { createReimbursementRouter } from './modules/reimbursement/reimbursement
 import { createTaxRouter } from './modules/tax/tax.routes';
 import { createLoanRouter } from './modules/loans/loan.routes';
 import { createPresenceRouter } from './modules/presence/presence.routes';
+import { createWorkActivityRouter } from './modules/work-activity/work-activity.routes';
 
 export const createApiRouter = (container: Container): Router => {
   const router = Router();
@@ -42,6 +43,7 @@ export const createApiRouter = (container: Container): Router => {
   router.use('/reports', createReportsRouter(container.reportsController));
   router.use('/company-policies', createCompanyPolicyRouter(container.companyPolicyController));
   router.use('/presence', createPresenceRouter(container.presenceController));
+  router.use('/work-activities', createWorkActivityRouter(container.workActivityController));
 
   return router;
 };

@@ -4,12 +4,11 @@ import { IOrgRepository } from '../org/org.repository.interface';
 import { ApiError } from '../../utils/api-error';
 import {
   MAX_ACTIVITY_RANGE_DAYS,
-  PRESENCE_PILOT_ADMIN_IDS,
   RECENT_WINDOW_SECONDS,
   nowFrom,
   summarise,
 } from './presence.domain';
-import { AdminPanelActivity, PresenceSummary } from './presence.model';
+import { AdminPanelActivity, AdminPanelDay, PresenceSummary } from './presence.model';
 import { IPresenceRepository } from './presence.repository.interface';
 import { IPresenceService } from './presence.service.interface';
 
@@ -28,19 +27,10 @@ export class PresenceService implements IPresenceService {
     private readonly accessService: IAccessService,
   ) {}
 
-  /** The pilot gate, by the viewer's own admin account(s). Returns them. */
-  private async pilotAdminIds(viewerId: number): Promise<number[]> {
-    const myAdminIds = await this.repository.findAdminIdsFor([viewerId]);
-    if (!myAdminIds.some((id) => PRESENCE_PILOT_ADMIN_IDS.includes(id))) {
-      throw new ApiError(403, 'Admin panel activity is not available on your account yet.');
-    }
-    return myAdminIds;
-  }
-
   async getOnline(viewerId: number): Promise<PresenceSummary> {
     const viewer = await this.authService.getCurrentEmployee(viewerId);
 
-    const myAdminIds = await this.pilotAdminIds(viewerId);
+    const myAdminIds = await this.repository.findAdminIdsFor([viewerId]);
 
     // Null means everyone — including admin-panel users with no HRMS record,
     // so an admin sees exactly what the admin panel's header shows.
@@ -69,7 +59,6 @@ export class PresenceService implements IPresenceService {
     from: string,
     to: string,
   ): Promise<AdminPanelActivity> {
-    await this.pilotAdminIds(viewerId);
     // The same rule as the week chart this sits in: self, their manager, an admin.
     await this.accessService.require(viewerId, subjectId);
 
@@ -91,5 +80,19 @@ export class PresenceService implements IPresenceService {
       this.repository.findLatest(adminId),
     ]);
     return { linked: true, days, now: latest ? nowFrom(latest) : null };
+  }
+
+  async adminPanelForReport(
+    employeeIds: number[],
+    from: string,
+    to: string,
+  ): Promise<Map<number, Map<string, AdminPanelDay>>> {
+    const adminOf = await this.repository.findAdminIdMap(employeeIds);
+    const days = await this.repository.findDaysForMany([...new Set(adminOf.values())], from, to);
+    const result = new Map<number, Map<string, AdminPanelDay>>();
+    for (const [employeeId, adminId] of adminOf) {
+      result.set(employeeId, new Map((days.get(adminId) ?? []).map((d) => [d.date, d])));
+    }
+    return result;
   }
 }
