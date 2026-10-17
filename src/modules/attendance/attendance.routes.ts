@@ -27,6 +27,8 @@ export const createAttendanceRouter = (controller: AttendanceController): Router
   // is deliberately no route here that punches on someone else's behalf.
   router.get('/:employeeId/today', controller.getTodayForEmployee);
   router.get('/:employeeId/week', controller.getWeekForEmployee);
+  router.post('/:employeeId/check-in', controller.checkInForEmployee);
+  router.post('/:employeeId/check-out', controller.checkOutForEmployee);
 
   return router;
 };

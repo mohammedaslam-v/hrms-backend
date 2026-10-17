@@ -36,6 +36,8 @@ export interface IAttendanceService {
    * themselves.
    */
   getTodayFor(viewerId: number, subjectId: number): Promise<TodayView>;
+  checkInFor(viewerId: number, subjectId: number): Promise<TodayView>;
+  checkOutFor(viewerId: number, subjectId: number): Promise<TodayView>;
   getWeekFor(viewerId: number, subjectId: number): Promise<WeekBar[]>;
 
   /**

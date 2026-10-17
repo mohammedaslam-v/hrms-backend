@@ -44,6 +44,24 @@ export class AttendanceController {
     res.json({ success: true, data: await this.attendanceService.getWeekFor(viewerId, subjectId) });
   });
 
+  checkInForEmployee: RequestHandler = asyncHandler(async (req, res) => {
+    const { employeeId: viewerId } = req as AuthenticatedRequest;
+    const subjectId = this.readId(req.params.employeeId);
+    res.status(201).json({
+      success: true,
+      data: await this.attendanceService.checkInFor(viewerId, subjectId),
+    });
+  });
+
+  checkOutForEmployee: RequestHandler = asyncHandler(async (req, res) => {
+    const { employeeId: viewerId } = req as AuthenticatedRequest;
+    const subjectId = this.readId(req.params.employeeId);
+    res.json({
+      success: true,
+      data: await this.attendanceService.checkOutFor(viewerId, subjectId),
+    });
+  });
+
   getTodayBoard: RequestHandler = asyncHandler(async (req, res) => {
     const { employeeId } = req as AuthenticatedRequest;
     res.json({ success: true, data: await this.attendanceService.getTodayBoard(employeeId) });

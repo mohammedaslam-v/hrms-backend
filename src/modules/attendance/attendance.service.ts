@@ -93,6 +93,24 @@ export class AttendanceService implements IAttendanceService {
     return this.getToday(subjectId);
   }
 
+  async checkInFor(viewerId: number, subjectId: number): Promise<TodayView> {
+    await this.accessService.require(viewerId, subjectId);
+    const viewer = await this.authService.getCurrentEmployee(viewerId);
+    if (!viewer.tiers.includes('admin')) {
+      throw ApiError.forbidden('Only administrators can check in on behalf of employees.');
+    }
+    return this.checkIn(subjectId);
+  }
+
+  async checkOutFor(viewerId: number, subjectId: number): Promise<TodayView> {
+    await this.accessService.require(viewerId, subjectId);
+    const viewer = await this.authService.getCurrentEmployee(viewerId);
+    if (!viewer.tiers.includes('admin')) {
+      throw ApiError.forbidden('Only administrators can check out on behalf of employees.');
+    }
+    return this.checkOut(subjectId);
+  }
+
   async getWeekFor(viewerId: number, subjectId: number): Promise<WeekBar[]> {
     await this.accessService.require(viewerId, subjectId);
     return this.getWeek(subjectId);
