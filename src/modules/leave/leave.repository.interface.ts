@@ -41,6 +41,17 @@ export interface ILeaveRepository {
     excludeRequestId: number,
   ): Promise<StoredLeaveRequest | null>;
 
+  /** Clears/soft-deletes any marked attendance on past dates covered by approved leave. */
+  clearAttendanceForLeaveDates(
+    employeeId: number,
+    fromDate: string,
+    toDate: string,
+    leaveType: LeaveType,
+    isHalfDay: boolean,
+    adminId: number,
+    ref: string,
+  ): Promise<number>;
+
   /** Updates an approved leave request with adjusted dates, duration, type, half-day, and admin note. */
   updateApprovedLeave(
     requestId: number,

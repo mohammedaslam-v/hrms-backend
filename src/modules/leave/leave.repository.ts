@@ -197,6 +197,108 @@ export class LeaveRepository implements ILeaveRepository {
     return rows[0] ? mapRequest(rows[0]) : null;
   }
 
+  async clearAttendanceForLeaveDates(
+    employeeId: number,
+    fromDate: string,
+    toDate: string,
+    leaveType: LeaveType,
+    isHalfDay: boolean,
+    adminId: number,
+    ref: string,
+  ): Promise<number> {
+    const [rows] = await this.pool.query<RowDataPacket[]>(
+      `SELECT * FROM hrms_attendance
+        WHERE employee_id = ?
+          AND att_date BETWEEN ? AND ?`,
+      [employeeId, fromDate, toDate],
+    );
+
+    if (!rows || rows.length === 0) return 0;
+
+    let hasDeletedAt = false;
+    try {
+      const [cols] = await this.pool.query<RowDataPacket[]>(
+        `SHOW COLUMNS FROM hrms_attendance LIKE 'deleted_at'`,
+      );
+      hasDeletedAt = cols && cols.length > 0;
+    } catch {
+      hasDeletedAt = false;
+    }
+
+    let clearedCount = 0;
+    for (const row of rows) {
+      if (!isHalfDay) {
+        const prevPunch = row.login_at
+          ? ` (previously punched ${String(row.login_at).slice(0, 5)}${row.logout_at ? ' - ' + String(row.logout_at).slice(0, 5) : ''})`
+          : '';
+        const note = `Cleared for approved leave ${ref}${prevPunch}`;
+
+        if (hasDeletedAt) {
+          await this.pool.query(
+            `UPDATE hrms_attendance
+                SET status = 'Leave',
+                    leave_type = ?,
+                    login_at = NULL,
+                    logout_at = NULL,
+                    active_hours = 0.00,
+                    late_by_minutes = 0,
+                    source = 'manual',
+                    edited_by = ?,
+                    edit_note = ?,
+                    deleted_at = NOW()
+              WHERE id = ?`,
+            [leaveType, adminId, note, row.id],
+          );
+        } else {
+          await this.pool.query(
+            `UPDATE hrms_attendance
+                SET status = 'Leave',
+                    leave_type = ?,
+                    login_at = NULL,
+                    logout_at = NULL,
+                    active_hours = 0.00,
+                    late_by_minutes = 0,
+                    source = 'manual',
+                    edited_by = ?,
+                    edit_note = ?
+              WHERE id = ?`,
+            [leaveType, adminId, note, row.id],
+          );
+        }
+
+        await recordAudit(this.pool, {
+          actorEmployeeId: adminId,
+          action: 'attendance.soft_deleted_for_leave',
+          entityType: 'hrms_attendance',
+          entityId: row.id,
+          before: row,
+          after: {
+            status: 'Leave',
+            leave_type: leaveType,
+            login_at: null,
+            logout_at: null,
+            active_hours: 0,
+            late_by_minutes: 0,
+            edit_note: note,
+          },
+        });
+        clearedCount++;
+      } else {
+        await this.pool.query(
+          `UPDATE hrms_attendance
+              SET status = 'Half day',
+                  leave_type = ?,
+                  edited_by = ?,
+                  edit_note = CONCAT(COALESCE(edit_note, ''), ' [Half day leave ${ref}]')
+            WHERE id = ?`,
+          [leaveType, adminId, row.id],
+        );
+      }
+    }
+
+    return clearedCount;
+  }
+
   async updateApprovedLeave(
     requestId: number,
     updates: {

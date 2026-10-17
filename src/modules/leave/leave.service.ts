@@ -513,12 +513,7 @@ export class LeaveService implements ILeaveService {
       );
     }
 
-    // Constraint: Extension beyond original duration is excluded
-    if (newDays > request.days) {
-      throw ApiError.badRequest(
-        `Leave duration cannot be extended beyond the original approved duration of ${request.days} day(s). The requested changes result in ${newDays} working day(s). If additional days are needed, please apply for a new leave.`,
-      );
-    }
+// Extension allowed per requirement; balance/LOP projected below
 
     // Overlap check with other leaves of this employee (excluding this request)
     const overlap = await this.leaveRepository.findOverlappingExcluding(
@@ -589,11 +584,29 @@ export class LeaveService implements ILeaveService {
       },
     );
 
+    const clearedAttendanceCount = await this.leaveRepository.clearAttendanceForLeaveDates(
+      request.employeeId,
+      dto.fromDate,
+      dto.toDate,
+      dto.leaveType,
+      dto.isHalfDay,
+      adminId,
+      request.ref,
+    );
+
     const updatedRequest = await this.leaveRepository.findById(request.id);
     const daysDiff = Math.round((request.days - newDays) * 10) / 10;
     let message = `${request.ref} updated successfully.`;
     if (daysDiff > 0) {
       message += ` Duration reduced by ${daysDiff} day(s), restored to employee balance.`;
+    } else if (daysDiff < 0) {
+      message += ` Duration extended by ${Math.abs(daysDiff)} day(s).`;
+      if (newUnpaidDays > 0) {
+        message += ` (${newUnpaidDays} day(s) marked as loss of pay).`;
+      }
+    }
+    if (clearedAttendanceCount > 0) {
+      message += ` Past attendance on ${clearedAttendanceCount} day(s) cleared.`;
     }
 
     return {
