@@ -426,12 +426,14 @@ export class AttendanceRepository implements IAttendanceRepository {
     }
 
     // 2. An employee who already checked out earlier today is checking back in.
-    //    Clear logout_at and reset active_hours so the punch session is active again.
+    //    Clear logout_at and reset active_hours so the punch session is active again,
+    //    and record the re-check-in time in edit_note.
+    const recheckTime = input.loginAt.slice(0, 5);
     const [reopened] = await this.pool.execute<ResultSetHeader>(
       `UPDATE hrms_attendance
-          SET logout_at = NULL, active_hours = 0.00, source = 'app'
+          SET logout_at = NULL, active_hours = 0.00, source = 'app', edit_note = ?
         WHERE employee_id = ? AND att_date = ? AND login_at IS NOT NULL AND logout_at IS NOT NULL`,
-      [input.employeeId, input.date],
+      [`recheckin:${recheckTime}`, input.employeeId, input.date],
     );
     if (reopened.affectedRows === 1) {
       return this.findByDate(input.employeeId, input.date);

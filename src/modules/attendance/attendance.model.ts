@@ -89,6 +89,7 @@ export interface TodayView {
   status: AttendanceStatus;
   loginAt: string | null;
   logoutAt: string | null;
+  recheckInAt?: string | null;
   /** Settled hours. Zero until check-out — the running figure is presentational. */
   activeHours: number;
   lateByMinutes: number;

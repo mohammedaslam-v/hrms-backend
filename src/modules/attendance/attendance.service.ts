@@ -152,12 +152,18 @@ export class AttendanceService implements IAttendanceService {
       punch: stored?.loginAt ? { loginAt: stored.loginAt, logoutAt: stored.logoutAt } : null,
     });
 
+    const recheckInAt =
+      stored?.editNote && stored.editNote.startsWith('recheckin:')
+        ? stored.editNote.replace('recheckin:', '').slice(0, 5)
+        : null;
+
     return {
       date: shiftDate,
       serverTime: now.time,
       status: day.status,
       loginAt: day.loginAt,
       logoutAt: day.logoutAt,
+      recheckInAt,
       // While someone is still checked in the stored total is 0 — the running
       // figure is the browser's job to tick, from loginAt and serverTime, so a
       // clock that appears to move is never mistaken for a stored fact.
