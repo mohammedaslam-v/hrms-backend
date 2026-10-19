@@ -44,6 +44,40 @@ export class AttendanceController {
     res.json({ success: true, data: await this.attendanceService.getWeekFor(viewerId, subjectId) });
   });
 
+  /** A month (or any window) for the calendar card — your own or someone else's. */
+  getCalendar: RequestHandler = asyncHandler(async (req, res) => {
+    const { employeeId: viewerId } = req as AuthenticatedRequest;
+    const subjectId =
+      req.params.employeeId === undefined ? viewerId : this.readId(req.params.employeeId);
+    const from = this.readDate(req.query.from, 'from');
+    const to = this.readDate(req.query.to, 'to');
+    res.json({
+      success: true,
+      data: await this.attendanceService.getCalendar(viewerId, subjectId, from, to),
+    });
+  });
+
+  /** Admin correction of one day. Every rule lives in the service. */
+  editDay: RequestHandler = asyncHandler(async (req, res) => {
+    const { employeeId: viewerId } = req as AuthenticatedRequest;
+    const subjectId = this.readId(req.params.employeeId);
+    const date = this.readDate(req.params.date, 'date');
+    const body = req.body ?? {};
+    res.json({
+      success: true,
+      data: await this.attendanceService.editDay(viewerId, subjectId, date, {
+        status: body.status,
+        loginAt: typeof body.loginAt === 'string' ? body.loginAt : null,
+        logoutAt: typeof body.logoutAt === 'string' ? body.logoutAt : null,
+        halfDaySession:
+          body.halfDaySession === 'first' || body.halfDaySession === 'second'
+            ? body.halfDaySession
+            : null,
+        note: typeof body.note === 'string' ? body.note : '',
+      }),
+    });
+  });
+
   checkInForEmployee: RequestHandler = asyncHandler(async (req, res) => {
     const { employeeId: viewerId } = req as AuthenticatedRequest;
     const subjectId = this.readId(req.params.employeeId);

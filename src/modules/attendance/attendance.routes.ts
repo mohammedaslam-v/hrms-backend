@@ -17,6 +17,7 @@ export const createAttendanceRouter = (controller: AttendanceController): Router
   router.get('/summary', controller.getSummary);
   router.get('/me/week', controller.getWeek);
   router.get('/me/days', controller.getDays);
+  router.get('/me/calendar', controller.getCalendar);
   router.post('/me/check-in', controller.checkIn);
   router.post('/me/check-out', controller.checkOut);
 
@@ -27,6 +28,9 @@ export const createAttendanceRouter = (controller: AttendanceController): Router
   // is deliberately no route here that punches on someone else's behalf.
   router.get('/:employeeId/today', controller.getTodayForEmployee);
   router.get('/:employeeId/week', controller.getWeekForEmployee);
+  router.get('/:employeeId/calendar', controller.getCalendar);
+  // Admin only, checked in the service: corrects one day of someone else's.
+  router.put('/:employeeId/days/:date', controller.editDay);
   router.post('/:employeeId/check-in', controller.checkInForEmployee);
   router.post('/:employeeId/check-out', controller.checkOutForEmployee);
 

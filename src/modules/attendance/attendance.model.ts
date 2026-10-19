@@ -1,4 +1,4 @@
-import { AttendanceStatus } from './attendance.domain';
+import { AttendanceStatus, WeekBar } from './attendance.domain';
 import { LeaveType } from '../leave/leave.domain';
 
 /** One stored day of attendance — a row of `hrms_attendance`. */
@@ -62,6 +62,52 @@ export interface CheckInInput {
   loginAt: string;
   status: AttendanceStatus;
   lateByMinutes: number;
+}
+
+/** A whole day as an admin decided it, written with source = 'manual'. */
+export interface ManualDayInput {
+  employeeId: number;
+  date: string;
+  status: AttendanceStatus;
+  loginAt: string | null;
+  logoutAt: string | null;
+  activeHours: number;
+  lateByMinutes: number;
+  leaveType: LeaveType | null;
+  editedBy: number;
+  note: string;
+}
+
+/** What an admin can set a day to, from the attendance calendar. */
+export const DAY_EDIT_STATUSES = [
+  'Present',
+  'Earned leave',
+  'Half earned leave',
+  'Unpaid full day',
+  'Unpaid half day',
+] as const;
+export type DayEditStatus = (typeof DAY_EDIT_STATUSES)[number];
+
+export interface EditDayDto {
+  status: DayEditStatus;
+  /** HH:MM. Required for Present; optional for the half days. */
+  loginAt: string | null;
+  /** HH:MM. May be null only for today, while the person is still in. */
+  logoutAt: string | null;
+  /** Required for the half days. */
+  halfDaySession: 'first' | 'second' | null;
+  /** Why — required, kept in edit_note and the audit log. */
+  note: string;
+}
+
+/** A month (or any window) of days for the calendar card. */
+export interface CalendarView {
+  from: string;
+  to: string;
+  today: string;
+  /** True when the viewer may correct days — an admin looking at someone else. */
+  canEdit: boolean;
+  days: WeekBar[];
 }
 
 export interface CheckOutInput {

@@ -376,12 +376,16 @@ export function segmentsOf(mask: SlotMask, startSlot = 0): TimeRange[] {
  * and never will. Real recorded hours would simply disappear from the chart.
  *
  * Slots win wherever they exist. A day with none falls back to its punch.
+ *
+ * Except over an admin's correction: a punch saved by hand is somebody deciding
+ * what the day was after looking at it, and the slots must not outvote them.
  */
 export const readDayAsObserved = (
   observed: boolean,
   slots: SlotMask,
   hasPunch: boolean,
-): boolean => observed && (countSlots(slots) > 0 || !hasPunch);
+  manualPunch = false,
+): boolean => observed && !(manualPunch && hasPunch) && (countSlots(slots) > 0 || !hasPunch);
 
 /** The first and last half hours with activity, or nulls when there were none. */
 export function seenBetween(mask: SlotMask): { first: string | null; last: string | null } {
@@ -535,7 +539,16 @@ export interface WeekBar {
  * would be technically correct and completely misleading.
  */
 export function weekBars(days: DayAttendance[], today: string): WeekBar[] {
-  const recent = [...days].sort((a, b) => a.date.localeCompare(b.date)).slice(-7);
+  return dayBars([...days].sort((a, b) => a.date.localeCompare(b.date)).slice(-7), today);
+}
+
+/**
+ * Every day given, in date order, in the same shape as the week's bars. The
+ * month calendar reuses the week's hover box and detail window, so it needs the
+ * same fields per day.
+ */
+export function dayBars(days: DayAttendance[], today: string): WeekBar[] {
+  const recent = [...days].sort((a, b) => a.date.localeCompare(b.date));
   const scale = Math.max(CHART_MINIMUM_HOURS, ...recent.map((d) => d.activeHours));
 
   return recent.map((day) => ({

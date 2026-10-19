@@ -4,6 +4,8 @@ import {
   attendanceOf,
   calendarWeek,
   crossesMidnight,
+  dayBars,
+  isLate,
   EMPTY_SLOTS,
   readDayAsObserved,
   minutesOf,
@@ -27,6 +29,9 @@ import {
   AttendanceRangeDto,
   AttendanceRangeRow,
   AttendanceRecord,
+  CalendarView,
+  DAY_EDIT_STATUSES,
+  EditDayDto,
   PunctualityEmployeeSummary,
   PunctualitySummaryDto,
   TodayBoardDto,
@@ -37,12 +42,15 @@ import {
 } from './attendance.model';
 import { IOrgRepository } from '../org/org.repository.interface';
 import { IAuthService } from '../auth/auth.service.interface';
+import { ILeaveService } from '../leave/leave.service.interface';
 import { RosterMember } from '../org/org.model';
 import { AttendanceStatus, dayNameOf } from './attendance.domain';
 import { ApiError } from '../../utils/api-error';
 
 /** A year at a time is plenty for any screen, and bounds the work per request. */
 const MAX_RANGE_DAYS = 366;
+
+const HH_MM = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 /**
  * How long after a night ends the card keeps showing it.
@@ -78,6 +86,9 @@ export class AttendanceService implements IAttendanceService {
     private readonly accessService: IAccessService,
     private readonly orgRepository: IOrgRepository,
     private readonly authService: IAuthService,
+    // Optional so the existing test doubles keep compiling; the container
+    // always supplies it. Only editDay() needs it.
+    private readonly leaveService?: ILeaveService,
   ) {}
 
   /**
@@ -114,6 +125,135 @@ export class AttendanceService implements IAttendanceService {
   async getWeekFor(viewerId: number, subjectId: number): Promise<WeekBar[]> {
     await this.accessService.require(viewerId, subjectId);
     return this.getWeek(subjectId);
+  }
+
+  async getCalendar(
+    viewerId: number,
+    subjectId: number,
+    from: string,
+    to: string,
+  ): Promise<CalendarView> {
+    const isSelf = viewerId === subjectId;
+    if (!isSelf) await this.accessService.require(viewerId, subjectId);
+
+    const [now, days, viewer] = await Promise.all([
+      this.attendanceRepository.now(),
+      this.getDays(subjectId, from, to),
+      isSelf ? Promise.resolve(null) : this.authService.getCurrentEmployee(viewerId),
+    ]);
+
+    return {
+      from,
+      to,
+      today: now.date,
+      canEdit: Boolean(viewer?.tiers.includes('admin')),
+      days: dayBars(days, now.date),
+    };
+  }
+
+  async editDay(
+    viewerId: number,
+    subjectId: number,
+    date: string,
+    dto: EditDayDto,
+  ): Promise<{ message: string }> {
+    if (viewerId === subjectId) {
+      throw ApiError.forbidden('Your own attendance has to be corrected by another administrator.');
+    }
+    await this.accessService.require(viewerId, subjectId);
+    const viewer = await this.authService.getCurrentEmployee(viewerId);
+    if (!viewer.tiers.includes('admin')) {
+      throw ApiError.forbidden('Only administrators can edit attendance.');
+    }
+    if (!this.leaveService) {
+      throw new ApiError(503, 'Attendance editing is not available right now.');
+    }
+
+    const now = await this.attendanceRepository.now();
+    if (date > now.date) {
+      throw ApiError.badRequest('Only today and earlier days can be edited. Future leave is applied from Leave.');
+    }
+
+    const note = (dto.note ?? '').trim();
+    if (note.length < 3) throw ApiError.badRequest('Add a short reason for this change.');
+    if (!DAY_EDIT_STATUSES.includes(dto.status)) {
+      throw ApiError.badRequest('Choose what the day should be.');
+    }
+
+    const isHalf = dto.status === 'Half earned leave' || dto.status === 'Unpaid half day';
+    const isFullLeave = dto.status === 'Earned leave' || dto.status === 'Unpaid full day';
+    const loginAt = dto.loginAt || null;
+    const logoutAt = isFullLeave ? null : dto.logoutAt || null;
+
+    for (const [label, value] of [['Check-in', loginAt], ['Check-out', logoutAt]] as const) {
+      if (value && !HH_MM.test(value)) throw ApiError.badRequest(`${label} must be a time in HH:MM form.`);
+    }
+    if (dto.status === 'Present' && !loginAt) {
+      throw ApiError.badRequest('A present day needs a check-in time.');
+    }
+    if (!isFullLeave && loginAt && !logoutAt && date !== now.date) {
+      throw ApiError.badRequest('Add a check-out time — only today can be left still checked in.');
+    }
+    if (!loginAt && logoutAt) throw ApiError.badRequest('A check-out needs a check-in before it.');
+    if (isHalf && dto.halfDaySession !== 'first' && dto.halfDaySession !== 'second') {
+      throw ApiError.badRequest('Choose which half of the day was taken.');
+    }
+
+    const punch = !isFullLeave && loginAt ? { loginAt, logoutAt } : null;
+    if (punch?.logoutAt && activeHours({ loginAt: punch.loginAt, logoutAt: punch.logoutAt }) === 0) {
+      throw ApiError.badRequest('Those check-in and check-out times do not make a valid working span.');
+    }
+
+    // Leave first: editing an approved leave clears that day's punch, so the
+    // punch the admin typed is written after it, not before.
+    const leaveType = dto.status === 'Present' ? null : dto.status.startsWith('Unpaid') ? 'Unpaid' : 'Earned';
+    const leaveMessage = await this.leaveService.setDayLeave(
+      viewerId,
+      subjectId,
+      date,
+      leaveType ? { leaveType, isHalfDay: isHalf, halfDaySession: isHalf ? dto.halfDaySession : null } : null,
+      note,
+    );
+
+    const [schedule, policy, before] = await Promise.all([
+      this.requireSchedule(subjectId, now.date),
+      this.policyService.getForDate(now.date),
+      this.attendanceRepository.findByDate(subjectId, date),
+    ]);
+
+    let status: AttendanceStatus;
+    let lateBy = 0;
+    if (dto.status === 'Present') {
+      lateBy = minutesLate(punch!.loginAt, schedule.shiftStart);
+      status = isLate(lateBy, policy.lateGraceMinutes) ? 'Late' : 'On time';
+    } else {
+      status = isHalf ? 'Half day' : 'Leave';
+    }
+
+    const after = await this.attendanceRepository.saveManualDay({
+      employeeId: subjectId,
+      date,
+      status,
+      loginAt: punch?.loginAt ?? null,
+      logoutAt: punch?.logoutAt ?? null,
+      activeHours: punch ? activeHours(punch) : 0,
+      lateByMinutes: lateBy,
+      leaveType,
+      editedBy: viewerId,
+      note,
+    });
+
+    await this.attendanceRepository.recordAudit(
+      viewerId,
+      'attendance.day_edited',
+      after?.id ?? null,
+      before,
+      { ...dto, savedStatus: status },
+    );
+
+    return {
+      message: [`${dto.status} saved for ${date}.`, leaveMessage].filter(Boolean).join(' '),
+    };
   }
 
   async getToday(employeeId: number): Promise<TodayView> {
@@ -335,7 +475,12 @@ export class AttendanceService implements IAttendanceService {
 
       // A day is read by the method that actually recorded it — see the rule
       // in the domain, which is where it is tested.
-      const readAsObserved = readDayAsObserved(observed, mask, Boolean(punch));
+      const readAsObserved = readDayAsObserved(
+        observed,
+        mask,
+        Boolean(punch),
+        record?.source === 'manual',
+      );
 
       return attendanceOf({
         date,

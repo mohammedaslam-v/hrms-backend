@@ -95,6 +95,12 @@ export interface ILeaveRepository {
   ): Promise<StoredLeaveRequest[]>;
 
   /**
+   * Withdraws an APPROVED request — an admin correcting a day that was not in
+   * fact taken. The note is appended to the decision trail, never replacing it.
+   */
+  cancelApproved(requestId: number, note: string): Promise<void>;
+
+  /**
    * Records the decision, including how many of the days the balance could not
    * cover. Those become loss of pay; the rest still draw from the balance.
    */

@@ -195,6 +195,7 @@ export const createContainer = () => {
     accessService,
     orgRepository,
     authService,
+    leaveService,
   );
   const attendanceController = new AttendanceController(attendanceService);
 

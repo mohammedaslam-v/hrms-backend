@@ -328,6 +328,14 @@ describe('which method reads a given day', () => {
   it('reads an empty, unpunched day as observed so lateness is not invented', () => {
     assert.equal(readDayAsObserved(true, EMPTY_SLOTS, false), true);
   });
+
+  it('lets an admin’s hand-saved punch win over observed slots', () => {
+    assert.equal(readDayAsObserved(true, worked, true, true), false);
+  });
+
+  it('ignores the manual flag when there is no punch to read', () => {
+    assert.equal(readDayAsObserved(true, worked, false, true), true);
+  });
 });
 
 describe('the calendar week', () => {

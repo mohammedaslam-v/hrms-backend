@@ -393,6 +393,19 @@ export class LeaveRepository implements ILeaveRepository {
     );
   }
 
+  async cancelApproved(requestId: number, note: string): Promise<void> {
+    await this.pool.execute(
+      `UPDATE hrms_leave_requests
+          SET status = 'Cancelled',
+              decision_note = CASE
+                WHEN decision_note IS NULL OR decision_note = '' THEN ?
+                ELSE CONCAT(decision_note, '\n', ?)
+              END
+        WHERE id = ? AND status = 'Approved'`,
+      [note, note, requestId],
+    );
+  }
+
   // ---------------------------------------------------------------- approvals
 
   async findPendingForEmployees(employeeIds?: number[]): Promise<StoredLeaveRequest[]> {

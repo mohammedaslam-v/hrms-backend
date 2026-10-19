@@ -1,4 +1,4 @@
-import { LeaveType } from './leave.domain';
+import { HalfDaySession, LeaveType } from './leave.domain';
 import {
   ApplyLeaveDto,
   ApprovalsView,
@@ -74,4 +74,27 @@ export interface ILeaveService {
    */
   editApproved(adminId: number, dto: EditApprovedLeaveDto): Promise<EditApprovedResult>;
 
+  /**
+   * Admin-only: what ONE day's leave should be, set from the attendance
+   * calendar. `choice` null means the day was not leave at all.
+   *
+   * Writes an approved request (or edits / cancels the single-day one already
+   * there), so balance and loss of pay follow exactly as for any approved leave.
+   * Refuses a day inside a multi-day request, or one with a request still
+   * pending — those are edited from Leave approvals. Returns what changed, or
+   * null when nothing needed to.
+   */
+  setDayLeave(
+    adminId: number,
+    employeeId: number,
+    date: string,
+    choice: DayLeaveChoice | null,
+    note: string,
+  ): Promise<string | null>;
+}
+
+export interface DayLeaveChoice {
+  leaveType: LeaveType;
+  isHalfDay: boolean;
+  halfDaySession: HalfDaySession | null;
 }

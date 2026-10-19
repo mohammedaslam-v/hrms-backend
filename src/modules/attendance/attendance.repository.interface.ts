@@ -5,6 +5,7 @@ import {
   CheckOutInput,
   DatabaseNow,
   DayContext,
+  ManualDayInput,
   WorkSchedule,
 } from './attendance.model';
 
@@ -86,6 +87,12 @@ export interface IAttendanceRepository {
    * — either it was never opened, or it is already closed.
    */
   checkOut(input: CheckOutInput): Promise<AttendanceRecord | null>;
+
+  /**
+   * Writes the whole day as an admin set it — punch, status and leave type —
+   * with source = 'manual', who did it and why. Creates the row if there is none.
+   */
+  saveManualDay(input: ManualDayInput): Promise<AttendanceRecord | null>;
 
   /** Records a punch in the audit log, so a correction is never anonymous. */
   recordAudit(

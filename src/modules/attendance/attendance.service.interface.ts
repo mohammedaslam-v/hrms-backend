@@ -1,6 +1,8 @@
 import { DayAttendance, WeekBar } from './attendance.domain';
 import {
   AttendanceRangeDto,
+  CalendarView,
+  EditDayDto,
   PunctualitySummaryDto,
   TodayBoardDto,
   TodayView,
@@ -46,6 +48,20 @@ export interface IAttendanceService {
    * weekly off, a day of leave and an absence are all facts about the week.
    */
   getDays(employeeId: number, from: string, to: string): Promise<DayAttendance[]>;
+
+  /**
+   * Any window of days (the month calendar) in the week chart's shape. The
+   * subject is the viewer themselves, or someone they may open — checked by
+   * the reporting tree exactly as the week is.
+   */
+  getCalendar(viewerId: number, subjectId: number, from: string, to: string): Promise<CalendarView>;
+
+  /**
+   * An admin correcting one past (or today's) day of someone else's: present
+   * with times, or one of the leave kinds. Leave is written through the leave
+   * module so balance and loss of pay follow. Returns what changed, in words.
+   */
+  editDay(viewerId: number, subjectId: number, date: string, dto: EditDayDto): Promise<{ message: string }>;
 
   getTodayBoard(viewerId: number): Promise<TodayBoardDto>;
   getAttendanceRange(

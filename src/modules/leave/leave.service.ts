@@ -16,7 +16,7 @@ import {
   ILeaveRepository,
   StoredLeaveRequest,
 } from './leave.repository.interface';
-import { ILeaveService } from './leave.service.interface';
+import { DayLeaveChoice, ILeaveService } from './leave.service.interface';
 import {
   ApplyLeaveDto,
   ApprovalsView,
@@ -614,6 +614,120 @@ export class LeaveService implements ILeaveService {
       message,
       updatedRequest: updatedRequest!,
     };
+  }
+
+  async setDayLeave(
+    adminId: number,
+    employeeId: number,
+    date: string,
+    choice: DayLeaveChoice | null,
+    note: string,
+  ): Promise<string | null> {
+    const existing = await this.leaveRepository.findOverlapping(employeeId, date, date);
+
+    if (existing) {
+      if (existing.status === 'Pending') {
+        throw new ApiError(
+          409,
+          `${existing.ref} is still pending for this day. Approve or reject it from Leave approvals first.`,
+        );
+      }
+      // Splitting a range in two from a single day's window is too easy to get
+      // wrong silently, so it stays with the screen built for editing ranges.
+      if (existing.fromDate !== existing.toDate) {
+        throw new ApiError(
+          409,
+          `This day is part of ${existing.ref} (${existing.fromDate} to ${existing.toDate}). Edit that leave from Leave approvals instead.`,
+        );
+      }
+
+      if (!choice) {
+        const viewer = this.authService ? await this.authService.getCurrentEmployee(adminId) : null;
+        await this.leaveRepository.cancelApproved(
+          existing.id,
+          `[Cancelled by ${viewer?.fullName ?? 'Admin'} from attendance calendar]: ${note}`,
+        );
+        await this.leaveRepository.recordAudit(
+          adminId,
+          'leave.approved_cancelled',
+          existing.id,
+          { status: existing.status },
+          { status: 'Cancelled', note },
+        );
+        return `${existing.ref} cancelled.`;
+      }
+
+      const sameAlready =
+        existing.leaveType === choice.leaveType &&
+        existing.isHalfDay === choice.isHalfDay &&
+        (!choice.isHalfDay || existing.halfDaySession === choice.halfDaySession);
+      if (sameAlready) return null;
+
+      const result = await this.editApproved(adminId, {
+        requestId: existing.id,
+        fromDate: date,
+        toDate: date,
+        leaveType: choice.leaveType,
+        isHalfDay: choice.isHalfDay,
+        halfDaySession: choice.halfDaySession,
+        adminNote: note,
+      });
+      return result.message;
+    }
+
+    if (!choice) return null;
+
+    if (choice.isHalfDay && choice.halfDaySession !== 'first' && choice.halfDaySession !== 'second') {
+      throw ApiError.badRequest('Choose which half of the day was taken.');
+    }
+
+    const resolved = await this.resolve(employeeId);
+    if (date < resolved.context.dateOfJoining) {
+      throw ApiError.badRequest('That date is before the employee joined.');
+    }
+    const preview = this.buildPreview(resolved, date, date, choice.leaveType, choice.isHalfDay);
+    if (preview.days <= 0) {
+      throw ApiError.badRequest('That day is a weekly off, so there is no leave to record.');
+    }
+
+    const created = await this.leaveRepository.create(
+      employeeId,
+      {
+        leaveType: choice.leaveType,
+        halfDaySession: choice.isHalfDay ? choice.halfDaySession : null,
+        fromDate: date,
+        toDate: date,
+        isHalfDay: choice.isHalfDay,
+        reason: note,
+      },
+      preview.days,
+    );
+
+    // Same rule as editApproved: unpaid is unpaid in full; anything else is
+    // projected through the month-by-month ledger.
+    const unpaid =
+      choice.leaveType === 'Unpaid'
+        ? preview.days
+        : this.project(await this.resolve(employeeId), created).lopDays;
+
+    await this.leaveRepository.decide(
+      created.id,
+      'Approved',
+      adminId,
+      `Marked by admin from the attendance calendar: ${note}`,
+      unpaid,
+    );
+    await this.leaveRepository.recordAudit(
+      adminId,
+      'leave.admin_marked',
+      created.id,
+      null,
+      { date, ...choice, unpaidDays: unpaid, note },
+    );
+
+    return unpaid > 0 && choice.leaveType !== 'Unpaid'
+      ? `${created.ref} recorded — ${unpaid} day(s) as loss of pay, the balance did not cover it.`
+      : `${created.ref} recorded.`;
   }
 
   private project(resolved: Resolved, request: StoredLeaveRequest) {

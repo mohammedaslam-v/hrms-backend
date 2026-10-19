@@ -8,6 +8,7 @@ import {
   CheckOutInput,
   DatabaseNow,
   DayContext,
+  ManualDayInput,
   WorkSchedule,
 } from './attendance.model';
 import { recordAudit } from '../../shared/audit';
@@ -476,6 +477,40 @@ export class AttendanceRepository implements IAttendanceRepository {
       [input.id],
     );
     return rows[0] ? mapRecord(rows[0]) : null;
+  }
+
+  async saveManualDay(input: ManualDayInput): Promise<AttendanceRecord | null> {
+    // One row per person per day (uq_attendance_day), so an upsert is exact.
+    // affectedRows is not read — see the CLIENT_FOUND_ROWS note in checkIn().
+    await this.pool.execute(
+      `INSERT INTO hrms_attendance
+         (employee_id, att_date, status, login_at, logout_at, active_hours,
+          late_by_minutes, leave_type, source, edited_by, edit_note)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'manual', ?, ?)
+       ON DUPLICATE KEY UPDATE
+         status = VALUES(status),
+         login_at = VALUES(login_at),
+         logout_at = VALUES(logout_at),
+         active_hours = VALUES(active_hours),
+         late_by_minutes = VALUES(late_by_minutes),
+         leave_type = VALUES(leave_type),
+         source = 'manual',
+         edited_by = VALUES(edited_by),
+         edit_note = VALUES(edit_note)`,
+      [
+        input.employeeId,
+        input.date,
+        input.status,
+        input.loginAt,
+        input.logoutAt,
+        input.activeHours,
+        input.lateByMinutes,
+        input.leaveType,
+        input.editedBy,
+        input.note.slice(0, 255),
+      ],
+    );
+    return this.findByDate(input.employeeId, input.date);
   }
 
   recordAudit(
