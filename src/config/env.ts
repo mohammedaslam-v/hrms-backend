@@ -77,6 +77,12 @@ export const env = {
     .map((p) => p.trim())
     .filter(Boolean),
   corsOrigin: required('CORS_ORIGIN', 'http://localhost:5173'),
+  /**
+   * Shared secret for server-to-server calls (admin-backend punching the signed-in
+   * admin's own attendance from the admin panel header). Sent in `x-internal-key`.
+   * Empty means the internal routes are switched off — they fail closed.
+   */
+  internalApiKey: process.env.INTERNAL_API_KEY ?? '',
 } as const;
 
 export const isProduction = env.nodeEnv === 'production';

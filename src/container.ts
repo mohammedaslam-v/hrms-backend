@@ -113,6 +113,8 @@ import { ILoanService } from './modules/loans/loan.service.interface';
 import { LoanRepository } from './modules/loans/loan.repository';
 import { LoanService } from './modules/loans/loan.service';
 import { LoanController } from './modules/loans/loan.controller';
+import { InternalAttendanceRepository } from './modules/internal/internal-attendance.repository';
+import { InternalAttendanceController } from './modules/internal/internal-attendance.controller';
 
 
 export const createContainer = () => {
@@ -270,6 +272,7 @@ export const createContainer = () => {
     authService,
     orgRepository,
     accessService,
+    attendanceRepository,
   );
   const presenceController = new PresenceController(presenceService);
 
@@ -303,6 +306,11 @@ export const createContainer = () => {
   );
   const companyPolicyController = new CompanyPolicyController(companyPolicyService);
 
+  // The admin panel's header Check in / Check out (server-to-server, keyed by admins.id).
+  const internalAttendanceController = new InternalAttendanceController(
+    attendanceService,
+    new InternalAttendanceRepository(pool),
+  );
 
 
 
@@ -328,6 +336,7 @@ export const createContainer = () => {
     companyPolicyController,
     presenceController,
     workActivityController,
+    internalAttendanceController,
     companyPolicyService,
     reportsService,
     payoutService,
