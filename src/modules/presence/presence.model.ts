@@ -79,3 +79,68 @@ export interface LatestPresenceRow {
   signed_off: number;
   last_seen_ist: string;
 }
+
+// ── The shift-wise board (header dropdown) ───────────────────────────────────
+
+/** The admin-panel side of a board row. Null when never seen on the panel. */
+export interface BoardPresence {
+  status: PresenceStatus;
+  secondsAgo: number;
+  sessionMinutes: number;
+  page: { path: string | null; name: string | null };
+  /** India date and HH:MM of the last ping. */
+  lastSeenDate: string;
+  lastSeenTime: string;
+}
+
+export interface BoardPerson {
+  /** Null for an admin-panel user with no HRMS record. */
+  employeeId: number | null;
+  adminId: number | null;
+  name: string;
+  /** Designation for an employee; the admin role for someone with no record. */
+  subtitle: string | null;
+  /**
+   * The grey label beside the name: the admin-panel role (admins.role, as the
+   * new admin shows it), or the HRMS department for someone with no account.
+   */
+  team: string | null;
+  /** Approved leave today. Shown instead of the online status. */
+  leave: { type: string; isHalfDay: boolean } | null;
+  presence: BoardPresence | null;
+  isMe: boolean;
+}
+
+export interface BoardGroup {
+  /** "10:00–19:00", or "No HRMS record". */
+  key: string;
+  label: string;
+  /** Null for the no-record group. */
+  shiftStart: string | null;
+  people: BoardPerson[];
+  online: number;
+}
+
+export interface PresenceBoard {
+  /** India date — the frontend words "yesterday 18:40" against it. */
+  today: string;
+  groups: BoardGroup[];
+  counts: { online: number; people: number };
+  generatedAt: string;
+}
+
+/** What the closed pill needs: one number. */
+export interface PresenceCount {
+  online: number;
+}
+
+/** A latest-presence row for several admins at once. */
+export interface LatestPresenceForAdmin extends LatestPresenceRow {
+  admin_id: number;
+}
+
+/** An admin-panel user with no HRMS record, for the admins-only group. */
+export interface UnlinkedPresenceRow extends LatestPresenceForAdmin {
+  name: string;
+  role: string;
+}

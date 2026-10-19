@@ -1,4 +1,10 @@
-import { AdminPanelDay, LatestPresenceRow, PresenceRow } from './presence.model';
+import {
+  AdminPanelDay,
+  LatestPresenceForAdmin,
+  LatestPresenceRow,
+  PresenceRow,
+  UnlinkedPresenceRow,
+} from './presence.model';
 
 /**
  * Reads `admin_panel_presence`, which the new admin panel writes.
@@ -29,4 +35,16 @@ export interface IPresenceRepository {
 
   /** Several admins' days at once: admin id → their days. */
   findDaysForMany(adminIds: number[], from: string, to: string): Promise<Map<number, AdminPanelDay[]>>;
+
+  /** Latest presence for several admins, however long ago: admin id → row. */
+  findLatestForMany(adminIds: number[]): Promise<Map<number, LatestPresenceForAdmin>>;
+
+  /** Admin-panel users with no HRMS record, seen within the last `days`. */
+  findUnlinkedSeen(days: number): Promise<UnlinkedPresenceRow[]>;
+
+  /** How many of these admins (null = everyone) are online now. One COUNT. */
+  countOnline(withinSeconds: number, adminIds: number[] | null): Promise<number>;
+
+  /** admins.role for these admin accounts (live ones only): admin id → role. */
+  findAdminRoles(adminIds: number[]): Promise<Map<number, string>>;
 }

@@ -1,16 +1,22 @@
 import { IAccessService } from '../access/access.service.interface';
+import { IAttendanceRepository } from '../attendance/attendance.repository.interface';
 import { IAuthService } from '../auth/auth.service.interface';
 import { IOrgRepository } from '../org/org.repository.interface';
 import { ApiError } from '../../utils/api-error';
 import {
   MAX_ACTIVITY_RANGE_DAYS,
+  ONLINE_WINDOW_SECONDS,
   RECENT_WINDOW_SECONDS,
   nowFrom,
   summarise,
 } from './presence.domain';
-import { AdminPanelActivity, AdminPanelDay, PresenceSummary } from './presence.model';
+import { AdminPanelActivity, AdminPanelDay, PresenceBoard, PresenceCount, PresenceSummary } from './presence.model';
+import { BoardMember, buildBoard } from './presence.board';
 import { IPresenceRepository } from './presence.repository.interface';
 import { IPresenceService } from './presence.service.interface';
+
+/** The admins-only "No HRMS record" group covers people seen this recently. */
+const UNLINKED_WITHIN_DAYS = 30;
 
 /**
  * The admin panel's who-is-online list, narrowed to what the viewer may see.
@@ -25,7 +31,90 @@ export class PresenceService implements IPresenceService {
     private readonly authService: IAuthService,
     private readonly orgRepository: IOrgRepository,
     private readonly accessService: IAccessService,
+    private readonly attendanceRepository: IAttendanceRepository,
   ) {}
+
+  /**
+   * The admin accounts the viewer may see: null (everyone) for an admin, else
+   * their own and — for a manager — their reporting tree's.
+   */
+  private async scopeAdminIds(viewerId: number): Promise<number[] | null> {
+    const viewer = await this.authService.getCurrentEmployee(viewerId);
+    if (viewer.tiers.includes('admin')) return null;
+    const ids = [viewerId];
+    if (viewer.tiers.includes('manager')) {
+      const team = await this.orgRepository.findReportingTree(viewerId);
+      ids.push(...team.map((m) => m.id));
+    }
+    return this.repository.findAdminIdsFor(ids);
+  }
+
+  async getCount(viewerId: number): Promise<PresenceCount> {
+    const adminIds = await this.scopeAdminIds(viewerId);
+    return { online: await this.repository.countOnline(ONLINE_WINDOW_SECONDS, adminIds) };
+  }
+
+  async getBoard(viewerId: number): Promise<PresenceBoard> {
+    const viewer = await this.authService.getCurrentEmployee(viewerId);
+    const isAdmin = viewer.tiers.includes('admin');
+    const isManager = viewer.tiers.includes('manager');
+
+    // Who is in scope: the company, a manager's tree plus themselves, or just
+    // the viewer. The roster is the Team page's, so the two always agree.
+    const members: BoardMember[] =
+      isAdmin || isManager
+        ? (await this.orgRepository.findRoster({ rootId: isAdmin ? null : viewerId })).map((m) => ({
+            employeeId: m.id,
+            name: m.fullName,
+            designation: m.designation,
+            department: m.department,
+            shiftStart: m.shiftStart,
+            shiftEnd: m.shiftEnd,
+          }))
+        : [];
+    if (!members.some((m) => m.employeeId === viewerId)) {
+      const schedule = await this.attendanceRepository.findSchedule(viewerId);
+      members.push({
+        employeeId: viewerId,
+        name: viewer.fullName,
+        designation: viewer.designation,
+        department: viewer.department,
+        shiftStart: schedule?.shiftStart ?? '10:00',
+        shiftEnd: schedule?.shiftEnd ?? '19:00',
+      });
+    }
+
+    const ids = members.map((m) => m.employeeId);
+    const now = await this.attendanceRepository.now();
+    const [adminOf, context, viewerAdminIds, unlinked] = await Promise.all([
+      this.repository.findAdminIdMap(ids),
+      this.attendanceRepository.findDayContextFor(ids, now.date),
+      this.repository.findAdminIdsFor([viewerId]),
+      isAdmin ? this.repository.findUnlinkedSeen(UNLINKED_WITHIN_DAYS) : Promise.resolve([]),
+    ]);
+    const adminIds = [...new Set(adminOf.values())];
+    const [latest, roleOf] = await Promise.all([
+      this.repository.findLatestForMany(adminIds),
+      this.repository.findAdminRoles(adminIds),
+    ]);
+
+    const leaveOf = new Map<number, { type: string; isHalfDay: boolean }>();
+    for (const [employeeId, day] of context) {
+      if (day.leave) leaveOf.set(employeeId, { type: day.leave.type, isHalfDay: day.leave.isHalfDay });
+    }
+
+    return buildBoard({
+      today: now.date,
+      viewerId,
+      viewerAdminIds,
+      members,
+      adminOf,
+      roleOf,
+      latest,
+      leaveOf,
+      unlinked,
+    });
+  }
 
   async getOnline(viewerId: number): Promise<PresenceSummary> {
     const viewer = await this.authService.getCurrentEmployee(viewerId);
