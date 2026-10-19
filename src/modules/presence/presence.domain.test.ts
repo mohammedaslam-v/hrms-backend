@@ -68,6 +68,18 @@ function serviceFor(tiers: AccessTier[], team: number[] = []) {
     async findAdminIdMap() {
       return new Map();
     },
+    async findLatestForMany() {
+      return new Map();
+    },
+    async findUnlinkedSeen() {
+      return [];
+    },
+    async countOnline() {
+      return 0;
+    },
+    async findAdminRoles() {
+      return new Map();
+    },
     async findDaysForMany() {
       return new Map();
     },
@@ -100,7 +112,7 @@ function serviceFor(tiers: AccessTier[], team: number[] = []) {
       return 'self';
     },
   } as unknown as IAccessService;
-  return { service: new PresenceService(repo, auth, org, access), asked };
+  return { service: new PresenceService(repo, auth, org, access, {} as never), asked };
 }
 
 test('an admin sees everyone, people without an HRMS record included', async () => {

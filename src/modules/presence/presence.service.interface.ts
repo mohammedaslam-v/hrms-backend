@@ -1,4 +1,10 @@
-import { AdminPanelActivity, AdminPanelDay, PresenceSummary } from './presence.model';
+import {
+  AdminPanelActivity,
+  AdminPanelDay,
+  PresenceBoard,
+  PresenceCount,
+  PresenceSummary,
+} from './presence.model';
 
 export interface IPresenceService {
   /**
@@ -29,4 +35,14 @@ export interface IPresenceService {
     from: string,
     to: string,
   ): Promise<Map<number, Map<string, AdminPanelDay>>>;
+
+  /** How many people in the viewer's scope are online now — the closed pill. */
+  getCount(viewerId: number): Promise<PresenceCount>;
+
+  /**
+   * Everyone in the viewer's scope, grouped by shift, with leave today and
+   * admin-panel status — the open dropdown. Admins also get a group of
+   * admin-panel users with no HRMS record.
+   */
+  getBoard(viewerId: number): Promise<PresenceBoard>;
 }

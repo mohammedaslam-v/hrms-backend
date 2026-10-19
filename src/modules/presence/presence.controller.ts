@@ -13,6 +13,18 @@ export class PresenceController {
     res.json({ success: true, data: await this.presenceService.getOnline(employeeId) });
   });
 
+  /** GET /presence/count — the closed pill's number, in your scope. */
+  getCount: RequestHandler = asyncHandler(async (req, res) => {
+    const { employeeId } = req as AuthenticatedRequest;
+    res.json({ success: true, data: await this.presenceService.getCount(employeeId) });
+  });
+
+  /** GET /presence/board — the open dropdown: everyone in scope, by shift. */
+  getBoard: RequestHandler = asyncHandler(async (req, res) => {
+    const { employeeId } = req as AuthenticatedRequest;
+    res.json({ success: true, data: await this.presenceService.getBoard(employeeId) });
+  });
+
   /**
    * GET /presence/days?from=&to=[&employeeId=] — time on the admin panel per
    * day. Without employeeId it is your own; with it, the service checks you

@@ -9,7 +9,11 @@ import { PresenceController } from './presence.controller';
 export const createPresenceRouter = (controller: PresenceController): Router => {
   const router = Router();
   router.use(requireAuth);
+  // Kept while an older frontend may still be deployed; the current header
+  // uses /count (closed) and /board (open).
   router.get('/online', controller.getOnline);
+  router.get('/count', controller.getCount);
+  router.get('/board', controller.getBoard);
   router.get('/days', controller.getAdminActivity);
   return router;
 };
