@@ -4,6 +4,7 @@ import {
   computeLedger,
   leaveYearMonths,
   LeaveRequestRecord,
+  formatMonthRange,
   projectRequest,
   workingDaysBetween,
 } from './leave.domain';
@@ -310,6 +311,14 @@ describe('loss of pay — confirmed policy', () => {
     assert.equal(projected.paidDays, 4); // 2 from September + 2 from October
     assert.equal(projected.lopDays, 1);
     assert.equal(projected.balanceAfter, 0); // the short day is LOP, not a debt
+    assert.equal(projected.futureCredit, 2);
+    assert.deepEqual(projected.futureMonths, ["2026-10"]);
+  });
+
+  it("formats month range for single and multiple months", () => {
+    assert.equal(formatMonthRange(["2026-11"]), "Nov");
+    assert.equal(formatMonthRange(["2026-11", "2026-12"]), "Nov–Dec");
+    assert.equal(formatMonthRange([]), "");
   });
 
   it('projects what a proposed request would cost before it is submitted', () => {

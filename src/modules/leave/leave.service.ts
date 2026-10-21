@@ -3,6 +3,7 @@ import {
   computeLedger,
   daysByMonth,
   eachDay,
+  formatMonthRange,
   LeaveLedger,
   LeaveType,
   monthKeyOf,
@@ -861,6 +862,24 @@ export class LeaveService implements ILeaveService {
     });
     const paid = projected.paidDays;
     const unpaid = projected.lopDays;
+    const futureCredit = projected.futureCredit;
+    const futureMonths = projected.futureMonths;
+
+    let balanceExplanation: string;
+    if (futureCredit > 0) {
+      const monthLabel = formatMonthRange(futureMonths);
+      if (unpaid > 0) {
+        balanceExplanation = `${paid} of these ${days} day${days === 1 ? '' : 's'} are covered (Balance ${ledger.balance} + ${futureCredit} credited in ${monthLabel}); ${unpaid} would be loss of pay. Balance after: ${projected.balanceAfter}.`;
+      } else {
+        balanceExplanation = `All ${days} day${days === 1 ? '' : 's'} are covered. Balance: ${ledger.balance} (+${futureCredit} credited in ${monthLabel}) − ${days} day${days === 1 ? '' : 's'} = ${projected.balanceAfter} once approved.`;
+      }
+    } else {
+      if (unpaid > 0) {
+        balanceExplanation = `${paid} of these ${days} day${days === 1 ? '' : 's'} are covered by your balance; ${unpaid} would be loss of pay. Balance ${ledger.balance} → ${projected.balanceAfter}.`;
+      } else {
+        balanceExplanation = `All ${days} day${days === 1 ? '' : 's'} are covered. Balance ${ledger.balance} → ${projected.balanceAfter} once approved.`;
+      }
+    }
 
     return {
       days,
@@ -870,15 +889,10 @@ export class LeaveService implements ILeaveService {
       paidDays: paid,
       unpaidDays: unpaid,
       canSubmit: true,
-      // Both figures come from the projection, so the words and the numbers
-      // shown beside them can never disagree.
       message:
         (isHalfDay
           ? `${workingDays} working day${workingDays === 1 ? '' : 's'} at half a day each = ${days} days. `
-          : '') +
-        (unpaid > 0
-          ? `${paid} of these ${days} day${days === 1 ? '' : 's'} are covered by your balance; ${unpaid} would be loss of pay. Balance ${ledger.balance} → ${projected.balanceAfter}.`
-          : `All ${days} day${days === 1 ? '' : 's'} are covered. Balance ${ledger.balance} → ${projected.balanceAfter} once approved.`),
+          : '') + balanceExplanation,
     };
   }
 

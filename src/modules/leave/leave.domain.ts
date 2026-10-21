@@ -288,10 +288,31 @@ export function computeLedger(input: LedgerInput): LeaveLedger {
  * it would leave behind — the only honest answer, because whether a day is paid
  * now depends on the month it falls in, not on today's balance alone.
  */
+const SHORT_MONTH_NAMES = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+] as const;
+
+export function formatMonthRange(monthKeys: string[]): string {
+  if (monthKeys.length === 0) return '';
+  const names = monthKeys.map((m) => {
+    const num = parseInt(m.slice(5, 7), 10);
+    return SHORT_MONTH_NAMES[num - 1] ?? m;
+  });
+  if (names.length === 1) return names[0];
+  return `${names[0]}–${names[names.length - 1]}`;
+}
+
 export function projectRequest(
   input: LedgerInput,
   proposed: LeaveRequestRecord,
-): { lopDays: number; balanceAfter: number; paidDays: number } {
+): {
+  lopDays: number;
+  balanceAfter: number;
+  paidDays: number;
+  futureCredit: number;
+  futureMonths: string[];
+} {
   // Walk far enough to reach the request. Leave booked for a future month is
   // only credited and deducted once the simulation gets there — without this a
   // request wholly in a later month would appear to cost nothing.
@@ -305,11 +326,17 @@ export function projectRequest(
     requests: [...input.requests, { ...proposed, status: 'Approved' }],
   });
 
+  const futureRows = before.rows.filter((r) => r.month > input.uptoMonth);
+  const futureCredit = round1(futureRows.reduce((sum, r) => sum + r.credit, 0));
+  const futureMonths = futureRows.map((r) => r.month);
+
   const lopDays = round1(Math.max(0, after.lop - before.lop));
   return {
     lopDays,
     balanceAfter: after.balance,
     paidDays: round1(proposed.days - lopDays),
+    futureCredit,
+    futureMonths,
   };
 }
 

@@ -180,8 +180,14 @@ export class AttendanceService implements IAttendanceService {
       throw ApiError.badRequest('Choose what the day should be.');
     }
 
-    const isHalf = dto.status === 'Half earned leave' || dto.status === 'Unpaid half day';
-    const isFullLeave = dto.status === 'Earned leave' || dto.status === 'Unpaid full day';
+    const isHalf =
+      dto.status === 'Half earned leave' ||
+      dto.status === 'Unpaid half day' ||
+      dto.status === 'LOP half day';
+    const isFullLeave =
+      dto.status === 'Earned leave' ||
+      dto.status === 'Unpaid full day' ||
+      dto.status === 'LOP full day';
     const loginAt = dto.loginAt || null;
     const logoutAt = isFullLeave ? null : dto.logoutAt || null;
 
@@ -206,7 +212,8 @@ export class AttendanceService implements IAttendanceService {
 
     // Leave first: editing an approved leave clears that day's punch, so the
     // punch the admin typed is written after it, not before.
-    const leaveType = dto.status === 'Present' ? null : dto.status.startsWith('Unpaid') ? 'Unpaid' : 'Earned';
+    const isLop = dto.status.startsWith('Unpaid') || dto.status.startsWith('LOP');
+    const leaveType = dto.status === 'Present' ? null : isLop ? 'Unpaid' : 'Earned';
     const leaveMessage = await this.leaveService.setDayLeave(
       viewerId,
       subjectId,

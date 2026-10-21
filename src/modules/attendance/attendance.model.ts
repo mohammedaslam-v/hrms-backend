@@ -85,6 +85,8 @@ export const DAY_EDIT_STATUSES = [
   'Half earned leave',
   'Unpaid full day',
   'Unpaid half day',
+  'LOP full day',
+  'LOP half day',
 ] as const;
 export type DayEditStatus = (typeof DAY_EDIT_STATUSES)[number];
 
