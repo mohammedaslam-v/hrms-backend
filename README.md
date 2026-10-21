@@ -1,5 +1,5 @@
 # HRMS Backend 
-1
+2
 
 Node.js + TypeScript + Express + raw SQL (MySQL via `mysql2`).
 
