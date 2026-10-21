@@ -312,6 +312,7 @@ export function projectRequest(
   paidDays: number;
   futureCredit: number;
   futureMonths: string[];
+  beforeBalance: number;
 } {
   // Walk far enough to reach the request. Leave booked for a future month is
   // only credited and deducted once the simulation gets there — without this a
@@ -337,9 +338,10 @@ export function projectRequest(
     paidDays: round1(proposed.days - lopDays),
     futureCredit,
     futureMonths,
+    beforeBalance: before.balance,
   };
 }
 
 /** Half-days mean one decimal place; floats would drift over a year of sums. */
-const round1 = (n: number): number => Math.round(n * 10) / 10;
+export const round1 = (n: number): number => Math.round(n * 10) / 10;
 

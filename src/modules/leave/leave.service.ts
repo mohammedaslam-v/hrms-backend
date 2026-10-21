@@ -8,6 +8,7 @@ import {
   LeaveType,
   monthKeyOf,
   projectRequest,
+  round1,
   workingDaysBetween,
 } from './leave.domain';
 import { IOrgRepository } from '../org/org.repository.interface';
@@ -168,6 +169,25 @@ export class LeaveService implements ILeaveService {
     isHalfDay: boolean,
   ): Promise<LeavePreview> {
     const resolved = await this.resolve(employeeId);
+    if (fromDate && toDate && fromDate <= toDate) {
+      const clash = await this.leaveRepository.findOverlapping(
+        employeeId,
+        fromDate,
+        toDate,
+      );
+      if (clash) {
+        return {
+          days: 0,
+          skippedDays: 0,
+          balanceNow: resolved.ledger.balance,
+          balanceAfter: resolved.ledger.balance,
+          paidDays: 0,
+          unpaidDays: 0,
+          canSubmit: false,
+          message: `Dates overlap with existing ${clash.status.toLowerCase()} request ${clash.ref} (${clash.fromDate} to ${clash.toDate}).`,
+        };
+      }
+    }
     return this.buildPreview(resolved, fromDate, toDate, leaveType, isHalfDay);
   }
 
@@ -864,20 +884,27 @@ export class LeaveService implements ILeaveService {
     const unpaid = projected.lopDays;
     const futureCredit = projected.futureCredit;
     const futureMonths = projected.futureMonths;
+    const beforeBalance = projected.beforeBalance;
 
     let balanceExplanation: string;
     if (futureCredit > 0) {
       const monthLabel = formatMonthRange(futureMonths);
+      const otherLeaves = round1(Math.max(0, ledger.balance + futureCredit - beforeBalance));
+      const otherPart = otherLeaves > 0 ? `, −${otherLeaves} already booked` : '';
+
       if (unpaid > 0) {
-        balanceExplanation = `${paid} of these ${days} day${days === 1 ? '' : 's'} are covered (Balance ${ledger.balance} + ${futureCredit} credited in ${monthLabel}); ${unpaid} would be loss of pay. Balance after: ${projected.balanceAfter}.`;
+        balanceExplanation = `${paid} of these ${days} day${days === 1 ? '' : 's'} are covered (Balance ${ledger.balance} + ${futureCredit} credited in ${monthLabel}${otherPart}); ${unpaid} would be loss of pay. Balance after: ${projected.balanceAfter}.`;
       } else {
-        balanceExplanation = `All ${days} day${days === 1 ? '' : 's'} are covered. Balance: ${ledger.balance} (+${futureCredit} credited in ${monthLabel}) − ${days} day${days === 1 ? '' : 's'} = ${projected.balanceAfter} once approved.`;
+        balanceExplanation = `All ${days} day${days === 1 ? '' : 's'} are covered. Balance: ${ledger.balance} (+${futureCredit} credited in ${monthLabel}${otherPart}) − ${days} day${days === 1 ? '' : 's'} = ${projected.balanceAfter} once approved.`;
       }
     } else {
+      const otherLeaves = round1(Math.max(0, ledger.balance - beforeBalance));
+      const otherPart = otherLeaves > 0 ? ` (−${otherLeaves} already booked)` : '';
+
       if (unpaid > 0) {
-        balanceExplanation = `${paid} of these ${days} day${days === 1 ? '' : 's'} are covered by your balance; ${unpaid} would be loss of pay. Balance ${ledger.balance} → ${projected.balanceAfter}.`;
+        balanceExplanation = `${paid} of these ${days} day${days === 1 ? '' : 's'} are covered by your balance${otherPart}; ${unpaid} would be loss of pay. Balance ${ledger.balance} → ${projected.balanceAfter}.`;
       } else {
-        balanceExplanation = `All ${days} day${days === 1 ? '' : 's'} are covered. Balance ${ledger.balance} → ${projected.balanceAfter} once approved.`;
+        balanceExplanation = `All ${days} day${days === 1 ? '' : 's'} are covered. Balance ${ledger.balance}${otherPart} → ${projected.balanceAfter} once approved.`;
       }
     }
 
