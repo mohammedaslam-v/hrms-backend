@@ -83,6 +83,18 @@ export const env = {
    * Empty means the internal routes are switched off — they fail closed.
    */
   internalApiKey: process.env.INTERNAL_API_KEY ?? '',
+  /**
+   * The office geofence for WFO check-in and check-out. The defaults are
+   * Hustlehub Tech Park, HSR Layout. OFFICE_GEOFENCE_ENABLED=false switches the
+   * fence off for everybody without a code change.
+   */
+  geofence: {
+    enabled: (process.env.OFFICE_GEOFENCE_ENABLED ?? 'true') !== 'false',
+    lat: Number.parseFloat(process.env.OFFICE_LAT ?? '12.910486'),
+    lng: Number.parseFloat(process.env.OFFICE_LNG ?? '77.648218'),
+    radiusM: Number.parseFloat(process.env.OFFICE_RADIUS_M ?? '50'),
+    maxAccuracyM: Number.parseFloat(process.env.OFFICE_MAX_ACCURACY_M ?? '100'),
+  },
 } as const;
 
 export const isProduction = env.nodeEnv === 'production';

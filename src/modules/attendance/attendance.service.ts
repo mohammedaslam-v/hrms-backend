@@ -46,6 +46,22 @@ import { ILeaveService } from '../leave/leave.service.interface';
 import { RosterMember } from '../org/org.model';
 import { AttendanceStatus, dayNameOf } from './attendance.domain';
 import { ApiError } from '../../utils/api-error';
+import { judgeFix, requiresGeofence, type DeviceFix, type Geofence } from './geofence.domain';
+
+/** Who is punching, and from where the browser says they are. */
+interface PunchContext {
+  /** An admin acting for someone else. Never fenced. */
+  onBehalf: boolean;
+  fix: DeviceFix | null;
+}
+
+/** Where a fenced punch was made from, as written to the audit log. */
+interface PunchLocation {
+  lat: number;
+  lng: number;
+  accuracyM: number;
+  distanceM: number;
+}
 
 /** A year at a time is plenty for any screen, and bounds the work per request. */
 const MAX_RANGE_DAYS = 366;
@@ -89,6 +105,9 @@ export class AttendanceService implements IAttendanceService {
     // Optional so the existing test doubles keep compiling; the container
     // always supplies it. Only editDay() needs it.
     private readonly leaveService?: ILeaveService,
+    // The office for WFO punching. Null switches the fence off — the test
+    // doubles, and OFFICE_GEOFENCE_ENABLED=false.
+    private readonly officeGeofence: Geofence | null = null,
   ) {}
 
   /**
@@ -98,10 +117,13 @@ export class AttendanceService implements IAttendanceService {
    * `require` throws 403 for anyone else, so a hand-typed id gets nothing. The
    * figures are identical to the employee's own view; only the ability to punch
    * is missing, and that is missing because no endpoint here writes.
+   *
+   * No geofence: an admin punching on someone's behalf is not fenced, so the
+   * card they see must not ask for their location either.
    */
   async getTodayFor(viewerId: number, subjectId: number): Promise<TodayView> {
     await this.accessService.require(viewerId, subjectId);
-    return this.getToday(subjectId);
+    return { ...(await this.getToday(subjectId)), geofence: null };
   }
 
   async checkInFor(viewerId: number, subjectId: number): Promise<TodayView> {
@@ -110,7 +132,8 @@ export class AttendanceService implements IAttendanceService {
     if (!viewer.tiers.includes('admin')) {
       throw ApiError.forbidden('Only administrators can check in on behalf of employees.');
     }
-    return this.checkIn(subjectId);
+    await this.punchIn(subjectId, { onBehalf: true, fix: null });
+    return this.getTodayFor(viewerId, subjectId);
   }
 
   async checkOutFor(viewerId: number, subjectId: number): Promise<TodayView> {
@@ -119,7 +142,8 @@ export class AttendanceService implements IAttendanceService {
     if (!viewer.tiers.includes('admin')) {
       throw ApiError.forbidden('Only administrators can check out on behalf of employees.');
     }
-    return this.checkOut(subjectId);
+    await this.punchOut(subjectId, { onBehalf: true, fix: null });
+    return this.getTodayFor(viewerId, subjectId);
   }
 
   async getWeekFor(viewerId: number, subjectId: number): Promise<WeekBar[]> {
@@ -320,12 +344,51 @@ export class AttendanceService implements IAttendanceService {
       shiftEnd: schedule.shiftEnd,
       canCheckIn: !stored?.loginAt || Boolean(stored?.logoutAt),
       canCheckOut: Boolean(stored?.loginAt && !stored.logoutAt),
+      geofence: this.fenceFor(schedule),
     };
   }
 
-  async checkIn(employeeId: number): Promise<TodayView> {
+  async checkIn(employeeId: number, fix: DeviceFix | null = null): Promise<TodayView> {
+    await this.punchIn(employeeId, { onBehalf: false, fix });
+    return this.getToday(employeeId);
+  }
+
+  async checkOut(employeeId: number, fix: DeviceFix | null = null): Promise<TodayView> {
+    await this.punchOut(employeeId, { onBehalf: false, fix });
+    return this.getToday(employeeId);
+  }
+
+  /** The fence this person punches inside, or null when they may punch anywhere. */
+  private fenceFor(schedule: WorkSchedule): Geofence | null {
+    return this.officeGeofence && requiresGeofence(schedule.workMode) ? this.officeGeofence : null;
+  }
+
+  /**
+   * Refuses a WFO punch made away from the office. Returns what goes into the
+   * audit log — where the punch was made from — or null when nobody was fenced.
+   *
+   * Judged here, not only in the browser: the buttons being grey is a courtesy,
+   * this is the rule.
+   */
+  private requireInsideOffice(schedule: WorkSchedule | null, punch: PunchContext): PunchLocation | null {
+    const fence = schedule && !punch.onBehalf ? this.fenceFor(schedule) : null;
+    if (!fence) return null;
+
+    const verdict = judgeFix(punch.fix, fence);
+    if (!verdict.allowed) throw ApiError.forbidden(verdict.message);
+
+    return {
+      lat: punch.fix!.lat,
+      lng: punch.fix!.lng,
+      accuracyM: Math.round(punch.fix!.accuracyM),
+      distanceM: Math.round(verdict.distanceM),
+    };
+  }
+
+  private async punchIn(employeeId: number, punch: PunchContext): Promise<void> {
     const now = await this.attendanceRepository.now();
     const schedule = await this.requireSchedule(employeeId, now.date);
+    const location = this.requireInsideOffice(schedule, punch);
 
     // A stint left open must be closed before another can start, or the two
     // would fight over one row and the first arrival time would be lost.
@@ -368,13 +431,16 @@ export class AttendanceService implements IAttendanceService {
       loginAt: record.loginAt,
       status: record.status,
       lateByMinutes: record.lateByMinutes,
+      location,
     });
-
-    return this.getToday(employeeId);
   }
 
-  async checkOut(employeeId: number): Promise<TodayView> {
+  private async punchOut(employeeId: number, punch: PunchContext): Promise<void> {
     const now = await this.attendanceRepository.now();
+    const location = this.requireInsideOffice(
+      await this.attendanceRepository.findSchedule(employeeId),
+      punch,
+    );
 
     // Found by being OPEN, not by today's date. A night shift is closed on the
     // calendar day after the one it is filed against, so looking for today's row
@@ -406,7 +472,7 @@ export class AttendanceService implements IAttendanceService {
     if (!record) {
       // Lost a race with another tab that checked out first. The day is closed
       // either way, so report the state rather than an error.
-      return this.getToday(employeeId);
+      return;
     }
 
     await this.attendanceRepository.recordAudit(
@@ -414,10 +480,13 @@ export class AttendanceService implements IAttendanceService {
       'attendance.checkOut',
       record.id,
       { loginAt: before.loginAt, logoutAt: null },
-      { loginAt: record.loginAt, logoutAt: record.logoutAt, activeHours: record.activeHours },
+      {
+        loginAt: record.loginAt,
+        logoutAt: record.logoutAt,
+        activeHours: record.activeHours,
+        location,
+      },
     );
-
-    return this.getToday(employeeId);
   }
 
   /**

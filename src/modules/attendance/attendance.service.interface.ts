@@ -1,4 +1,5 @@
 import { DayAttendance, WeekBar } from './attendance.domain';
+import { DeviceFix } from './geofence.domain';
 import {
   AttendanceRangeDto,
   CalendarView,
@@ -14,15 +15,16 @@ export interface IAttendanceService {
 
   /**
    * Records the arrival, stamped with the database clock.
-   * Refuses when the day already has a check-in.
+   * Refuses when the day already has a check-in, and — for WFO — when `fix` is
+   * missing, too vague, or outside the office geofence.
    */
-  checkIn(employeeId: number): Promise<TodayView>;
+  checkIn(employeeId: number, fix?: DeviceFix | null): Promise<TodayView>;
 
   /**
    * Records the departure and settles the day's active hours.
-   * Refuses when there is no open check-in to close.
+   * Refuses when there is no open check-in to close, and fences WFO as above.
    */
-  checkOut(employeeId: number): Promise<TodayView>;
+  checkOut(employeeId: number, fix?: DeviceFix | null): Promise<TodayView>;
 
   /**
    * The last seven days as chart bars. Days never punched are included with

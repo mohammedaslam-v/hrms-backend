@@ -1,4 +1,5 @@
 import { ICompanyPolicyRepository } from "./modules/company-policy/company-policy.repository.interface";
+import { env } from './config/env';
 import { WorkActivityController } from './modules/work-activity/work-activity.controller';
 import { IWorkActivityRepository } from './modules/work-activity/work-activity.repository.interface';
 import { WorkActivityRepository } from './modules/work-activity/work-activity.repository';
@@ -196,6 +197,7 @@ export const createContainer = () => {
     orgRepository,
     authService,
     leaveService,
+    env.geofence.enabled ? env.geofence : null,
   );
   const attendanceController = new AttendanceController(attendanceService);
 

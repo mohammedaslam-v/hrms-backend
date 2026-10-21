@@ -3,6 +3,7 @@ import { IAttendanceService } from '../attendance/attendance.service.interface';
 import { InternalAttendanceRepository } from './internal-attendance.repository';
 import { ApiError } from '../../utils/api-error';
 import { asyncHandler } from '../../utils/async-handler';
+import { parseDeviceFix } from '../attendance/geofence.domain';
 
 /**
  * The admin panel's header Check in / Check out, for the admin's OWN attendance.
@@ -35,7 +36,10 @@ export class InternalAttendanceController {
     const employeeId = await this.requireEmployee(req);
     res.status(201).json({
       success: true,
-      data: { linked: true, today: await this.attendanceService.checkIn(employeeId) },
+      data: {
+        linked: true,
+        today: await this.attendanceService.checkIn(employeeId, parseDeviceFix(req.body)),
+      },
     });
   });
 
@@ -43,7 +47,10 @@ export class InternalAttendanceController {
     const employeeId = await this.requireEmployee(req);
     res.json({
       success: true,
-      data: { linked: true, today: await this.attendanceService.checkOut(employeeId) },
+      data: {
+        linked: true,
+        today: await this.attendanceService.checkOut(employeeId, parseDeviceFix(req.body)),
+      },
     });
   });
 

@@ -3,6 +3,7 @@ import { IAttendanceService } from './attendance.service.interface';
 import { AuthenticatedRequest } from '../../middlewares/auth.middleware';
 import { ApiError } from '../../utils/api-error';
 import { asyncHandler } from '../../utils/async-handler';
+import { parseDeviceFix } from './geofence.domain';
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -139,12 +140,18 @@ export class AttendanceController {
 
   checkIn: RequestHandler = asyncHandler(async (req, res) => {
     const { employeeId } = req as AuthenticatedRequest;
-    res.status(201).json({ success: true, data: await this.attendanceService.checkIn(employeeId) });
+    res.status(201).json({
+      success: true,
+      data: await this.attendanceService.checkIn(employeeId, parseDeviceFix(req.body)),
+    });
   });
 
   checkOut: RequestHandler = asyncHandler(async (req, res) => {
     const { employeeId } = req as AuthenticatedRequest;
-    res.json({ success: true, data: await this.attendanceService.checkOut(employeeId) });
+    res.json({
+      success: true,
+      data: await this.attendanceService.checkOut(employeeId, parseDeviceFix(req.body)),
+    });
   });
 
   private readId(raw: unknown): number {
