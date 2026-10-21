@@ -22,6 +22,7 @@ export interface ILeaveService {
     toDate: string,
     leaveType: LeaveType,
     isHalfDay: boolean,
+    excludeRequestId?: number,
   ): Promise<LeavePreview>;
 
   apply(employeeId: number, dto: ApplyLeaveDto): Promise<MyLeaveView>;
@@ -39,6 +40,7 @@ export interface ILeaveService {
     toDate: string,
     leaveType: LeaveType,
     isHalfDay: boolean,
+    excludeRequestId?: number,
   ): Promise<LeavePreview>;
 
   applyForEmployee(

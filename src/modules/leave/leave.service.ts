@@ -102,11 +102,12 @@ export class LeaveService implements ILeaveService {
     toDate: string,
     leaveType: LeaveType,
     isHalfDay: boolean,
+    excludeRequestId?: number,
   ): Promise<LeavePreview> {
     if (this.accessService) {
       await this.accessService.require(viewerId, subjectId);
     }
-    return this.preview(subjectId, fromDate, toDate, leaveType, isHalfDay);
+    return this.preview(subjectId, fromDate, toDate, leaveType, isHalfDay, excludeRequestId);
   }
 
   async applyForEmployee(
@@ -167,23 +168,44 @@ export class LeaveService implements ILeaveService {
     toDate: string,
     leaveType: LeaveType,
     isHalfDay: boolean,
+    excludeRequestId?: number,
   ): Promise<LeavePreview> {
     const resolved = await this.resolve(employeeId);
     if (fromDate && toDate && fromDate <= toDate) {
-      const clash = await this.leaveRepository.findOverlapping(
-        employeeId,
-        fromDate,
-        toDate,
-      );
+      const clash = excludeRequestId
+        ? await this.leaveRepository.findOverlappingExcluding(
+            employeeId,
+            fromDate,
+            toDate,
+            excludeRequestId,
+          )
+        : await this.leaveRepository.findOverlapping(
+            employeeId,
+            fromDate,
+            toDate,
+          );
       if (clash) {
+        const { context, holidaySet, ledger } = resolved;
+        const calendarDays = eachDay(fromDate, toDate).length;
+        const workingDays = workingDaysBetween(fromDate, toDate, context.weeklyOff, holidaySet);
+        const days = isHalfDay ? Math.round(workingDays * 0.5 * 10) / 10 : workingDays;
+        const skippedDays = calendarDays - workingDays;
         return {
-          days: 0,
-          skippedDays: 0,
-          balanceNow: resolved.ledger.balance,
-          balanceAfter: resolved.ledger.balance,
+          days,
+          skippedDays,
+          balanceNow: ledger.balance,
+          balanceAfter: ledger.balance,
           paidDays: 0,
           unpaidDays: 0,
           canSubmit: false,
+          existingLeave: {
+            ref: clash.ref,
+            status: clash.status,
+            fromDate: clash.fromDate,
+            toDate: clash.toDate,
+            days: clash.days,
+            leaveType: clash.leaveType,
+          },
           message: `Dates overlap with existing ${clash.status.toLowerCase()} request ${clash.ref} (${clash.fromDate} to ${clash.toDate}).`,
         };
       }

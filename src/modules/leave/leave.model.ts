@@ -52,6 +52,14 @@ export interface LeavePreview {
   unpaidDays: number;
   canSubmit: boolean;
   message: string;
+  existingLeave?: {
+    ref: string;
+    status: string;
+    fromDate: string;
+    toDate: string;
+    days: number;
+    leaveType: string;
+  };
 }
 
 export interface MyLeaveView {

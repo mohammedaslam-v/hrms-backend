@@ -32,10 +32,11 @@ export class LeaveController {
     const toDate = this.readDate(req.query.to, 'to');
     const leaveType = this.readType(req.query.type);
     const isHalfDay = req.query.halfDay === 'true';
+    const excludeRequestId = req.query.excludeRequestId ? Number(req.query.excludeRequestId) : undefined;
 
     res.json({
       success: true,
-      data: await this.leaveService.preview(employeeId, fromDate, toDate, leaveType, isHalfDay),
+      data: await this.leaveService.preview(employeeId, fromDate, toDate, leaveType, isHalfDay, excludeRequestId),
     });
   });
 
@@ -71,6 +72,7 @@ export class LeaveController {
     const toDate = this.readDate(req.query.to, "to");
     const leaveType = this.readType(req.query.type);
     const isHalfDay = req.query.halfDay === "true";
+    const excludeRequestId = req.query.excludeRequestId ? Number(req.query.excludeRequestId) : undefined;
 
     const data = await this.leaveService.previewForEmployee(
       viewerId,
@@ -79,6 +81,7 @@ export class LeaveController {
       toDate,
       leaveType,
       isHalfDay,
+      excludeRequestId,
     );
     res.json({ success: true, data });
   });
