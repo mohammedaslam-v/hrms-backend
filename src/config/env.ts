@@ -90,8 +90,8 @@ export const env = {
    */
   geofence: {
     enabled: (process.env.OFFICE_GEOFENCE_ENABLED ?? 'true') !== 'false',
-    lat: Number.parseFloat(process.env.OFFICE_LAT ?? '12.910486'),
-    lng: Number.parseFloat(process.env.OFFICE_LNG ?? '77.648218'),
+    lat: Number.parseFloat(process.env.OFFICE_LAT ?? '12.900510'),
+    lng: Number.parseFloat(process.env.OFFICE_LNG ?? '77.650850'),
     radiusM: Number.parseFloat(process.env.OFFICE_RADIUS_M ?? '50'),
     maxAccuracyM: Number.parseFloat(process.env.OFFICE_MAX_ACCURACY_M ?? '100'),
   },
