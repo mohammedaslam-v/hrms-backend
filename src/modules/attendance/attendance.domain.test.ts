@@ -13,6 +13,8 @@ import {
   minutesOf,
   resolveDayStatus,
   shiftDateOf,
+  isPunchExpired,
+  CHECKOUT_GRACE_MINUTES,
   weekBars,
   type DayAttendance,
   type DayFacts,
@@ -444,5 +446,44 @@ describe('shifts that cross midnight', () => {
     assert.equal(d.status, 'Late');
     assert.equal(d.lateByMinutes, 90);
     assert.equal(d.activeHours, 6.5);
+  });
+});
+
+describe('punch expiration and checkout grace window (LOP)', () => {
+  it('keeps a regular day shift active during shift hours and throughout the 4h grace window', () => {
+    // 10:00 to 19:00 shift on 2026-10-12
+    assert.equal(isPunchExpired('2026-10-12', '10:00', '19:00', '2026-10-12', '18:00'), false);
+    // Overtime late at night inside office (within 4 hours of 19:00 -> until 23:00)
+    assert.equal(isPunchExpired('2026-10-12', '10:00', '19:00', '2026-10-12', '21:30'), false);
+    assert.equal(isPunchExpired('2026-10-12', '10:00', '19:00', '2026-10-12', '23:00'), false);
+  });
+
+  it('expires an unclosed day shift once 4h grace passes or the next day arrives', () => {
+    // 23:01 is past 19:00 + 4 hours
+    assert.equal(isPunchExpired('2026-10-12', '10:00', '19:00', '2026-10-12', '23:01'), true);
+    // Next morning: definitely abandoned
+    assert.equal(isPunchExpired('2026-10-12', '10:00', '19:00', '2026-10-13', '09:00'), true);
+    assert.equal(isPunchExpired('2026-10-12', '10:00', '19:00', '2026-10-13', '10:00'), true);
+  });
+
+  it('handles evening shifts where the 4h grace window crosses into the next calendar date', () => {
+    // 14:00 to 23:00 on 2026-10-12. Shift end is 23:00. Cutoff with 4h grace is 03:00 on 2026-10-13.
+    assert.equal(isPunchExpired('2026-10-12', '14:00', '23:00', '2026-10-13', '00:30'), false);
+    assert.equal(isPunchExpired('2026-10-12', '14:00', '23:00', '2026-10-13', '02:30'), false);
+    assert.equal(isPunchExpired('2026-10-12', '14:00', '23:00', '2026-10-13', '03:00'), false);
+    // Expired past 03:00
+    assert.equal(isPunchExpired('2026-10-12', '14:00', '23:00', '2026-10-13', '03:01'), true);
+    assert.equal(isPunchExpired('2026-10-12', '14:00', '23:00', '2026-10-13', '13:00'), true);
+  });
+
+  it('handles night shifts spanning two days and grants 4h grace after morning shift end', () => {
+    // 23:00 to 08:00 started on 2026-10-12. Ends 08:00 on 2026-10-13. Cutoff with 4h grace is 12:00 on 2026-10-13.
+    assert.equal(isPunchExpired('2026-10-12', '23:00', '08:00', '2026-10-13', '07:00'), false);
+    assert.equal(isPunchExpired('2026-10-12', '23:00', '08:00', '2026-10-13', '09:30'), false);
+    assert.equal(isPunchExpired('2026-10-12', '23:00', '08:00', '2026-10-13', '11:59'), false);
+    // Expired after 12:00 PM
+    assert.equal(isPunchExpired('2026-10-12', '23:00', '08:00', '2026-10-13', '12:01'), true);
+    // When next night arrives at 23:00
+    assert.equal(isPunchExpired('2026-10-12', '23:00', '08:00', '2026-10-13', '23:00'), true);
   });
 });

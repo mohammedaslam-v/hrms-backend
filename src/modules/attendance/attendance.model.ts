@@ -77,7 +77,7 @@ export interface ManualDayInput {
   activeHours: number;
   lateByMinutes: number;
   leaveType: LeaveType | null;
-  editedBy: number;
+  editedBy: number | null;
   note: string;
 }
 

@@ -15,6 +15,8 @@ import {
   resolveDayStatus,
   slotsForShiftDay,
   weekBars,
+  CHECKOUT_GRACE_MINUTES,
+  isPunchExpired,
   type DayAttendance,
   type DayFacts,
   type SlotMask,
@@ -294,8 +296,17 @@ export class AttendanceService implements IAttendanceService {
 
     // A night worker at 07:00 is finishing yesterday's shift, so the card must
     // show that stint rather than an empty row for the new calendar day. An open
-    // stint always wins; otherwise fall back to the shift the clock is in now.
-    const open = await this.attendanceRepository.findOpenPunch(employeeId);
+    // stint within its shift or 4-hour grace window stays active; once expired,
+    // it is auto-closed as LOP so the card resets fresh for today.
+    let open = await this.attendanceRepository.findOpenPunch(employeeId);
+    if (
+      open &&
+      isPunchExpired(open.date, schedule.shiftStart, schedule.shiftEnd, now.date, now.time, CHECKOUT_GRACE_MINUTES)
+    ) {
+      await this.autoCloseAsLop(open);
+      open = null;
+    }
+
     let shiftDate =
       open?.date ?? shiftDateOf(now.date, now.time, schedule.shiftStart, schedule.shiftEnd);
     let stored = open;
@@ -392,11 +403,18 @@ export class AttendanceService implements IAttendanceService {
 
     // A stint left open must be closed before another can start, or the two
     // would fight over one row and the first arrival time would be lost.
+    // If the previous stint has expired past shift end + grace, auto-close it as LOP rather than blocking.
     const open = await this.attendanceRepository.findOpenPunch(employeeId);
     if (open) {
-      throw ApiError.badRequest(
-        `You are still checked in from ${open.loginAt} on ${open.date}. Check out first.`,
-      );
+      if (
+        isPunchExpired(open.date, schedule.shiftStart, schedule.shiftEnd, now.date, now.time, CHECKOUT_GRACE_MINUTES)
+      ) {
+        await this.autoCloseAsLop(open);
+      } else {
+        throw ApiError.badRequest(
+          `You are still checked in from ${open.loginAt} on ${open.date}. Check out first.`,
+        );
+      }
     }
 
     // The shift day, not the calendar day: someone on 23:00–07:00 clocking on at
@@ -446,6 +464,19 @@ export class AttendanceService implements IAttendanceService {
     // calendar day after the one it is filed against, so looking for today's row
     // would find nothing and refuse a perfectly ordinary morning check-out.
     const before = await this.attendanceRepository.findOpenPunch(employeeId);
+
+    if (before) {
+      const schedule = await this.attendanceRepository.findSchedule(employeeId);
+      if (
+        schedule &&
+        isPunchExpired(before.date, schedule.shiftStart, schedule.shiftEnd, now.date, now.time, CHECKOUT_GRACE_MINUTES)
+      ) {
+        await this.autoCloseAsLop(before);
+        throw ApiError.badRequest(
+          'The check-out window for your previous shift has expired (marked as LOP). Please check in for today.',
+        );
+      }
+    }
 
     if (!before?.loginAt) {
       // Either nothing was opened, or it is already closed. Both mean the same
@@ -617,6 +648,50 @@ export class AttendanceService implements IAttendanceService {
    * The facts a day is judged against, minus the punch: the schedule, whether
    * the company was closed, and whether the person was on approved leave.
    */
+  /**
+   * Auto-close an abandoned punch as LOP (Loss of Pay).
+   *
+   * When an employee forgets to check out and the shift plus grace window has expired,
+   * the unclosed day is marked as Unpaid Leave (LOP) with zero active hours so that
+   * subsequent shifts start fresh without blocking today's check-in.
+   */
+  private async autoCloseAsLop(open: AttendanceRecord): Promise<void> {
+    await this.attendanceRepository.saveManualDay({
+      employeeId: open.employeeId,
+      date: open.date,
+      status: 'Leave',
+      loginAt: open.loginAt,
+      logoutAt: null,
+      activeHours: 0,
+      lateByMinutes: open.lateByMinutes,
+      leaveType: 'Unpaid',
+      editedBy: null,
+      note: 'Auto-closed: Missed check-out (LOP)',
+    });
+
+    if (this.leaveService) {
+      try {
+        await this.leaveService.setDayLeave(
+          open.employeeId,
+          open.employeeId,
+          open.date,
+          { leaveType: 'Unpaid', isHalfDay: false, halfDaySession: null },
+          'Auto-closed: Missed check-out (LOP)',
+        );
+      } catch {
+        // Leave record synchronization fallback; attendance is already marked LOP.
+      }
+    }
+
+    await this.attendanceRepository.recordAudit(
+      open.employeeId,
+      'attendance.auto_close_lop',
+      open.id,
+      { loginAt: open.loginAt, status: open.status },
+      { status: 'Leave', leaveType: 'Unpaid', note: 'Auto-closed: Missed check-out (LOP)' },
+    );
+  }
+
   private async requireSchedule(employeeId: number, onDate: string): Promise<WorkSchedule> {
     const schedule = await this.attendanceRepository.findSchedule(employeeId);
     if (!schedule) {

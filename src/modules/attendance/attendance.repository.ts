@@ -371,6 +371,8 @@ export class AttendanceRepository implements IAttendanceRepository {
         WHERE employee_id = ?
           AND login_at  IS NOT NULL
           AND logout_at IS NULL
+          AND status NOT IN ('Leave', 'Holiday')
+          AND (leave_type IS NULL OR leave_type != 'Unpaid')
           AND att_date >= DATE_SUB(CURDATE(), INTERVAL 2 DAY)
         ORDER BY att_date DESC
         LIMIT 1`,

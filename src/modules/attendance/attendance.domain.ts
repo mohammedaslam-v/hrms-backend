@@ -176,6 +176,59 @@ export function shiftDateOf(
   return punchDate;
 }
 
+/**
+ * Default checkout grace window: 4 hours past shift end.
+ *
+ * Employees who stay late to finish urgent tasks can check out during this window
+ * without penalty. Once this window passes (or once the next shift's start time arrives),
+ * an unclosed punch is deemed abandoned (forgot to check out) and auto-closes as LOP.
+ */
+export const CHECKOUT_GRACE_MINUTES = 4 * 60; // 240 minutes
+
+/**
+ * Has an open punch passed its checkout cutoff window?
+ *
+ * For a day shift (e.g. 10:00 to 19:00):
+ *   Scheduled end is shiftDate at 19:00. Cutoff with 4h grace is shiftDate at 23:00.
+ *
+ * For an evening shift (e.g. 14:00 to 23:00):
+ *   Scheduled end is shiftDate at 23:00. Cutoff with 4h grace wraps past midnight to shiftDate+1 at 03:00.
+ *
+ * For a night shift (e.g. 23:00 to 08:00):
+ *   Scheduled end is shiftDate+1 at 08:00. Cutoff with 4h grace is shiftDate+1 at 12:00.
+ *
+ * In all cases, if the next day's shift start time has arrived, the previous unclosed
+ * punch is guaranteed expired so today's shift starts fresh.
+ */
+export function isPunchExpired(
+  shiftDate: string,
+  shiftStart: string,
+  shiftEnd: string,
+  nowDate: string,
+  nowTime: string,
+  graceMinutes: number = CHECKOUT_GRACE_MINUTES,
+): boolean {
+  if (nowDate > shiftDate && !crossesMidnight(shiftStart, shiftEnd) && minutesOf(nowTime) >= minutesOf(shiftStart)) {
+    return true;
+  }
+  if (
+    nowDate > addDays(shiftDate, 1) ||
+    (nowDate === addDays(shiftDate, 1) && crossesMidnight(shiftStart, shiftEnd) && minutesOf(nowTime) >= minutesOf(shiftStart))
+  ) {
+    return true;
+  }
+
+  const baseEndDate = crossesMidnight(shiftStart, shiftEnd) ? addDays(shiftDate, 1) : shiftDate;
+  const totalEndMinutes = minutesOf(shiftEnd) + graceMinutes;
+  const daysToAdd = Math.floor(totalEndMinutes / DAY_MINUTES);
+  const cutoffMinutes = totalEndMinutes % DAY_MINUTES;
+  const cutoffDate = addDays(baseEndDate, daysToAdd);
+
+  if (nowDate > cutoffDate) return true;
+  if (nowDate < cutoffDate) return false;
+  return minutesOf(nowTime) > cutoffMinutes;
+}
+
 // ------------------------------------------------------------------ lateness
 
 /**
