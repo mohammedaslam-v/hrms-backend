@@ -450,6 +450,9 @@ describe('shifts that cross midnight', () => {
 });
 
 describe('punch expiration and checkout grace window (LOP)', () => {
+  it('defines checkout grace window as 4 hours (240 minutes)', () => {
+    assert.equal(CHECKOUT_GRACE_MINUTES, 240);
+  });
   it('keeps a regular day shift active during shift hours and throughout the 4h grace window', () => {
     // 10:00 to 19:00 shift on 2026-10-12
     assert.equal(isPunchExpired('2026-10-12', '10:00', '19:00', '2026-10-12', '18:00'), false);
