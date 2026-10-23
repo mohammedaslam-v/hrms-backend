@@ -27,6 +27,7 @@ import {
   DismissEmployeeDto,
   DocumentFileResult,
   DocumentKey,
+  HomeLocationStatus,
   ProfileDocument,
   ProfileRecord,
   ProfileView,
@@ -36,6 +37,40 @@ import {
   UpdatePersonalDetailsDto,
 } from './profile.model';
 import { ApiError } from '../../utils/api-error';
+import { isValidPoint, needsHomeLocation, type GeoPoint } from '../attendance/geofence.domain';
+
+/**
+ * The home location out of a personal-details body, and off it.
+ *
+ *   undefined  — not being changed (neither field sent)
+ *   null       — being cleared (both sent empty)
+ *   GeoPoint   — being set, rounded to 6 decimals (~0.11 m), which is all
+ *                DECIMAL(9,6) keeps anyway
+ *
+ * Half a location (one field without the other) is refused, as is anything
+ * off the planet.
+ */
+function takeHomeLocation(dto: UpdatePersonalDetailsDto): GeoPoint | null | undefined {
+  const { homeLat, homeLng } = dto;
+  delete dto.homeLat;
+  delete dto.homeLng;
+  if (homeLat === undefined && homeLng === undefined) return undefined;
+
+  const empty = (v: unknown) => v === null || v === undefined || String(v).trim() === '';
+  if (empty(homeLat) && empty(homeLng)) return null;
+  if (empty(homeLat) || empty(homeLng)) {
+    throw ApiError.badRequest('Enter both latitude and longitude for the home location.');
+  }
+
+  const point = { lat: Number(homeLat), lng: Number(homeLng) };
+  if (!isValidPoint(point)) {
+    throw ApiError.badRequest(
+      'Home location must be a latitude between -90 and 90 and a longitude between -180 and 180.',
+    );
+  }
+  const round6 = (n: number) => Math.round(n * 1e6) / 1e6;
+  return { lat: round6(point.lat), lng: round6(point.lng) };
+}
 
 const toCompensationView = (
   record: NonNullable<Awaited<ReturnType<ICompensationService['getCurrent']>>>,
@@ -412,6 +447,21 @@ export class ProfileService implements IProfileService {
       throw ApiError.badRequest("Date of birth must be a valid date format (YYYY-MM-DD).");
     }
 
+    // Home location: the employee sets it ONCE, while it is empty. After that
+    // only HR/admin may change or clear it. "Locked" is not stored anywhere — it
+    // is simply "a location is already saved".
+    const home = takeHomeLocation(dto);
+    if (home !== undefined && access === "self") {
+      if (record.homeLocation) {
+        throw ApiError.forbidden(
+          "Your home location is already saved and can only be set once. Ask HR to change it.",
+        );
+      }
+      if (home === null) {
+        throw ApiError.badRequest("Enter your home location's latitude and longitude.");
+      }
+    }
+
     if (access !== "admin") {
       delete dto.employeeCode;
       delete dto.fullName;
@@ -480,7 +530,17 @@ export class ProfileService implements IProfileService {
     }
 
     await this.profileRepository.updatePersonalDetails(subjectId, dto);
+    if (home !== undefined) {
+      await this.profileRepository.saveHomeLocation(subjectId, home, viewerId);
+    }
     return this.getProfile(viewerId, subjectId);
+  }
+
+  /** For the reminder shown on every visit until the home location is saved. */
+  async getHomeLocationStatus(employeeId: number): Promise<HomeLocationStatus> {
+    const status = await this.profileRepository.findHomeLocationStatus(employeeId);
+    if (!status) throw ApiError.notFound("That employee record does not exist.");
+    return { required: needsHomeLocation(status.workMode), saved: status.saved };
   }
 
 async updateEmploymentType(
@@ -580,6 +640,10 @@ async updateEmploymentType(
       city: personal ? record.city : null,
       panNumber: personal ? record.panNumber : null,
       aadharNumber: personal ? record.aadharNumber : null,
+      homeLocation: personal ? record.homeLocation : null,
+      homeLocationRequired: needsHomeLocation(record.workMode),
+      // Only the employee is ever locked out, and only after their one save.
+      homeLocationLocked: access === 'self' && record.homeLocation !== null,
       linkedinProfile: personal ? record.linkedinProfile : null,
       documents: personal ? record.documents : [],
       leaveBalance,

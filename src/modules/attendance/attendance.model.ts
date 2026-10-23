@@ -1,6 +1,6 @@
 import { AttendanceStatus, WeekBar } from './attendance.domain';
 import { LeaveType } from '../leave/leave.domain';
-import { Geofence } from './geofence.domain';
+import { GeofencePolicy } from './geofence.domain';
 
 /** One stored day of attendance — a row of `hrms_attendance`. */
 export interface AttendanceRecord {
@@ -45,8 +45,11 @@ export interface WorkSchedule {
    * to decide where the WEEK's hours come from; it has no bearing on punching.
    */
   portalRole: string | null;
-  /** `hrms_employees.work_mode`. 'WFO' may only punch from the office. */
+  /** `hrms_employees.work_mode`. Decides who is fenced — see geofence.domain. */
   workMode: string | null;
+  /** `hrms_employees.home_lat/home_lng`. Null until saved. */
+  homeLat: number | null;
+  homeLng: number | null;
 }
 
 /**
@@ -149,11 +152,12 @@ export interface TodayView {
   canCheckIn: boolean;
   canCheckOut: boolean;
   /**
-   * Set when this person may only punch from the office (WFO). The browser uses
-   * it to ask for location and grey the buttons out; the server judges the fix
-   * again on every punch. Null means punch from anywhere.
+   * Set when this person may only punch from certain places — the office and/or
+   * their home location. The browser uses it to ask for location and grey the
+   * buttons out; the server judges the fix again on every punch. Null means
+   * punch from anywhere.
    */
-  geofence: Geofence | null;
+  geofence: GeofencePolicy | null;
 }
 
 

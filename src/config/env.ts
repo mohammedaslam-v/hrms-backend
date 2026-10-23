@@ -84,16 +84,23 @@ export const env = {
    */
   internalApiKey: process.env.INTERNAL_API_KEY ?? '',
   /**
-   * The office geofence for WFO check-in and check-out. The defaults are
-   * Hustlehub Tech Park, HSR Layout. OFFICE_GEOFENCE_ENABLED=false switches the
-   * fence off for everybody without a code change.
+   * The attendance geofence: WFO punch at the office or their home location,
+   * WFH at their home location. The office defaults are Hustlehub Tech Park,
+   * HSR Layout; each home point is per employee, in hrms_employees.
+   * OFFICE_GEOFENCE_ENABLED=false switches every fence off without a code change.
    */
   geofence: {
     enabled: (process.env.OFFICE_GEOFENCE_ENABLED ?? 'true') !== 'false',
     lat: Number.parseFloat(process.env.OFFICE_LAT ?? '12.900510'),
     lng: Number.parseFloat(process.env.OFFICE_LNG ?? '77.650850'),
     radiusM: Number.parseFloat(process.env.OFFICE_RADIUS_M ?? '100'),
-    maxAccuracyM: Number.parseFloat(process.env.OFFICE_MAX_ACCURACY_M ?? '100'),
+    homeRadiusM: Number.parseFloat(process.env.HOME_RADIUS_M ?? '100'),
+    // Hidden margin for GPS drift, added to both radii but never shown: the
+    // screens say "within 100 m" while the check allows 100 + 100 = 200 m.
+    graceM: Number.parseFloat(process.env.GEOFENCE_GRACE_M ?? '100'),
+    // A reading vaguer than ±this is "not precise enough". 150 lets ordinary
+    // indoor phone and laptop readings through; IP-only guesses (±1 km+) still fail.
+    maxAccuracyM: Number.parseFloat(process.env.OFFICE_MAX_ACCURACY_M ?? '150'),
   },
 } as const;
 

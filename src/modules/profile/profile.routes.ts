@@ -18,6 +18,7 @@ export const createProfileRouter = (controller: ProfileController): Router => {
   router.delete('/me/documents/:key', controller.deleteDocument);
   router.post('/me/compensation', controller.updateCompensation);
   router.post('/me/personal-details', controller.updatePersonalDetails);
+  router.get('/me/home-location', controller.getHomeLocationStatus);
 
   router.get('/:id', controller.getOne);
   router.post('/:id/documents', controller.saveDocument);

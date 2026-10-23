@@ -197,7 +197,14 @@ export const createContainer = () => {
     orgRepository,
     authService,
     leaveService,
-    env.geofence.enabled ? env.geofence : null,
+    env.geofence.enabled
+      ? {
+          office: { lat: env.geofence.lat, lng: env.geofence.lng, radiusM: env.geofence.radiusM },
+          homeRadiusM: env.geofence.homeRadiusM,
+          graceM: env.geofence.graceM,
+          maxAccuracyM: env.geofence.maxAccuracyM,
+        }
+      : null,
   );
   const attendanceController = new AttendanceController(attendanceService);
 

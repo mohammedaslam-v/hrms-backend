@@ -94,6 +94,12 @@ export class ProfileController {
     });
   });
 
+  /** GET /profile/me/home-location — drives the "save your home location" reminder. */
+  getHomeLocationStatus: RequestHandler = asyncHandler(async (req, res) => {
+    const { employeeId } = req as AuthenticatedRequest;
+    res.json({ success: true, data: await this.profileService.getHomeLocationStatus(employeeId) });
+  });
+
     updatePersonalDetails: RequestHandler = asyncHandler(async (req, res) => {
     const { employeeId } = req as AuthenticatedRequest;
     const subjectId = req.params.id && req.params.id !== "me" ? this.readId(req.params.id) : employeeId;

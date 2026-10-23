@@ -25,7 +25,14 @@ interface ScheduleRow extends RowDataPacket {
   date_of_leaving: string | null;
   portal_role: string | null;
   work_mode: string | null;
+  // DECIMAL(9,6). mysql2 returns DECIMAL as a string so no digit is lost.
+  home_lat: string | null;
+  home_lng: string | null;
 }
+
+/** A DECIMAL column as a number, or null when empty. */
+const coordinate = (value: string | null): number | null =>
+  value === null || value === '' ? null : Number(value);
 
 interface ActivityRow extends RowDataPacket {
   act_date: string;
@@ -111,7 +118,7 @@ export class AttendanceRepository implements IAttendanceRepository {
   async findSchedule(employeeId: number): Promise<WorkSchedule | null> {
     const [rows] = await this.pool.execute<ScheduleRow[]>(
       `SELECT e.shift_start, e.shift_end, e.weekly_off, e.date_of_leaving,
-              COALESCE(a.role, e.designation) AS portal_role, e.work_mode
+              COALESCE(a.role, e.designation) AS portal_role, e.work_mode, e.home_lat, e.home_lng
          FROM hrms_employees e
          LEFT JOIN admins a ON a.id = e.admin_id AND a.deleted_at IS NULL
         WHERE e.id = ?`,
@@ -127,6 +134,8 @@ export class AttendanceRepository implements IAttendanceRepository {
       dateOfLeaving: row.date_of_leaving,
       portalRole: row.portal_role,
       workMode: row.work_mode,
+      homeLat: coordinate(row.home_lat),
+      homeLng: coordinate(row.home_lng),
     };
   }
 
@@ -178,7 +187,7 @@ export class AttendanceRepository implements IAttendanceRepository {
 
     const [rows] = await this.pool.query<(ScheduleRow & { id: number })[]>(
       `SELECT e.id, e.shift_start, e.shift_end, e.weekly_off, e.date_of_leaving,
-              a.role AS portal_role, e.work_mode
+              a.role AS portal_role, e.work_mode, e.home_lat, e.home_lng
          FROM hrms_employees e
          LEFT JOIN admins a ON a.id = e.admin_id AND a.deleted_at IS NULL
         WHERE e.id IN (${AttendanceRepository.idList(employeeIds)})`,
@@ -192,6 +201,8 @@ export class AttendanceRepository implements IAttendanceRepository {
         dateOfLeaving: row.date_of_leaving,
         portalRole: row.portal_role,
         workMode: row.work_mode,
+        homeLat: coordinate(row.home_lat),
+        homeLng: coordinate(row.home_lng),
       });
     }
     return byId;

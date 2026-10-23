@@ -29,5 +29,17 @@ export interface IProfileRepository {
 
   updatePersonalDetails(employeeId: number, dto: UpdatePersonalDetailsDto): Promise<void>;
 
+  /** Saves the geofence home point (null clears it) and stamps who did it, and when. */
+  saveHomeLocation(
+    employeeId: number,
+    point: { lat: number; lng: number } | null,
+    setBy: number,
+  ): Promise<void>;
+
+  /** Work mode and whether a home point is saved — one cheap row for the reminder. */
+  findHomeLocationStatus(
+    employeeId: number,
+  ): Promise<{ workMode: string | null; saved: boolean } | null>;
+
   deleteEmployee(employeeId: number, adminId: number | null): Promise<void>;
 }

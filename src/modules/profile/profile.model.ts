@@ -78,6 +78,33 @@ export interface UpdatePersonalDetailsDto {
   emergencyContactName?: string | null;
   emergencyContactNumber?: string | null;
   emergencyContactRelation?: string | null;
+  /**
+   * Home location for the attendance geofence. Both or neither; null clears it
+   * (HR only). The employee may set it once, while it is still empty.
+   */
+  homeLat?: number | string | null;
+  homeLng?: number | string | null;
+}
+
+/**
+ * The one saved location an employee punches from besides the office —
+ * `hrms_employees.home_lat/home_lng`. WFH: their only allowed place.
+ * WFO: their second allowed place, after the office.
+ */
+export interface HomeLocation {
+  lat: number;
+  lng: number;
+  setAt: string | null;
+  /** hrms_employees.id of whoever saved it — the employee, or HR. */
+  setById: number | null;
+  setByName: string | null;
+}
+
+/** Drives the "save your home location" reminder shown on every visit. */
+export interface HomeLocationStatus {
+  /** WFO or WFH — the work modes the geofence uses a home location for. */
+  required: boolean;
+  saved: boolean;
 }
 
 export interface DismissEmployeeDto {
@@ -161,6 +188,7 @@ export interface ProfileRecord {
   linkedinProfile: string | null;
   panNumber: string | null;
   aadharNumber: string | null;
+  homeLocation: HomeLocation | null;
   hrmsRole?: "employee" | "admin";
   isManagerOverride?: boolean;
   role?: "employee" | "manager" | "admin";
@@ -234,6 +262,12 @@ export interface ProfileView {
   linkedinProfile: string | null;
   panNumber: string | null;
   aadharNumber: string | null;
+  /** Personal: only the employee and admins see the coordinates. */
+  homeLocation: HomeLocation | null;
+  /** WFO / WFH — this person's geofence uses a home location. */
+  homeLocationRequired: boolean;
+  /** True when the VIEWER may not change it: the employee after their one save. */
+  homeLocationLocked: boolean;
   managerId?: number | null;
   role?: "employee" | "manager" | "admin";
   hrmsRole?: "employee" | "admin";

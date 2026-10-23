@@ -1,4 +1,4 @@
-import { DismissEmployeeDto, DocumentFileResult, DocumentKey, ProfileDocument, ProfileView, SaveDocumentDto, ToggleSalaryDto, UpdateCompensationDto, CompensationView, UpdatePersonalDetailsDto } from './profile.model';
+import { DismissEmployeeDto, DocumentFileResult, DocumentKey, ProfileDocument, ProfileView, SaveDocumentDto, ToggleSalaryDto, UpdateCompensationDto, CompensationView, UpdatePersonalDetailsDto, HomeLocationStatus } from './profile.model';
 
 export interface IProfileService {
   getProfile(viewerId: number, subjectId: number): Promise<ProfileView>;
@@ -56,6 +56,9 @@ export interface IProfileService {
     subjectId: number,
     dto: UpdatePersonalDetailsDto,
   ): Promise<ProfileView>;
+
+  /** Is a home location needed (WFO/WFH), and is it saved? For the reminder. */
+  getHomeLocationStatus(employeeId: number): Promise<HomeLocationStatus>;
 
   deleteEmployee(
     viewerId: number,

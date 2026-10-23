@@ -48,7 +48,14 @@ import { ILeaveService } from '../leave/leave.service.interface';
 import { RosterMember } from '../org/org.model';
 import { AttendanceStatus, dayNameOf } from './attendance.domain';
 import { ApiError } from '../../utils/api-error';
-import { judgeFix, requiresGeofence, type DeviceFix, type Geofence } from './geofence.domain';
+import {
+  judgeFix,
+  policyFor,
+  type DeviceFix,
+  type GeofenceConfig,
+  type GeofencePolicy,
+  type ZoneKind,
+} from './geofence.domain';
 
 /** Who is punching, and from where the browser says they are. */
 interface PunchContext {
@@ -62,6 +69,8 @@ interface PunchLocation {
   lat: number;
   lng: number;
   accuracyM: number;
+  /** Which allowed place it was made inside, and how far from its centre. */
+  zone: ZoneKind;
   distanceM: number;
 }
 
@@ -107,9 +116,9 @@ export class AttendanceService implements IAttendanceService {
     // Optional so the existing test doubles keep compiling; the container
     // always supplies it. Only editDay() needs it.
     private readonly leaveService?: ILeaveService,
-    // The office for WFO punching. Null switches the fence off — the test
-    // doubles, and OFFICE_GEOFENCE_ENABLED=false.
-    private readonly officeGeofence: Geofence | null = null,
+    // The office and home radius for fenced punching. Null switches the fence
+    // off — the test doubles, and OFFICE_GEOFENCE_ENABLED=false.
+    private readonly geofenceConfig: GeofenceConfig | null = null,
   ) {}
 
   /**
@@ -369,29 +378,39 @@ export class AttendanceService implements IAttendanceService {
     return this.getToday(employeeId);
   }
 
-  /** The fence this person punches inside, or null when they may punch anywhere. */
-  private fenceFor(schedule: WorkSchedule): Geofence | null {
-    return this.officeGeofence && requiresGeofence(schedule.workMode) ? this.officeGeofence : null;
+  /**
+   * Every place this person may punch from (office and/or home), or null when
+   * they may punch anywhere. The rule itself is policyFor() in the domain.
+   */
+  private fenceFor(schedule: WorkSchedule): GeofencePolicy | null {
+    if (!this.geofenceConfig) return null;
+    const home =
+      schedule.homeLat !== null && schedule.homeLng !== null
+        ? { lat: schedule.homeLat, lng: schedule.homeLng }
+        : null;
+    return policyFor(schedule.workMode, home, this.geofenceConfig);
   }
 
   /**
-   * Refuses a WFO punch made away from the office. Returns what goes into the
-   * audit log — where the punch was made from — or null when nobody was fenced.
+   * Refuses a fenced punch made away from every allowed place. Returns what goes
+   * into the audit log — where the punch was made from — or null when nobody
+   * was fenced.
    *
    * Judged here, not only in the browser: the buttons being grey is a courtesy,
    * this is the rule.
    */
-  private requireInsideOffice(schedule: WorkSchedule | null, punch: PunchContext): PunchLocation | null {
-    const fence = schedule && !punch.onBehalf ? this.fenceFor(schedule) : null;
-    if (!fence) return null;
+  private requireInsideZone(schedule: WorkSchedule | null, punch: PunchContext): PunchLocation | null {
+    const policy = schedule && !punch.onBehalf ? this.fenceFor(schedule) : null;
+    if (!policy) return null;
 
-    const verdict = judgeFix(punch.fix, fence);
+    const verdict = judgeFix(punch.fix, policy);
     if (!verdict.allowed) throw ApiError.forbidden(verdict.message);
 
     return {
       lat: punch.fix!.lat,
       lng: punch.fix!.lng,
       accuracyM: Math.round(punch.fix!.accuracyM),
+      zone: verdict.zone,
       distanceM: Math.round(verdict.distanceM),
     };
   }
@@ -399,7 +418,7 @@ export class AttendanceService implements IAttendanceService {
   private async punchIn(employeeId: number, punch: PunchContext): Promise<void> {
     const now = await this.attendanceRepository.now();
     const schedule = await this.requireSchedule(employeeId, now.date);
-    const location = this.requireInsideOffice(schedule, punch);
+    const location = this.requireInsideZone(schedule, punch);
 
     // A stint left open must be closed before another can start, or the two
     // would fight over one row and the first arrival time would be lost.
@@ -455,7 +474,7 @@ export class AttendanceService implements IAttendanceService {
 
   private async punchOut(employeeId: number, punch: PunchContext): Promise<void> {
     const now = await this.attendanceRepository.now();
-    const location = this.requireInsideOffice(
+    const location = this.requireInsideZone(
       await this.attendanceRepository.findSchedule(employeeId),
       punch,
     );

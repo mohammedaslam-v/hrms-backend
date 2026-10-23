@@ -3,19 +3,39 @@ import { describe, it } from 'node:test';
 import {
   distanceMeters,
   formatDistance,
+  isValidPoint,
   judgeFix,
+  needsHomeLocation,
   parseDeviceFix,
-  requiresGeofence,
-  type Geofence,
+  policyFor,
+  type GeofenceConfig,
+  type GeofencePolicy,
+  type GeoPoint,
 } from './geofence.domain';
 
-const OFFICE: Geofence = { lat: 12.9105, lng: 77.6482, radiusM: 50, maxAccuracyM: 100 };
+const CONFIG: GeofenceConfig = {
+  office: { lat: 12.9005, lng: 77.6508, radiusM: 100 },
+  homeRadiusM: 100,
+  // No hidden margin in these tests, so the edges below are the stated radius.
+  graceM: 0,
+  maxAccuracyM: 100,
+};
+const OFFICE: GeoPoint = CONFIG.office;
+// About 5 km from the office — a plausible home.
+const HOME: GeoPoint = { lat: 12.9455, lng: 77.6508 };
 
 // 0.0001° of latitude is ~11.1 m anywhere on Earth.
-const north = (meters: number) => ({ lat: OFFICE.lat + (meters / 11.1) * 0.0001, lng: OFFICE.lng });
+const north = (from: GeoPoint, meters: number) => ({
+  lat: from.lat + (meters / 11.1) * 0.0001,
+  lng: from.lng,
+});
+
+const officeOnly = policyFor('WFO', null, CONFIG)!;
+const officeAndHome = policyFor('WFO', HOME, CONFIG)!;
+const homeOnly = policyFor('WFH', HOME, CONFIG)!;
 
 describe('distanceMeters', () => {
-  it('is zero at the office itself', () => {
+  it('is zero at the point itself', () => {
     assert.equal(distanceMeters(OFFICE, OFFICE), 0);
   });
 
@@ -25,49 +45,137 @@ describe('distanceMeters', () => {
   });
 
   it('is symmetric', () => {
-    const p = { lat: 12.92, lng: 77.64 };
-    assert.equal(Math.round(distanceMeters(OFFICE, p)), Math.round(distanceMeters(p, OFFICE)));
+    assert.equal(Math.round(distanceMeters(OFFICE, HOME)), Math.round(distanceMeters(HOME, OFFICE)));
   });
 });
 
-describe('requiresGeofence', () => {
-  it('fences WFO only', () => {
-    assert.equal(requiresGeofence('WFO'), true);
-    assert.equal(requiresGeofence('WFH'), false);
-    assert.equal(requiresGeofence('Hybrid'), false);
-    assert.equal(requiresGeofence(null), false);
+describe('policyFor', () => {
+  it('fences WFO to the office alone until a home location is saved', () => {
+    assert.deepEqual(officeOnly.zones.map((z) => z.kind), ['office']);
+  });
+
+  it('fences WFO to the office OR home once it is saved', () => {
+    assert.deepEqual(officeAndHome.zones.map((z) => z.kind), ['office', 'home']);
+  });
+
+  it('fences WFH to home only', () => {
+    assert.deepEqual(homeOnly.zones.map((z) => z.kind), ['home']);
+  });
+
+  it('blocks WFH everywhere until a home location is saved', () => {
+    const noHome = policyFor('WFH', null, CONFIG)!;
+    assert.equal(noHome.homeMissing, true);
+    assert.deepEqual(noHome.zones, []);
+    // Refused even with a perfect fix at the office — no location can fix it.
+    const verdict = judgeFix({ ...OFFICE, accuracyM: 5 }, noHome);
+    assert.equal(verdict.allowed === false && verdict.reason, 'no_home');
+    assert.equal(judgeFix(null, noHome).allowed, false);
+  });
+
+  it('does not block WFO without a home location — the office still counts', () => {
+    assert.equal(policyFor('WFO', null, CONFIG)!.homeMissing, undefined);
+  });
+
+  it('never fences Hybrid or an unknown mode', () => {
+    assert.equal(policyFor('Hybrid', HOME, CONFIG), null);
+    assert.equal(policyFor(null, HOME, CONFIG), null);
+  });
+
+  it('gives the home zone its own radius', () => {
+    const p = policyFor('WFH', HOME, { ...CONFIG, homeRadiusM: 150 })!;
+    assert.equal(p.zones[0].radiusM, 150);
+  });
+});
+
+describe('needsHomeLocation', () => {
+  it('asks WFO and WFH, not Hybrid', () => {
+    assert.equal(needsHomeLocation('WFO'), true);
+    assert.equal(needsHomeLocation('WFH'), true);
+    assert.equal(needsHomeLocation('Hybrid'), false);
   });
 });
 
 describe('judgeFix', () => {
-  it('allows a fix inside the radius', () => {
-    const verdict = judgeFix({ ...north(30), accuracyM: 15 }, OFFICE);
-    assert.equal(verdict.allowed, true);
+  it('allows a fix inside the office', () => {
+    const verdict = judgeFix({ ...north(OFFICE, 30), accuracyM: 15 }, officeOnly);
+    assert.deepEqual(verdict.allowed && verdict.zone, 'office');
+  });
+
+  it('allows a WFO employee at home once home is saved', () => {
+    const verdict = judgeFix({ ...north(HOME, 20), accuracyM: 10 }, officeAndHome);
+    assert.deepEqual(verdict.allowed && verdict.zone, 'home');
+  });
+
+  it('refuses the same spot for WFO before home is saved', () => {
+    assert.equal(judgeFix({ ...north(HOME, 20), accuracyM: 10 }, officeOnly).allowed, false);
+  });
+
+  it('refuses a WFH employee at the office — the office is not their zone', () => {
+    assert.equal(judgeFix({ ...OFFICE, accuracyM: 10 }, homeOnly).allowed, false);
   });
 
   it('allows a fix right at the edge', () => {
-    assert.equal(judgeFix({ ...north(49), accuracyM: 10 }, OFFICE).allowed, true);
+    assert.equal(judgeFix({ ...north(OFFICE, 99), accuracyM: 10 }, officeOnly).allowed, true);
   });
 
-  it('refuses a fix outside the radius and says how far', () => {
-    const verdict = judgeFix({ ...north(340), accuracyM: 10 }, OFFICE);
+  it('refuses outside every zone and names the nearest one', () => {
+    const verdict = judgeFix({ ...north(HOME, 400), accuracyM: 10 }, officeAndHome);
     assert.equal(verdict.allowed, false);
-    assert.equal(verdict.allowed === false && verdict.reason, 'outside');
-    assert.match(verdict.allowed === false ? verdict.message : '', /You are 3[34]\d m from the office/);
+    const message = verdict.allowed === false ? verdict.message : '';
+    assert.match(message, /You are 4\d\d m from your home location/);
+    assert.match(message, /within 100 m of the office or your home location/);
+  });
+
+  it('is allowed by a containing zone even when another zone is nearer', () => {
+    // A tiny home circle right next to the device, inside a large office circle.
+    const policy: GeofencePolicy = {
+      maxAccuracyM: 100,
+      zones: [
+        { kind: 'office', ...OFFICE, radiusM: 500, graceM: 0 },
+        { kind: 'home', ...north(OFFICE, 60), radiusM: 5, graceM: 0 },
+      ],
+    };
+    const verdict = judgeFix({ ...north(OFFICE, 40), accuracyM: 10 }, policy);
+    assert.deepEqual(verdict.allowed && verdict.zone, 'office');
   });
 
   it('refuses a missing fix', () => {
-    const verdict = judgeFix(null, OFFICE);
+    const verdict = judgeFix(null, officeOnly);
     assert.equal(verdict.allowed === false && verdict.reason, 'missing');
   });
 
   it('calls a vague fix inaccurate, not outside — even when it lands inside', () => {
-    const verdict = judgeFix({ ...north(10), accuracyM: 150 }, OFFICE);
+    const verdict = judgeFix({ ...north(OFFICE, 10), accuracyM: 150 }, officeOnly);
     assert.equal(verdict.allowed === false && verdict.reason, 'inaccurate');
   });
 
   it('accepts accuracy exactly at the limit', () => {
-    assert.equal(judgeFix({ ...north(10), accuracyM: 100 }, OFFICE).allowed, true);
+    assert.equal(judgeFix({ ...north(OFFICE, 10), accuracyM: 100 }, officeOnly).allowed, true);
+  });
+});
+
+describe('hidden grace margin', () => {
+  // Stated 100 m, decided at 100 + 100 = 200 m.
+  const graced = policyFor('WFO', HOME, { ...CONFIG, graceM: 100 })!;
+
+  it('allows a device beyond the stated radius but within the margin', () => {
+    const verdict = judgeFix({ ...north(OFFICE, 180), accuracyM: 10 }, graced);
+    assert.deepEqual(verdict.allowed && verdict.zone, 'office');
+  });
+
+  it('gives home the same margin', () => {
+    assert.equal(judgeFix({ ...north(HOME, 180), accuracyM: 10 }, graced).allowed, true);
+  });
+
+  it('still refuses past radius + margin', () => {
+    assert.equal(judgeFix({ ...north(OFFICE, 230), accuracyM: 10 }, graced).allowed, false);
+  });
+
+  it('never mentions the margin — the message states the stated radius', () => {
+    const verdict = judgeFix({ ...north(OFFICE, 400), accuracyM: 10 }, graced);
+    const message = verdict.allowed === false ? verdict.message : '';
+    assert.match(message, /within 100 m of/);
+    assert.doesNotMatch(message, /200 m/);
   });
 });
 
@@ -86,6 +194,15 @@ describe('parseDeviceFix', () => {
     assert.equal(parseDeviceFix({ location: { lat: 'x', lng: 77, accuracy: 5 } }), null);
     assert.equal(parseDeviceFix({ location: { lat: 95, lng: 77, accuracy: 5 } }), null);
     assert.equal(parseDeviceFix({ location: { lat: 12, lng: 77 } }), null);
+  });
+});
+
+describe('isValidPoint', () => {
+  it('accepts the planet and nothing else', () => {
+    assert.equal(isValidPoint({ lat: 12.9, lng: 77.6 }), true);
+    assert.equal(isValidPoint({ lat: 91, lng: 0 }), false);
+    assert.equal(isValidPoint({ lat: 0, lng: -181 }), false);
+    assert.equal(isValidPoint({ lat: Number.NaN, lng: 0 }), false);
   });
 });
 

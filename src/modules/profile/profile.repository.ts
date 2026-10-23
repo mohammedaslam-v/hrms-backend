@@ -59,6 +59,12 @@ interface ProfileRow extends RowDataPacket {
   is_rehire_eligible: number | boolean;
   exit_notes: string | null;
   deleted_at: string | null;
+  // DECIMAL(9,6) — mysql2 returns DECIMAL as a string so no digit is lost.
+  home_lat: string | null;
+  home_lng: string | null;
+  home_location_set_at: string | null;
+  home_location_set_by: number | null;
+  home_location_set_by_name: string | null;
 }
 
 const DOCUMENT_COLUMNS: { key: DocumentKey; label: string; column: keyof ProfileRow; numberColumn?: keyof ProfileRow }[] = [
@@ -130,10 +136,16 @@ export class ProfileRepository implements IProfileRepository {
               e.hrms_role,
               e.is_manager_override,
               e.opening_leave,
-              EXISTS(SELECT 1 FROM hrms_employees rep WHERE rep.manager_id = e.id AND rep.deleted_at IS NULL) AS has_active_reports
+              EXISTS(SELECT 1 FROM hrms_employees rep WHERE rep.manager_id = e.id AND rep.deleted_at IS NULL) AS has_active_reports,
+              e.home_lat,
+              e.home_lng,
+              e.home_location_set_at,
+              e.home_location_set_by,
+              hs.full_name               AS home_location_set_by_name
          FROM hrms_employees e
-         LEFT JOIN admins a         ON a.id = e.admin_id AND a.deleted_at IS NULL
-         LEFT JOIN hrms_employees m ON m.id = e.manager_id
+         LEFT JOIN admins a          ON a.id = e.admin_id AND a.deleted_at IS NULL
+         LEFT JOIN hrms_employees m  ON m.id = e.manager_id
+         LEFT JOIN hrms_employees hs ON hs.id = e.home_location_set_by
         WHERE e.id = ?`,
       [employeeId],
     );
@@ -679,7 +691,53 @@ async updateEmploymentType(employeeId: number, employmentType: string): Promise<
       isRehireEligible: row.is_rehire_eligible === undefined ? true : Boolean(row.is_rehire_eligible),
       exitNotes: this.text(row.exit_notes ?? null),
       deletedAt: row.deleted_at ? String(row.deleted_at) : null,
+      homeLocation:
+        row.home_lat !== null && row.home_lng !== null
+          ? {
+              lat: Number(row.home_lat),
+              lng: Number(row.home_lng),
+              setAt: row.home_location_set_at ? String(row.home_location_set_at) : null,
+              setById: row.home_location_set_by,
+              setByName: row.home_location_set_by_name,
+            }
+          : null,
     };
+  }
+
+  /**
+   * Saves (or, with null, clears) the home location and stamps who did it.
+   * The time is the database clock's — NOW() — never this process's.
+   */
+  async saveHomeLocation(
+    employeeId: number,
+    point: { lat: number; lng: number } | null,
+    setBy: number,
+  ): Promise<void> {
+    await this.pool.execute(
+      point
+        ? `UPDATE hrms_employees
+              SET home_lat = ?, home_lng = ?,
+                  home_location_set_at = NOW(), home_location_set_by = ?,
+                  updated_at = NOW()
+            WHERE id = ?`
+        : `UPDATE hrms_employees
+              SET home_lat = NULL, home_lng = NULL,
+                  home_location_set_at = NULL, home_location_set_by = NULL,
+                  updated_at = NOW()
+            WHERE id = ?`,
+      point ? [point.lat, point.lng, setBy, employeeId] : [employeeId],
+    );
+  }
+
+  async findHomeLocationStatus(
+    employeeId: number,
+  ): Promise<{ workMode: string | null; saved: boolean } | null> {
+    const [rows] = await this.pool.execute<RowDataPacket[]>(
+      `SELECT work_mode, home_lat IS NOT NULL AS saved FROM hrms_employees WHERE id = ?`,
+      [employeeId],
+    );
+    const row = rows[0];
+    return row ? { workMode: row.work_mode, saved: Boolean(row.saved) } : null;
   }
 
   private mapDocuments(row: ProfileRow): ProfileDocument[] {

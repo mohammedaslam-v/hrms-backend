@@ -1,20 +1,39 @@
 /**
- * The office geofence — may this check-in or check-out be made from here?
+ * The attendance geofence — may this check-in or check-out be made from here?
  *
- * Pure: no database, no HTTP, no clock. The fence is passed in by the service
- * (built from env in the container) and the fix comes from the browser.
+ * Pure: no database, no HTTP, no clock. The office comes from env (via the
+ * container), the home point from `hrms_employees`, and the fix from the browser.
  *
- * WHO IT APPLIES TO
+ * WHO IS FENCED, AND WHERE (policyFor)
  *
- *   Only `work_mode = 'WFO'`. WFH and Hybrid punch from anywhere. An admin
- *   punching on someone's behalf is not fenced either — that is a correction,
- *   not the employee standing somewhere.
+ *   WFO     the office, OR their saved home location once they have one
+ *   WFH     their saved home location — and until it is saved, nowhere: the
+ *           policy has no zones and `homeMissing`, so every punch is refused
+ *           with "save your home location first"
+ *   Hybrid  not fenced
+ *
+ *   An admin punching on someone's behalf is never fenced — that is a
+ *   correction, not the employee standing somewhere.
+ *
+ * THE ALGORITHM (judgeFix)
+ *
+ *   1. No fix                → refuse ("allow location access").
+ *   2. Fix vaguer than ±maxAccuracyM → refuse ("not precise enough"). Judged
+ *      before distance, so a vague laptop is never told it is "outside".
+ *   3. Haversine distance from the fix to EVERY zone; keep the nearest
+ *      (a linear scan — there are at most two zones, so O(k) with k ≤ 2).
+ *   4. Allowed if the device is inside ANY zone, i.e. inside the nearest one's
+ *      radius or any other's. Zones have their own radius, so "nearest" alone
+ *      is not enough — a small home circle can be nearer than a large office
+ *      one that still contains the device. So: allowed = some zone contains it.
+ *   5. "Inside" means within radiusM + graceM. The grace is a hidden margin for
+ *      GPS drift; every message states radiusM alone.
  *
  * WHAT IT CAN AND CANNOT PROVE
  *
  *   The coordinates are whatever the browser reports, and a browser can be told
- *   to report anything. This stops casual punching from home; it is not proof
- *   of presence. The fix is written to the audit log so HR can look back.
+ *   to report anything. This stops casual punching from elsewhere; it is not
+ *   proof of presence. Every fix is written to the audit log so HR can look back.
  */
 
 export interface GeoPoint {
@@ -27,21 +46,55 @@ export interface DeviceFix extends GeoPoint {
   accuracyM: number;
 }
 
-export interface Geofence extends GeoPoint {
+export type ZoneKind = 'office' | 'home';
+
+/** One allowed place: a circle on the map. */
+export interface GeofenceZone extends GeoPoint {
+  kind: ZoneKind;
+  /** The radius people are told about — every message says this number. */
   radiusM: number;
+  /**
+   * Extra metres allowed on top of `radiusM` but never shown. GPS readings
+   * drift by tens of metres from one second to the next, so someone standing
+   * inside the stated radius would otherwise flicker between allowed and not.
+   * The decision uses radiusM + graceM; the words use radiusM.
+   */
+  graceM: number;
+}
+
+/** Every place this person may punch from. Sent to the browser as is. */
+export interface GeofencePolicy {
+  zones: GeofenceZone[];
   /**
    * A fix vaguer than this is refused as "not precise enough" rather than
    * "outside". A laptop indoors can report ±150 m while sitting at its desk, and
-   * telling that person they are outside the office would be wrong.
+   * telling that person they are outside would be wrong.
    */
+  maxAccuracyM: number;
+  /**
+   * WFH with no saved home location: there is nowhere they may punch yet.
+   * `zones` is empty and every punch is refused until they save one.
+   */
+  homeMissing?: boolean;
+}
+
+/** The company-wide settings, from env. */
+export interface GeofenceConfig {
+  office: GeoPoint & { radiusM: number };
+  homeRadiusM: number;
+  /** Hidden margin added to every zone's radius — see GeofenceZone.graceM. */
+  graceM: number;
   maxAccuracyM: number;
 }
 
+/** The radius that actually decides: the stated one plus the hidden margin. */
+export const effectiveRadius = (zone: GeofenceZone): number => zone.radiusM + zone.graceM;
+
 export type GeofenceVerdict =
-  | { allowed: true; distanceM: number }
+  | { allowed: true; zone: ZoneKind; distanceM: number }
   | {
       allowed: false;
-      reason: 'missing' | 'inaccurate' | 'outside';
+      reason: 'no_home' | 'missing' | 'inaccurate' | 'outside';
       distanceM: number | null;
       message: string;
     };
@@ -50,7 +103,14 @@ const EARTH_RADIUS_M = 6_371_000;
 
 const toRadians = (degrees: number): number => (degrees * Math.PI) / 180;
 
-/** Great-circle distance in metres (haversine). Plenty precise at 50 m. */
+/**
+ * Great-circle distance in metres (haversine).
+ *
+ * The Earth is a sphere, so the straight-line formula on raw degrees is wrong:
+ * a degree of longitude shrinks towards the poles (111 km at the equator,
+ * ~108 km at Bengaluru). Haversine measures along the surface and is stable
+ * for tiny distances, which is exactly the range a geofence works in.
+ */
 export function distanceMeters(a: GeoPoint, b: GeoPoint): number {
   const dLat = toRadians(b.lat - a.lat);
   const dLng = toRadians(b.lng - a.lng);
@@ -63,7 +123,7 @@ export function distanceMeters(a: GeoPoint, b: GeoPoint): number {
 /**
  * `{ location: { lat, lng, accuracy } }` from a punch request body — the shape
  * the browser's Geolocation API gives. Anything malformed reads as no fix at
- * all, which judgeFix() refuses for WFO and nobody else ever looks at.
+ * all, which judgeFix() refuses for the fenced and nobody else ever looks at.
  */
 export function parseDeviceFix(body: unknown): DeviceFix | null {
   const location = (body as { location?: Record<string, unknown> } | null | undefined)?.location;
@@ -71,59 +131,112 @@ export function parseDeviceFix(body: unknown): DeviceFix | null {
   const lat = Number(location.lat);
   const lng = Number(location.lng);
   const accuracyM = Number(location.accuracy);
-  const valid =
-    Number.isFinite(lat) &&
-    Math.abs(lat) <= 90 &&
-    Number.isFinite(lng) &&
-    Math.abs(lng) <= 180 &&
-    Number.isFinite(accuracyM) &&
-    accuracyM >= 0;
+  const valid = isValidPoint({ lat, lng }) && Number.isFinite(accuracyM) && accuracyM >= 0;
   return valid ? { lat, lng, accuracyM } : null;
 }
 
-/** The one rule for who is fenced. Exact match: 'WFO' is how the column stores it. */
-export const requiresGeofence = (workMode: string | null | undefined): boolean =>
-  workMode === 'WFO';
+/** On the planet: latitude ±90, longitude ±180, both real numbers. */
+export const isValidPoint = (p: GeoPoint): boolean =>
+  Number.isFinite(p.lat) && Math.abs(p.lat) <= 90 && Number.isFinite(p.lng) && Math.abs(p.lng) <= 180;
+
+/**
+ * Where this person may punch from, or null when they may punch anywhere.
+ * The one rule for who is fenced — see the table at the top of this file.
+ */
+export function policyFor(
+  workMode: string | null | undefined,
+  home: GeoPoint | null,
+  config: GeofenceConfig,
+): GeofencePolicy | null {
+  const homeZone: GeofenceZone | null = home
+    ? { kind: 'home', lat: home.lat, lng: home.lng, radiusM: config.homeRadiusM, graceM: config.graceM }
+    : null;
+
+  let zones: GeofenceZone[];
+  if (workMode === 'WFO') {
+    zones = [
+      { kind: 'office', ...config.office, graceM: config.graceM },
+      ...(homeZone ? [homeZone] : []),
+    ];
+  } else if (workMode === 'WFH') {
+    if (!homeZone) return { zones: [], maxAccuracyM: config.maxAccuracyM, homeMissing: true };
+    zones = [homeZone];
+  } else {
+    return null;
+  }
+
+  return { zones, maxAccuracyM: config.maxAccuracyM };
+}
+
+/** Does this work mode need a saved home location? Drives the reminder. */
+export const needsHomeLocation = (workMode: string | null | undefined): boolean =>
+  workMode === 'WFO' || workMode === 'WFH';
 
 /** Rounded for messages — "43 m", "1.2 km". */
 export function formatDistance(meters: number): string {
   return meters < 1000 ? `${Math.round(meters)} m` : `${(meters / 1000).toFixed(1)} km`;
 }
 
+export const HOME_MISSING_MESSAGE =
+  'Save your home location before checking in or out: My page → Edit personal details → Home location.';
+
+const PLACE: Record<ZoneKind, string> = { office: 'the office', home: 'your home location' };
+
+/** "the office", "your home location", "the office or your home location". */
+const placesOf = (zones: GeofenceZone[]): string => zones.map((z) => PLACE[z.kind]).join(' or ');
+
 /**
  * The verdict for one fix. Order matters: no fix, then a fix too vague to
- * judge, then the distance itself.
+ * judge, then the distances.
  */
-export function judgeFix(fix: DeviceFix | null, fence: Geofence): GeofenceVerdict {
+export function judgeFix(fix: DeviceFix | null, policy: GeofencePolicy): GeofenceVerdict {
+  // Nowhere to punch from yet — checked first, since no location can fix it.
+  if (policy.zones.length === 0) {
+    return {
+      allowed: false,
+      reason: 'no_home',
+      distanceM: null,
+      message: HOME_MISSING_MESSAGE,
+    };
+  }
+
   if (!fix) {
     return {
       allowed: false,
       reason: 'missing',
       distanceM: null,
-      message:
-        'Your location is needed to check in or out from the office. Allow location access for this site and try again.',
+      message: `Your location is needed to check in or out from ${placesOf(policy.zones)}. Allow location access for this site and try again.`,
     };
   }
 
-  const distanceM = distanceMeters(fix, fence);
+  // One pass over the zones: remember the first one that contains the device,
+  // and the nearest one overall for the message if none does.
+  let inside: { zone: GeofenceZone; distanceM: number } | null = null;
+  let nearest: { zone: GeofenceZone; distanceM: number } | null = null;
+  for (const zone of policy.zones) {
+    const distanceM = distanceMeters(fix, zone);
+    if (!nearest || distanceM < nearest.distanceM) nearest = { zone, distanceM };
+    if (!inside && distanceM <= effectiveRadius(zone)) inside = { zone, distanceM };
+  }
 
-  if (fix.accuracyM > fence.maxAccuracyM) {
+  if (fix.accuracyM > policy.maxAccuracyM) {
     return {
       allowed: false,
       reason: 'inaccurate',
-      distanceM,
+      distanceM: nearest?.distanceM ?? null,
       message: `Your location is not precise enough (±${Math.round(fix.accuracyM)} m). Turn on Wi-Fi or location services, or check in from your phone.`,
     };
   }
 
-  if (distanceM > fence.radiusM) {
-    return {
-      allowed: false,
-      reason: 'outside',
-      distanceM,
-      message: `You are ${formatDistance(distanceM)} from the office. Check-in and check-out are only allowed within ${fence.radiusM} m of the office.`,
-    };
-  }
+  if (inside) return { allowed: true, zone: inside.zone.kind, distanceM: inside.distanceM };
 
-  return { allowed: true, distanceM };
+  const radii = [...new Set(policy.zones.map((z) => z.radiusM))];
+  return {
+    allowed: false,
+    reason: 'outside',
+    distanceM: nearest?.distanceM ?? null,
+    message:
+      `You are ${formatDistance(nearest!.distanceM)} from ${PLACE[nearest!.zone.kind]}. ` +
+      `Check-in and check-out are only allowed within ${radii.join('/')} m of ${placesOf(policy.zones)}.`,
+  };
 }
