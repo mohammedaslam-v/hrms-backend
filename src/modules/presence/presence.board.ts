@@ -1,4 +1,6 @@
 import { nowFrom } from './presence.domain';
+
+import { addDays, crossesMidnight, isWeeklyOff, minutesOf } from '../attendance/attendance.domain';
 import {
   BoardGroup,
   BoardPerson,
@@ -28,12 +30,46 @@ export interface BoardInput {
   roleOf: Map<number, string>;
   latest: Map<number, LatestPresenceRow>;
   leaveOf: Map<number, { type: string; isHalfDay: boolean }>;
-  /** Admins only; empty for everyone else. */
+  /** Admin-panel users with no HRMS record, seen in the last 30 days. */
   unlinked: UnlinkedPresenceRow[];
   now?: Date;
+  /** The database's HH:MM. Without it nobody is on duty — only the active show. */
+  time?: string;
+  /** Weekly off day names by employee id. */
+  weeklyOffOf?: Map<number, string[]>;
+  /** Today's declared holiday, if any. */
+  holidayToday?: string | null;
 }
 
 export const NO_RECORD_GROUP = 'No HRMS record';
+
+const DAY_MINUTES = 24 * 60;
+
+/**
+ * Is a shift running at `time`, and if so which date does it belong to?
+ *
+ * A shift that crosses midnight belongs to the day it started — the same rule
+ * attendance uses — so at 02:00 a 22:00–06:00 person is on YESTERDAY's shift,
+ * and it is yesterday's weekly off that decides whether they are expected.
+ * The end minute is outside: a 10:00–19:00 shift is over at 19:00.
+ */
+export function shiftNow(
+  shiftStart: string,
+  shiftEnd: string,
+  today: string,
+  time: string,
+): { shiftDate: string; minutesIn: number } | null {
+  const start = minutesOf(shiftStart);
+  const end = minutesOf(shiftEnd);
+  const now = minutesOf(time);
+
+  if (!crossesMidnight(shiftStart, shiftEnd)) {
+    return now >= start && now < end ? { shiftDate: today, minutesIn: now - start } : null;
+  }
+  if (now >= start) return { shiftDate: today, minutesIn: now - start };
+  if (now < end) return { shiftDate: addDays(today, -1), minutesIn: now + DAY_MINUTES - start };
+  return null;
+}
 
 const hm = (t: string): string => t.slice(0, 5);
 
@@ -71,13 +107,29 @@ export function buildBoard(input: BoardInput): PresenceBoard {
     }
     const adminId = input.adminOf.get(m.employeeId) ?? null;
     const presence = presenceOf(adminId ? input.latest.get(adminId) : undefined);
+    const leave = input.leaveOf.get(m.employeeId) ?? null;
+
+    // Off is judged against the shift running now (or today's, outside it).
+    const running = input.time ? shiftNow(m.shiftStart, m.shiftEnd, input.today, input.time) : null;
+    const shiftDate = running?.shiftDate ?? input.today;
+    const dayOff = isWeeklyOff(shiftDate, input.weeklyOffOf?.get(m.employeeId) ?? [])
+      ? 'Weekly off'
+      : input.holidayToday
+        ? 'Holiday'
+        : null;
+
     group.people.push({
       employeeId: m.employeeId,
       adminId,
       name: m.name,
       subtitle: m.designation,
       team: (adminId ? input.roleOf.get(adminId) : undefined) || m.department || null,
-      leave: input.leaveOf.get(m.employeeId) ?? null,
+      leave,
+      dayOff,
+      // Any leave, half day included, takes someone off the expected list;
+      // they still appear on the Active tab whenever they are active.
+      onDuty: Boolean(running) && !dayOff && !leave,
+      shiftMinutesIn: running?.minutesIn ?? null,
       presence,
       isMe: m.employeeId === input.viewerId,
     });
@@ -100,6 +152,10 @@ export function buildBoard(input: BoardInput): PresenceBoard {
         subtitle: u.role || null,
         team: u.role || null,
         leave: null,
+        // No HRMS record means no shift: shown only while active.
+        dayOff: null,
+        onDuty: false,
+        shiftMinutesIn: null,
         presence: nowFrom(u),
         isMe: input.viewerAdminIds.includes(u.admin_id),
       })),

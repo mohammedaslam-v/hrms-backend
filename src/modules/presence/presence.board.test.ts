@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { NO_RECORD_GROUP, buildBoard, type BoardInput } from './presence.board';
+import { NO_RECORD_GROUP, buildBoard, shiftNow, type BoardInput } from './presence.board';
 import { LatestPresenceRow } from './presence.model';
 
 const seen = (secondsAgo: number, over: Partial<LatestPresenceRow> = {}): LatestPresenceRow => ({
@@ -91,4 +91,50 @@ test('the grey label is the admin role, else the HRMS department', () => {
   assert.equal(people.find((p) => p.employeeId === 1)?.team, 'TECH');
   assert.equal(people.find((p) => p.employeeId === 2)?.team, 'Sales');
   assert.equal(people.find((p) => p.employeeId === 4)?.team, 'Sales');
+});
+
+test('a day shift runs from its start up to, not including, its end', () => {
+  assert.deepEqual(shiftNow('10:00', '19:00', '2026-10-18', '10:00'), { shiftDate: '2026-10-18', minutesIn: 0 });
+  assert.deepEqual(shiftNow('10:00:00', '19:00:00', '2026-10-18', '18:59'), { shiftDate: '2026-10-18', minutesIn: 539 });
+  assert.equal(shiftNow('10:00', '19:00', '2026-10-18', '19:00'), null);
+  assert.equal(shiftNow('10:00', '19:00', '2026-10-18', '09:59'), null);
+});
+
+test('a night shift after midnight belongs to the day it started', () => {
+  assert.deepEqual(shiftNow('22:00', '06:00', '2026-10-18', '23:30'), { shiftDate: '2026-10-18', minutesIn: 90 });
+  assert.deepEqual(shiftNow('22:00', '06:00', '2026-10-18', '02:00'), { shiftDate: '2026-10-17', minutesIn: 240 });
+  assert.equal(shiftNow('22:00', '06:00', '2026-10-18', '12:00'), null);
+});
+
+test('on duty = inside the shift, not on weekly off, not on leave', () => {
+  // 2026-10-18 is a Sunday. Bala's weekly off is Sunday; Esha is on leave.
+  const people = buildBoard(
+    input({ time: '11:00', weeklyOffOf: new Map([[2, ['Sun']]]) }),
+  ).groups.flatMap((g) => g.people);
+  const of = (id: number) => people.find((p) => p.employeeId === id)!;
+
+  assert.equal(of(1).onDuty, true);
+  assert.equal(of(1).shiftMinutesIn, 60);
+  assert.equal(of(2).onDuty, false);
+  assert.equal(of(2).dayOff, 'Weekly off');
+  assert.equal(of(3).onDuty, false, '16:00–23:00 has not started at 11:00');
+  assert.equal(of(3).shiftMinutesIn, null);
+  assert.equal(of(4).onDuty, true);
+  assert.equal(of(5).onDuty, false, 'leave takes someone off the expected list');
+});
+
+test('a half day of leave is off the expected list too, but keeps its presence', () => {
+  const people = buildBoard(
+    input({ time: '11:00', leaveOf: new Map([[2, { type: 'Earned', isHalfDay: true }]]) }),
+  ).groups.flatMap((g) => g.people);
+  const bala = people.find((p) => p.employeeId === 2)!;
+  assert.equal(bala.onDuty, false);
+  assert.equal(bala.presence?.status, 'online');
+});
+
+test('without the clock nobody is on duty, and a holiday is a day off', () => {
+  const plain = buildBoard(input()).groups.flatMap((g) => g.people);
+  assert.ok(plain.every((p) => !p.onDuty));
+  const holiday = buildBoard(input({ time: '11:00', holidayToday: 'Diwali' })).groups.flatMap((g) => g.people);
+  assert.ok(holiday.every((p) => !p.onDuty && p.dayOff === 'Holiday'));
 });

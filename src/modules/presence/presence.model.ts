@@ -107,6 +107,16 @@ export interface BoardPerson {
   team: string | null;
   /** Approved leave today. Shown instead of the online status. */
   leave: { type: string; isHalfDay: boolean } | null;
+  /** 'Weekly off' or 'Holiday' for the shift day running now, else null. */
+  dayOff: string | null;
+  /**
+   * Supposed to be working at this moment: inside their shift hours, and not
+   * on a weekly off, holiday or any leave that day. The Active tab lists these
+   * people plus anyone active right now.
+   */
+  onDuty: boolean;
+  /** Minutes since the running shift began, while inside it; else null. */
+  shiftMinutesIn: number | null;
   presence: BoardPresence | null;
   isMe: boolean;
 }
@@ -139,7 +149,7 @@ export interface LatestPresenceForAdmin extends LatestPresenceRow {
   admin_id: number;
 }
 
-/** An admin-panel user with no HRMS record, for the admins-only group. */
+/** An admin-panel user with no HRMS record, for the "No HRMS record" group. */
 export interface UnlinkedPresenceRow extends LatestPresenceForAdmin {
   name: string;
   role: string;

@@ -122,16 +122,17 @@ test('an admin sees everyone, people without an HRMS record included', async () 
   assert.deepEqual(s.viewer_admin_ids, [327]);
 });
 
-test('a manager sees themselves and their whole tree', async () => {
+test('a manager sees everyone too — the list is company-wide', async () => {
   const { service, asked } = serviceFor(['employee', 'manager'], [7, 8]);
   await service.getOnline(5);
-  assert.deepEqual(asked.adminIds, [327, 1007, 1008]);
+  assert.equal(asked.adminIds, null);
 });
 
-test('an employee sees only themselves', async () => {
+test('an employee sees everyone too, and is still marked as themselves', async () => {
   const { service, asked } = serviceFor(['employee'], [7]);
-  await service.getOnline(5);
-  assert.deepEqual(asked.adminIds, [327]);
+  const s = await service.getOnline(5);
+  assert.equal(asked.adminIds, null);
+  assert.deepEqual(s.viewer_admin_ids, [327]);
 });
 
 
@@ -158,8 +159,8 @@ test('admin activity: refuses bad or overlong ranges', async () => {
 });
 
 
-test('anyone may see their own scope — there is no allow-list', async () => {
+test('there is no allow-list — any signed-in person gets the whole company', async () => {
   const { service, asked } = serviceFor(['employee']);
   await service.getOnline(6);
-  assert.deepEqual(asked.adminIds, [1006]);
+  assert.equal(asked.adminIds, null);
 });
