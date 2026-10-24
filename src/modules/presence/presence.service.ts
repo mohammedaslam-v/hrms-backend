@@ -43,17 +43,10 @@ export class PresenceService implements IPresenceService {
 
   async getBoard(viewerId: number): Promise<PresenceBoard> {
     const viewer = await this.authService.getCurrentEmployee(viewerId);
+    const members = await this.companyMembers();
 
-    // The whole company, whoever is asking. The roster is the Team page's
-    // company-wide one, so the two always agree.
-    const members: BoardMember[] = (await this.orgRepository.findRoster({ rootId: null })).map((m) => ({
-      employeeId: m.id,
-      name: m.fullName,
-      designation: m.designation,
-      department: m.department,
-      shiftStart: m.shiftStart,
-      shiftEnd: m.shiftEnd,
-    }));
+    // Someone outside the active roster (a leaver still signed in) still sees
+    // themselves on their own board.
     if (!members.some((m) => m.employeeId === viewerId)) {
       const schedule = await this.attendanceRepository.findSchedule(viewerId);
       members.push({
@@ -66,21 +59,53 @@ export class PresenceService implements IPresenceService {
       });
     }
 
+    return this.boardFor(members, viewerId, await this.repository.findAdminIdsFor([viewerId]));
+  }
+
+  async getBoardForAdmin(adminId: number): Promise<PresenceBoard> {
+    // An admin-panel account may have no HRMS record at all, so "you" is
+    // matched by admin account, never by employee.
+    return this.boardFor(await this.companyMembers(), 0, [adminId]);
+  }
+
+  /** The whole company. The roster is the Team page's, so the two always agree. */
+  private async companyMembers(): Promise<BoardMember[]> {
+    return (await this.orgRepository.findRoster({ rootId: null })).map((m) => ({
+      employeeId: m.id,
+      name: m.fullName,
+      designation: m.designation,
+      department: m.department,
+      shiftStart: m.shiftStart,
+      shiftEnd: m.shiftEnd,
+    }));
+  }
+
+  private async boardFor(
+    members: BoardMember[],
+    viewerId: number,
+    viewerAdminIds: number[],
+  ): Promise<PresenceBoard> {
     const ids = members.map((m) => m.employeeId);
     const now = await this.attendanceRepository.now();
-    const [adminOf, context, schedules, viewerAdminIds, unlinked] = await Promise.all([
+    const [adminOf, context, schedules, unlinked] = await Promise.all([
       this.repository.findAdminIdMap(ids),
       this.attendanceRepository.findDayContextFor(ids, now.date),
       // Weekly offs, so the Active tab can leave out people not expected today.
       this.attendanceRepository.findSchedulesFor(ids),
-      this.repository.findAdminIdsFor([viewerId]),
       this.repository.findUnlinkedSeen(UNLINKED_WITHIN_DAYS),
     ]);
     const adminIds = [...new Set(adminOf.values())];
-    const [latest, roleOf] = await Promise.all([
+
+
+    const [latest, roleOf, days] = await Promise.all([
       this.repository.findLatestForMany(adminIds),
       this.repository.findAdminRoles(adminIds),
+      // Today's total on the panel, for linked and unlinked accounts alike.
+      this.repository.findDaysForMany([...adminIds, ...unlinked.map((u) => u.admin_id)], now.date, now.date),
     ]);
+    const activeSecondsOf = new Map(
+      [...days].map(([adminId, list]) => [adminId, list.reduce((s, d) => s + d.activeSeconds, 0)]),
+    );
 
     const leaveOf = new Map<number, { type: string; isHalfDay: boolean }>();
     let holidayToday: string | null = null;
@@ -103,6 +128,7 @@ export class PresenceService implements IPresenceService {
       latest,
       leaveOf,
       unlinked,
+      activeSecondsOf,
     });
   }
 

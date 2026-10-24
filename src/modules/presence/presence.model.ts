@@ -117,6 +117,8 @@ export interface BoardPerson {
   onDuty: boolean;
   /** Minutes since the running shift began, while inside it; else null. */
   shiftMinutesIn: number | null;
+  /** Total time active on the admin panel today (India date), in seconds. */
+  activeTodaySeconds: number;
   presence: BoardPresence | null;
   isMe: boolean;
 }

@@ -40,9 +40,15 @@ export interface IPresenceService {
   getCount(viewerId: number): Promise<PresenceCount>;
 
   /**
-   * Everyone in the viewer's scope, grouped by shift, with leave today and
-   * admin-panel status — the open dropdown. Admins also get a group of
-   * admin-panel users with no HRMS record.
+   * The whole company, grouped by shift, with who is on shift now, leave and
+   * days off, and admin-panel status — the open dropdown. Admin-panel users
+   * with no HRMS record come last in their own group.
    */
   getBoard(viewerId: number): Promise<PresenceBoard>;
+
+  /**
+   * The same board for the admin panel's own header, which knows the viewer
+   * only by admins.id (they may have no HRMS record). Server-to-server only.
+   */
+  getBoardForAdmin(adminId: number): Promise<PresenceBoard>;
 }

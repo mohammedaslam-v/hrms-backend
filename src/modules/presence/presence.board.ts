@@ -39,6 +39,8 @@ export interface BoardInput {
   weeklyOffOf?: Map<number, string[]>;
   /** Today's declared holiday, if any. */
   holidayToday?: string | null;
+  /** Seconds active on the admin panel today (India date), by admin id. */
+  activeSecondsOf?: Map<number, number>;
 }
 
 export const NO_RECORD_GROUP = 'No HRMS record';
@@ -130,8 +132,10 @@ export function buildBoard(input: BoardInput): PresenceBoard {
       // they still appear on the Active tab whenever they are active.
       onDuty: Boolean(running) && !dayOff && !leave,
       shiftMinutesIn: running?.minutesIn ?? null,
+      activeTodaySeconds: adminId ? (input.activeSecondsOf?.get(adminId) ?? 0) : 0,
       presence,
-      isMe: m.employeeId === input.viewerId,
+      // By employee from HRMS; by admin account from the admin panel.
+      isMe: m.employeeId === input.viewerId || (adminId !== null && input.viewerAdminIds.includes(adminId)),
     });
   }
 
@@ -156,6 +160,7 @@ export function buildBoard(input: BoardInput): PresenceBoard {
         dayOff: null,
         onDuty: false,
         shiftMinutesIn: null,
+        activeTodaySeconds: input.activeSecondsOf?.get(u.admin_id) ?? 0,
         presence: nowFrom(u),
         isMe: input.viewerAdminIds.includes(u.admin_id),
       })),

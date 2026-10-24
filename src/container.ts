@@ -116,6 +116,7 @@ import { LoanService } from './modules/loans/loan.service';
 import { LoanController } from './modules/loans/loan.controller';
 import { InternalAttendanceRepository } from './modules/internal/internal-attendance.repository';
 import { InternalAttendanceController } from './modules/internal/internal-attendance.controller';
+import { InternalPresenceController } from './modules/internal/internal-presence.controller';
 
 
 export const createContainer = () => {
@@ -321,6 +322,8 @@ export const createContainer = () => {
     attendanceService,
     new InternalAttendanceRepository(pool),
   );
+  // ...and its header "who is active" list, built by the same board as HRMS.
+  const internalPresenceController = new InternalPresenceController(presenceService);
 
 
 
@@ -347,6 +350,7 @@ export const createContainer = () => {
     presenceController,
     workActivityController,
     internalAttendanceController,
+    internalPresenceController,
     companyPolicyService,
     reportsService,
     payoutService,

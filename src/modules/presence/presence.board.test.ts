@@ -138,3 +138,16 @@ test('without the clock nobody is on duty, and a holiday is a day off', () => {
   const holiday = buildBoard(input({ time: '11:00', holidayToday: 'Diwali' })).groups.flatMap((g) => g.people);
   assert.ok(holiday.every((p) => !p.onDuty && p.dayOff === 'Holiday'));
 });
+
+test('from the admin panel, "you" is matched by admin account, not employee', () => {
+  const people = buildBoard(input({ viewerId: 0, viewerAdminIds: [102] })).groups.flatMap((g) => g.people);
+  assert.deepEqual(people.filter((p) => p.isMe).map((p) => p.name), ['Bala']);
+});
+
+test("today's admin-panel time is carried per person; no account or no row reads 0", () => {
+  const people = buildBoard(input({ activeSecondsOf: new Map([[101, 5400]]) })).groups.flatMap((g) => g.people);
+  const of = (id: number) => people.find((p) => p.employeeId === id)!;
+  assert.equal(of(1).activeTodaySeconds, 5400);
+  assert.equal(of(2).activeTodaySeconds, 0, 'linked but not on the panel today');
+  assert.equal(of(4).activeTodaySeconds, 0, 'no admin account');
+});
