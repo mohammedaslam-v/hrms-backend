@@ -96,8 +96,9 @@ export const env = {
     radiusM: Number.parseFloat(process.env.OFFICE_RADIUS_M ?? '100'),
     homeRadiusM: Number.parseFloat(process.env.HOME_RADIUS_M ?? '100'),
     // Hidden margin for GPS drift, added to both radii but never shown: the
-    // screens say "within 100 m" while the check allows 100 + 100 = 200 m.
-    graceM: Number.parseFloat(process.env.GEOFENCE_GRACE_M ?? '100'),
+    // screens say "within 100 m" while the check allows 100 + 700 = 800 m.
+    // 700 is a temporary widening (24 Oct 2026) while location issues are sorted.
+    graceM: Number.parseFloat(process.env.GEOFENCE_GRACE_M ?? '700'),
     // A reading vaguer than ±this is "not precise enough". 150 lets ordinary
     // indoor phone and laptop readings through; IP-only guesses (±1 km+) still fail.
     maxAccuracyM: Number.parseFloat(process.env.OFFICE_MAX_ACCURACY_M ?? '150'),
