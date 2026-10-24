@@ -308,6 +308,8 @@ export const createContainer = () => {
     policyService,
     workActivityRepository,
     presenceService,
+    leaveRepository,
+    goalsRepository,
   );
   const reportsController = new ReportsController(reportsService);
   const companyPolicyRepository: ICompanyPolicyRepository = new CompanyPolicyRepository(pool);

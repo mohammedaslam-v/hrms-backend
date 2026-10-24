@@ -67,7 +67,9 @@ export class ReportsRepository implements IReportsRepository {
       e.is_notice_serving,
       e.last_working_day,
       e.resignation_date,
-      e.resignation_reason
+      e.resignation_reason,
+      e.opening_leave,
+      e.weekly_off
     `;
   }
 

@@ -1,3 +1,12 @@
+import { ILeaveRepository, StoredLeaveRequest } from '../leave/leave.repository.interface';
+import {
+  computeLedger,
+  monthKeyOf,
+  workingDaysBetween,
+} from '../leave/leave.domain';
+import { LeaveYearConfig, HolidayRecord } from '../leave/leave.model';
+import { IGoalsRepository } from '../goals/goals.repository.interface';
+import { goalProgress, goalStatus, periodWindow, GoalRecord } from '../goals/goals.domain';
 import {
   ReportCatalogItem,
   ReportColumn,
@@ -79,14 +88,7 @@ function getLastDayOfMonth(mKey: string): string {
 
 function resolveRange(filter: ReportFilterDto): { from: string; to: string; label: string } {
   const p = filter.period || (filter.from && filter.to ? 'range' : (filter.month ? 'monthly' : 'monthly'));
-  const today = '2026-09-28';
-
-  // If a specific date is selected (e.g. in Attendance day by day or specific date filter)
-  // A week, range or year-to-date ignores it: the period the person picked wins.
-  if (filter.date && (p === 'daily' || p === 'monthly')) {
-    const d = filter.date;
-    return { from: d, to: d, label: formatDisplayDate(d) };
-  }
+  const today = istNow().date;
 
   if (p === 'daily') {
     const d = filter.date || filter.from || today;
@@ -103,15 +105,22 @@ function resolveRange(filter: ReportFilterDto): { from: string; to: string; labe
     return { from: fromStr, to: toStr, label: `Week of ${formatDisplayDate(fromStr)} — ${formatDisplayDate(toStr)}` };
   }
   if (p === 'monthly') {
-    const m = filter.month || '2026-09';
+    if (filter.date) {
+      return { from: filter.date, to: filter.date, label: formatDisplayDate(filter.date) };
+    }
+    const m = filter.month || today.slice(0, 7);
     return { from: `${m}-01`, to: getLastDayOfMonth(m), label: formatMonthLabel(m) };
   }
   if (p === 'range') {
-    const from = filter.from || '2026-08-01';
+    const from = filter.from || `${today.slice(0, 7)}-01`;
     const to = filter.to || today;
     return { from, to, label: `${formatDisplayDate(from)} — ${formatDisplayDate(to)}` };
   }
-  return { from: '2026-04-01', to: today, label: 'FY 2026–27 to date' };
+  const currentMonth = Number(today.slice(5, 7));
+  const currentYear = Number(today.slice(0, 4));
+  const fyStartYear = currentMonth >= 4 ? currentYear : currentYear - 1;
+  const fyStart = `${fyStartYear}-04-01`;
+  return { from: fyStart, to: today, label: `FY ${fyStartYear}–${(fyStartYear + 1) % 100} to date` };
 }
 
 function calculateTenure(fromStr: string, toStr: string): string {
@@ -147,7 +156,21 @@ export class ReportsService implements IReportsService {
     private readonly workActivityRepository?: IWorkActivityRepository,
     /** The activity log report's admin-panel columns. */
     private readonly presenceService?: IPresenceService,
+    private readonly leaveRepository?: ILeaveRepository,
+    private readonly goalsRepository?: IGoalsRepository,
   ) {}
+
+  private filterEmployees(employees: any[], filter: ReportFilterDto): any[] {
+    let result = employees;
+    if (filter.department && filter.department !== 'ALL') {
+      result = result.filter((e) => e.department === filter.department);
+    }
+    if (filter.employeeId && filter.employeeId !== 'ALL') {
+      const empIdStr = String(filter.employeeId);
+      result = result.filter((e) => e.id === Number(filter.employeeId) || e.employee_code === empIdStr);
+    }
+    return result;
+  }
 
   /**
    * Real attendance for a set of employees over a date range.
@@ -633,10 +656,8 @@ export class ReportsService implements IReportsService {
   // Attendance summary
   private async buildAttendanceSummary(filter: ReportFilterDto): Promise<ReportResult> {
     const range = resolveRange(filter);
-    let employees = await this.repository.findActiveEmployees(filter.department);
-    if (filter.department && filter.department !== 'ALL') {
-      employees = employees.filter((e) => e.department === filter.department);
-    }
+    const allEmployees = await this.repository.findActiveEmployees(filter.department);
+    const employees = this.filterEmployees(allEmployees, filter);
 
     const columns: ReportColumn[] = [
       { key: 'code', label: 'Code', width: '100px' },
@@ -713,7 +734,8 @@ export class ReportsService implements IReportsService {
   // Late logins
   private async buildLateLogins(filter: ReportFilterDto): Promise<ReportResult> {
     const range = resolveRange(filter);
-    const employees = await this.repository.findActiveEmployees(filter.department);
+    const allEmployees = await this.repository.findActiveEmployees(filter.department);
+    const employees = this.filterEmployees(allEmployees, filter);
 
     const columns: ReportColumn[] = [
       { key: 'date', label: 'Date', width: '110px' },
@@ -774,7 +796,8 @@ export class ReportsService implements IReportsService {
   // No login activity
   private async buildNoLogin(filter: ReportFilterDto): Promise<ReportResult> {
     const range = resolveRange(filter);
-    const employees = await this.repository.findActiveEmployees(filter.department);
+    const allEmployees = await this.repository.findActiveEmployees(filter.department);
+    const employees = this.filterEmployees(allEmployees, filter);
 
     const columns: ReportColumn[] = [
       { key: 'date', label: 'Date', width: '110px' },
@@ -831,7 +854,8 @@ export class ReportsService implements IReportsService {
   // Daily active hours
   private async buildActiveHours(filter: ReportFilterDto): Promise<ReportResult> {
     const range = resolveRange(filter);
-    const employees = await this.repository.findActiveEmployees(filter.department);
+    const allEmployees = await this.repository.findActiveEmployees(filter.department);
+    const employees = this.filterEmployees(allEmployees, filter);
 
     const columns: ReportColumn[] = [
       { key: 'date', label: 'Date', width: '110px' },
@@ -887,8 +911,9 @@ export class ReportsService implements IReportsService {
 
   // Salary register
   private async buildSalaryRegister(filter: ReportFilterDto): Promise<ReportResult> {
-    const month = filter.month || '2026-08';
-    const employees = await this.repository.findActiveEmployees(filter.department);
+    const month = filter.month || istNow().date.slice(0, 7);
+    const allEmployees = await this.repository.findActiveEmployees(filter.department);
+    const employees = this.filterEmployees(allEmployees, filter);
     const ids = employees.map((e) => e.id);
     const compMap = await this.compensationService.getCurrentForMany(ids);
     const loans = await this.repository.findLoans();
@@ -993,7 +1018,8 @@ export class ReportsService implements IReportsService {
 
   // TDS new regime
   private async buildTds(filter: ReportFilterDto): Promise<ReportResult> {
-    const employees = await this.repository.findActiveEmployees(filter.department);
+    const allEmployees = await this.repository.findActiveEmployees(filter.department);
+    const employees = this.filterEmployees(allEmployees, filter);
     const ids = employees.map((e) => e.id);
     const compMap = await this.compensationService.getCurrentForMany(ids);
 
@@ -1079,7 +1105,8 @@ export class ReportsService implements IReportsService {
   // Leave report
   private async buildLeave(filter: ReportFilterDto): Promise<ReportResult> {
     const range = resolveRange(filter);
-    const employees = await this.repository.findActiveEmployees(filter.department);
+    const allEmployees = await this.repository.findActiveEmployees(filter.department);
+    const employees = this.filterEmployees(allEmployees, filter);
 
     const columns: ReportColumn[] = [
       { key: 'code', label: 'Code', width: '100px' },
@@ -1095,19 +1122,130 @@ export class ReportsService implements IReportsService {
       { key: 'lastLeave', label: 'Last leave', width: '120px' },
     ];
 
-    const rows = employees.map((e) => ({
-      code: e.employee_code,
-      employee: e.full_name,
-      department: e.department || 'General',
-      opening: 4.0,
-      credited: 10.0,
-      taken: 2.0,
-      inPeriod: 1.0,
-      lop: 0.0,
-      pending: 0.0,
-      balance: 12.0,
-      lastLeave: '2026-08-15',
-    }));
+    const today = istNow().date;
+
+    let yearConfig: LeaveYearConfig = {
+      leaveYear: Number(today.slice(0, 4)),
+      startDate: `${today.slice(0, 4)}-01-01`,
+      endDate: `${today.slice(0, 4)}-12-31`,
+      leavePerMonth: 2.0,
+      annualEntitlement: 24.0,
+      carryCap: 30.0,
+    };
+
+    let holidays: HolidayRecord[] = [];
+    let holidaySet = new Set<string>();
+
+    if (this.leaveRepository) {
+      const foundYear =
+        (await this.leaveRepository.findLeaveYearForDate(today)) ||
+        (await this.leaveRepository.findLeaveYearForDate(range.from));
+      if (foundYear) {
+        yearConfig = foundYear;
+      }
+      holidays = await this.leaveRepository.findHolidays(yearConfig.startDate, yearConfig.endDate);
+      holidaySet = new Set(holidays.map((h) => h.date));
+    }
+
+    const empIds = employees.map((e) => e.id);
+    const qStart = yearConfig.startDate < range.from ? yearConfig.startDate : range.from;
+    const qEnd = yearConfig.endDate > range.to ? yearConfig.endDate : range.to;
+
+    let allRequests: StoredLeaveRequest[] = [];
+    if (this.leaveRepository && empIds.length > 0) {
+      allRequests = await this.leaveRepository.findRequestsForEmployees(
+        empIds,
+        qStart,
+        qEnd,
+        10000,
+      );
+    }
+
+    const requestsByEmp = new Map<number, StoredLeaveRequest[]>();
+    for (const req of allRequests) {
+      const list = requestsByEmp.get(req.employeeId) || [];
+      list.push(req);
+      requestsByEmp.set(req.employeeId, list);
+    }
+
+    let sumOpening = 0;
+    let sumCredited = 0;
+    let sumTaken = 0;
+    let sumInPeriod = 0;
+    let sumLop = 0;
+    let sumPending = 0;
+    let sumBalance = 0;
+
+    const rows = employees.map((e) => {
+      const weeklyOff = e.weekly_off ? String(e.weekly_off).split(',').filter(Boolean) : ['Sun'];
+      const openingLeave = Number(e.opening_leave ?? 0);
+      const empReqs = requestsByEmp.get(e.id) || [];
+
+      // Compute standard ledger
+      const ledger = computeLedger({
+        openingLeave,
+        carryCap: yearConfig.carryCap,
+        weeklyOff,
+        holidays: holidaySet,
+        dateOfJoining: e.date_of_joining,
+        dateOfLeaving: e.date_of_leaving,
+        yearStart: yearConfig.startDate,
+        leavePerMonth: yearConfig.leavePerMonth,
+        uptoMonth: today > yearConfig.endDate ? monthKeyOf(yearConfig.endDate) : monthKeyOf(today),
+        requests: empReqs,
+        adjustments: 0,
+      });
+
+      // Calculate working leave days falling in [range.from, range.to]
+      let inPeriod = 0;
+      for (const req of empReqs) {
+        if (req.status !== 'Approved') continue;
+        if (req.toDate < range.from || req.fromDate > range.to) continue;
+        const spanStart = req.fromDate < range.from ? range.from : req.fromDate;
+        const spanEnd = req.toDate > range.to ? range.to : req.toDate;
+        const wDays = workingDaysBetween(spanStart, spanEnd, weeklyOff, holidaySet);
+        const days = req.isHalfDay ? wDays * 0.5 : wDays;
+        inPeriod += days;
+      }
+      inPeriod = Math.round(inPeriod * 10) / 10;
+
+      // Pending working days awaiting approval
+      let pending = 0;
+      for (const req of empReqs) {
+        if (req.status === 'Pending') {
+          pending += Number(req.days);
+        }
+      }
+      pending = Math.round(pending * 10) / 10;
+
+      // Determine latest approved leave date
+      const approvedPast = empReqs
+        .filter((r) => r.status === 'Approved')
+        .sort((a, b) => b.fromDate.localeCompare(a.fromDate));
+      const lastLeave = approvedPast.length > 0 ? approvedPast[0].toDate : (ledger.lastLeaveOn || '—');
+
+      sumOpening += ledger.opening;
+      sumCredited += ledger.credited;
+      sumTaken += ledger.taken;
+      sumInPeriod += inPeriod;
+      sumLop += ledger.lop;
+      sumPending += pending;
+      sumBalance += ledger.balance;
+
+      return {
+        code: e.employee_code,
+        employee: e.full_name,
+        department: e.department || 'General',
+        opening: ledger.opening,
+        credited: ledger.credited,
+        taken: ledger.taken,
+        inPeriod,
+        lop: ledger.lop,
+        pending,
+        balance: ledger.balance,
+        lastLeave,
+      };
+    });
 
     return {
       type: 'leave',
@@ -1123,12 +1261,23 @@ export class ReportsService implements IReportsService {
       note: '2 paid leaves are credited on the 1st of every month. Balance = opening + credited − taken.',
       columns,
       rows,
+      totals: {
+        employee: 'Total',
+        opening: Math.round(sumOpening * 10) / 10,
+        credited: Math.round(sumCredited * 10) / 10,
+        taken: Math.round(sumTaken * 10) / 10,
+        inPeriod: Math.round(sumInPeriod * 10) / 10,
+        lop: Math.round(sumLop * 10) / 10,
+        pending: Math.round(sumPending * 10) / 10,
+        balance: Math.round(sumBalance * 10) / 10,
+      },
     };
   }
 
   // Goals report
   private async buildGoals(filter: ReportFilterDto): Promise<ReportResult> {
-    const employees = await this.repository.findActiveEmployees(filter.department);
+    const allEmployees = await this.repository.findActiveEmployees(filter.department);
+    const employees = this.filterEmployees(allEmployees, filter);
 
     const columns: ReportColumn[] = [
       { key: 'code', label: 'Code', width: '100px' },
@@ -1144,19 +1293,67 @@ export class ReportsService implements IReportsService {
       { key: 'setBy', label: 'Set by', width: '160px' },
     ];
 
-    const rows = employees.slice(0, 10).map((e) => ({
-      code: e.employee_code,
-      employee: e.full_name,
-      department: e.department || 'General',
-      goal: 'Deliver H1 engineering objectives & feature velocity',
-      measuredBy: 'Milestones',
-      period: 'H1',
-      target: '4 milestones',
-      current: '3 milestones',
-      progress: '75%',
-      status: 'On track',
-      setBy: e.manager_name || 'Founder',
-    }));
+    const today = istNow().date;
+    const currentMonth = Number(today.slice(5, 7));
+    const currentYear = Number(today.slice(0, 4));
+    const fyStartYear = currentMonth >= 4 ? currentYear : currentYear - 1;
+    const fy = `${fyStartYear}-${String((fyStartYear + 1) % 100).padStart(2, '0')}`;
+    const fyStart = `${fyStartYear}-04-01`;
+
+    const empIds = employees.map((e) => e.id);
+    let goalsMap = new Map<number, GoalRecord[]>();
+    if (this.goalsRepository && empIds.length > 0) {
+      goalsMap = await this.goalsRepository.findForEmployees(empIds, fy);
+    }
+
+    const rows: Record<string, any>[] = [];
+
+    for (const e of employees) {
+      const empGoals = goalsMap.get(e.id) || [];
+      if (empGoals.length === 0) {
+        rows.push({
+          code: e.employee_code,
+          employee: e.full_name,
+          department: e.department || 'General',
+          goal: 'No active goals',
+          measuredBy: '—',
+          period: 'FY',
+          target: '—',
+          current: '—',
+          progress: '0%',
+          status: 'Not started',
+          setBy: '—',
+        });
+      } else {
+        for (const g of empGoals) {
+          const window = periodWindow(g.period, fyStart);
+          const progress = goalProgress(g);
+          const status = goalStatus(g, window, today, 10);
+          const targetStr =
+            g.goalType === 'milestone'
+              ? `${g.milestones.length} milestone${g.milestones.length === 1 ? '' : 's'}`
+              : `${g.targetValue ?? '—'} ${g.unit || ''}`.trim();
+          const currentStr =
+            g.goalType === 'milestone'
+              ? `${g.milestones.filter((m) => m.isDone).length} milestone${g.milestones.filter((m) => m.isDone).length === 1 ? '' : 's'}`
+              : `${g.currentValue ?? 0} ${g.unit || ''}`.trim();
+
+          rows.push({
+            code: e.employee_code,
+            employee: e.full_name,
+            department: e.department || 'General',
+            goal: g.title,
+            measuredBy: g.goalType === 'milestone' ? 'Milestones' : g.unit || 'Numeric',
+            period: g.period,
+            target: targetStr,
+            current: currentStr,
+            progress: `${progress}%`,
+            status,
+            setBy: g.setterName || e.manager_name || 'Self',
+          });
+        }
+      }
+    }
 
     return {
       type: 'goals',
@@ -1164,7 +1361,7 @@ export class ReportsService implements IReportsService {
         companyName: COMPANY_HEADER.name,
         companyAddress: COMPANY_HEADER.address,
         reportTitle: 'Goals and progress',
-        periodLabel: 'H1 FY 2026–27',
+        periodLabel: `FY ${fy}`,
         generatedAt: new Date().toISOString(),
         totalRecords: rows.length,
         note: 'Goals run over a quarter, a half year or the full financial year. The period filter does not change these.',
@@ -1177,7 +1374,8 @@ export class ReportsService implements IReportsService {
 
   // Employee basic information
   private async buildBasicInfo(filter: ReportFilterDto): Promise<ReportResult> {
-    const employees = await this.repository.findActiveEmployees(filter.department);
+    const allEmployees = await this.repository.findActiveEmployees(filter.department);
+    const employees = this.filterEmployees(allEmployees, filter);
     const ids = employees.map((e) => e.id);
     const compMap = await this.compensationService.getCurrentForMany(ids);
 
@@ -1206,8 +1404,8 @@ export class ReportsService implements IReportsService {
 
     const rows = employees.map((e) => {
       const comp = compMap.get(e.id);
-      const ctc = comp ? comp.ctc : 600000;
-      const gross = Math.round(ctc / 12);
+      const ctc = comp ? comp.ctc : 0;
+      const gross = ctc > 0 ? Math.round(ctc / 12) : 0;
       totalCtc += ctc;
       totalGross += gross;
 
@@ -1225,8 +1423,8 @@ export class ReportsService implements IReportsService {
         doj: e.date_of_joining,
         status: e.date_of_leaving ? 'Exited' : 'Active',
         workState: e.work_state || 'Karnataka',
-        workMode: 'WFO',
-        bank: e.bank_name || 'HDFC Bank',
+        workMode: e.work_mode || 'WFO',
+        bank: e.bank_name || '—',
         ctc,
         gross,
       };
@@ -1253,7 +1451,8 @@ export class ReportsService implements IReportsService {
 
   // 1. All Active Employees Report
   private async buildAllEmployees(filter: ReportFilterDto): Promise<ReportResult> {
-    const employees = await this.repository.findActiveEmployees(filter.department);
+    const allEmployees = await this.repository.findActiveEmployees(filter.department);
+    const employees = this.filterEmployees(allEmployees, filter);
 
     const columns: ReportColumn[] = [
       { key: 'empId', label: 'Emp ID', width: '120px' },
@@ -1291,8 +1490,9 @@ export class ReportsService implements IReportsService {
 
   // 2. Income Tax Monthly Statement
   private async buildIncomeTax(filter: ReportFilterDto): Promise<ReportResult> {
-    const month = filter.month || '2026-08';
-    const employees = await this.repository.findActiveEmployees(filter.department);
+    const month = filter.month || istNow().date.slice(0, 7);
+    const allEmployees = await this.repository.findActiveEmployees(filter.department);
+    const employees = this.filterEmployees(allEmployees, filter);
     const ids = employees.map((e) => e.id);
     const compMap = await this.compensationService.getCurrentForMany(ids);
 
@@ -1396,8 +1596,14 @@ export class ReportsService implements IReportsService {
 
   // 3. Loan Details Report
   private async buildLoanDetails(filter: ReportFilterDto): Promise<ReportResult> {
-    const month = filter.month || '2026-08';
-    const loans = await this.repository.findLoans();
+    const month = filter.month || istNow().date.slice(0, 7);
+    let loans = await this.repository.findLoans();
+    if (filter.department && filter.department !== 'ALL') {
+      loans = loans.filter((l) => l.department === filter.department);
+    }
+    if (filter.employeeId && filter.employeeId !== 'ALL') {
+      loans = loans.filter((l) => l.employee_id === Number(filter.employeeId) || l.employee_code === String(filter.employeeId));
+    }
 
     const columns: ReportColumn[] = [
       { key: 'groupBy', label: 'Group By', width: '120px' },
@@ -1502,8 +1708,9 @@ export class ReportsService implements IReportsService {
 
   // 4. Net Pay Report (Bank Disbursement Advice)
   private async buildNetPay(filter: ReportFilterDto): Promise<ReportResult> {
-    const month = filter.month || '2026-08';
-    const employees = await this.repository.findActiveEmployees(filter.department);
+    const month = filter.month || istNow().date.slice(0, 7);
+    const allEmployees = await this.repository.findActiveEmployees(filter.department);
+    const employees = this.filterEmployees(allEmployees, filter);
     const ids = employees.map((e) => e.id);
     const compMap = await this.compensationService.getCurrentForMany(ids);
     const loans = await this.repository.findLoans();
@@ -1578,8 +1785,9 @@ export class ReportsService implements IReportsService {
 
   // 5. Provident Fund (PF) Monthly Statement
   private async buildProvidentFund(filter: ReportFilterDto): Promise<ReportResult> {
-    const month = filter.month || '2026-08';
-    const employees = await this.repository.findActiveEmployees(filter.department);
+    const month = filter.month || istNow().date.slice(0, 7);
+    const allEmployees = await this.repository.findActiveEmployees(filter.department);
+    const employees = this.filterEmployees(allEmployees, filter);
     const ids = employees.map((e) => e.id);
     const compMap = await this.compensationService.getCurrentForMany(ids);
 
@@ -1663,9 +1871,10 @@ export class ReportsService implements IReportsService {
 
   // 6. Profession Tax (PT) Monthly Statement
   private async buildProfessionTax(filter: ReportFilterDto): Promise<ReportResult> {
-    const month = filter.month || '2026-08';
+    const month = filter.month || istNow().date.slice(0, 7);
     const state = filter.state || 'Karnataka';
-    const employees = await this.repository.findActiveEmployees(filter.department);
+    const allEmployees = await this.repository.findActiveEmployees(filter.department);
+    const employees = this.filterEmployees(allEmployees, filter);
     const ids = employees.map((e) => e.id);
     const compMap = await this.compensationService.getCurrentForMany(ids);
 
@@ -1720,11 +1929,12 @@ export class ReportsService implements IReportsService {
 
   // 7. Recent Joinee Report
   private async buildRecentJoinees(filter: ReportFilterDto): Promise<ReportResult> {
-    const today = '2026-09-28';
+    const today = istNow().date;
     const from = filter.from || '2026-06-01';
     const to = filter.to || today;
 
-    const employees = await this.repository.findRecentJoinees(from, to, filter.department);
+    const allEmployees = await this.repository.findRecentJoinees(from, to, filter.department);
+    const employees = this.filterEmployees(allEmployees, filter);
 
     const columns: ReportColumn[] = [
       { key: 'empId', label: 'Emp ID', width: '120px' },
@@ -1784,11 +1994,12 @@ export class ReportsService implements IReportsService {
 
   // 8. Recent Resignee Report
   private async buildRecentResignees(filter: ReportFilterDto): Promise<ReportResult> {
-    const today = '2026-09-28';
+    const today = istNow().date;
     const from = filter.from || '2026-06-01';
     const to = filter.to || today;
 
-    const employees = await this.repository.findRecentResignees(from, to, filter.department);
+    const allEmployees = await this.repository.findRecentResignees(from, to, filter.department);
+    const employees = this.filterEmployees(allEmployees, filter);
 
     const columns: ReportColumn[] = [
       { key: 'empId', label: 'Emp ID', width: '120px' },
@@ -1855,8 +2066,11 @@ export class ReportsService implements IReportsService {
   }
 
   // 9. Appraisal Report
-  private async buildAppraisals(_filter: ReportFilterDto): Promise<ReportResult> {
-    const revisions = await this.repository.findCompensationHistory();
+  private async buildAppraisals(filter: ReportFilterDto): Promise<ReportResult> {
+    let revisions = await this.repository.findCompensationHistory();
+    if (filter.employeeId && filter.employeeId !== 'ALL') {
+      revisions = revisions.filter((r) => r.employee_id === Number(filter.employeeId) || r.employee_code === String(filter.employeeId));
+    }
 
     const byEmployee = new Map<number, typeof revisions>();
     for (const r of revisions) {

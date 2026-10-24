@@ -31,6 +31,8 @@ export interface RawEmployeeRow {
   resignation_date?: string | null;
   resignation_reason?: string | null;
   status?: string | null;
+  opening_leave?: number | string | null;
+  weekly_off?: string | null;
 }
 
 export interface RawLoanRow {
