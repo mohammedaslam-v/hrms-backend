@@ -175,6 +175,8 @@ export interface TodayBoardRow {
   code: string;
   name: string;
   department: string | null;
+  managerId?: number | null;
+  managerName?: string | null;
   workMode: string;
   shiftStart: string;
   shiftEnd: string;

@@ -955,6 +955,8 @@ export class AttendanceService implements IAttendanceService {
         code: member.employeeCode,
         name: member.fullName,
         department: member.department,
+        managerId: member.managerId,
+        managerName: member.managerName,
         workMode: member.workMode,
         shiftStart: member.shiftStart,
         shiftEnd: member.shiftEnd,
