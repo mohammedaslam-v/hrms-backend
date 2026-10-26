@@ -6,6 +6,7 @@ import { WorkActivityRepository } from './modules/work-activity/work-activity.re
 import { IWorkActivityService } from './modules/work-activity/work-activity.service.interface';
 import { WorkActivityService } from './modules/work-activity/work-activity.service';
 import { PresenceController } from './modules/presence/presence.controller';
+import { PresenceTrackerController } from './modules/presence/presence.tracker.controller';
 import { IPresenceRepository } from './modules/presence/presence.repository.interface';
 import { PresenceRepository } from './modules/presence/presence.repository';
 import { IPresenceService } from './modules/presence/presence.service.interface';
@@ -286,6 +287,8 @@ export const createContainer = () => {
     attendanceRepository,
   );
   const presenceController = new PresenceController(presenceService);
+  // The script the other Bambinos panels load, and where their pings land.
+  const presenceTrackerController = new PresenceTrackerController(presenceService);
 
   // Calls and outside meetings an employee records from the Today card.
   const workActivityRepository: IWorkActivityRepository = new WorkActivityRepository(pool);
@@ -350,6 +353,7 @@ export const createContainer = () => {
     reportsController,
     companyPolicyController,
     presenceController,
+    presenceTrackerController,
     workActivityController,
     internalAttendanceController,
     internalPresenceController,

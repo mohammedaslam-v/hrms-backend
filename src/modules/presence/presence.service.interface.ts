@@ -8,6 +8,13 @@ import {
 
 export interface IPresenceService {
   /**
+   * One report from another Bambinos panel's tracker script. Returns false when
+   * it was not accepted (unknown site, nobody to attribute it to, no such
+   * admin) — never throws for a bad report, since the caller is a beacon.
+   */
+  recordPanelPing(origin: string | undefined, body: unknown): Promise<boolean>;
+
+  /**
    * Who is on the new admin panel, as far as the viewer may see.
    *
    * An admin sees everyone the admin panel shows; a manager sees themselves and

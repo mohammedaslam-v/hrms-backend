@@ -58,6 +58,11 @@ test('summary splits online from recent and counts both', () => {
 function serviceFor(tiers: AccessTier[], team: number[] = []) {
   const asked: { adminIds?: number[] | null } = {};
   const repo: IPresenceRepository = {
+    async resolveAdminId() {
+      return null;
+    },
+    async touchFromPanel() {},
+    async signOffFromPanel() {},
     async findRecent(_within, adminIds) {
       asked.adminIds = adminIds;
       return [];
@@ -144,7 +149,7 @@ test('admin activity: last seen splits into India date and time, status as the l
     status: 'away',
     secondsAgo: 400,
     sessionMinutes: 50,
-    page: { path: '/tickets/show/9', name: 'Ticket' },
+    page: { path: '/tickets/show/9', name: 'Ticket', panel: 'admin', panelName: 'Admin panel' },
     lastSeenDate: '2026-10-16',
     lastSeenTime: '18:40',
   });

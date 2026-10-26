@@ -8,6 +8,11 @@ import {
 } from './presence.model';
 import { IPresenceRepository } from './presence.repository.interface';
 
+// The admin backend's values (presence.repository.ts) — keep in step with it.
+const NEW_SESSION_AFTER_MINUTES = 10;
+const COUNTED_GAP_SECONDS = 120;
+const IST_NOW = '(UTC_TIMESTAMP() + INTERVAL 330 MINUTE)';
+
 /**
  * The same statement the admin backend runs (presence.repository.ts recent()).
  *
@@ -17,6 +22,81 @@ import { IPresenceRepository } from './presence.repository.interface';
  */
 export class PresenceRepository implements IPresenceRepository {
   constructor(private readonly pool: Pool) {}
+
+  /** Which panel a row's last ping came from. Null = the admin panel's own heartbeat. */
+  private static panelOf(r: RowDataPacket): { last_panel: string | null; last_title: string | null } {
+    return {
+      last_panel: r.last_panel == null ? null : String(r.last_panel),
+      last_title: r.last_title == null ? null : String(r.last_title),
+    };
+  }
+
+  // ── Writes from the other Bambinos panels (the shared tracker script) ─────
+
+  async resolveAdminId(adminId: number | null, email: string | null): Promise<number | null> {
+    const where: string[] = [];
+    const params: Array<number | string> = [];
+    if (adminId) {
+      where.push('id = ?');
+      params.push(adminId);
+    }
+    if (email) {
+      // personal_email is the admin panel's login; email is the work address.
+      where.push('LOWER(personal_email) = ?', 'LOWER(email) = ?');
+      params.push(email, email);
+    }
+    if (where.length === 0) return null;
+    const [rows] = await this.pool.query<RowDataPacket[]>(
+      `SELECT id FROM admins WHERE deleted_at IS NULL AND (${where.join(' OR ')}) ORDER BY id LIMIT 1`,
+      params,
+    );
+    return rows[0] ? Number(rows[0].id) : null;
+  }
+
+  /*
+   * The admin backend's own statements (admin-backend presence.repository.ts
+   * touch() and touchDay()), with the panel and title added. Kept identical on
+   * purpose: a minute on the Renewal panel must count exactly as a minute on
+   * the admin panel does, and the daily total adds them without double counting
+   * two tabs open at once (only the gap since the last ping, from any panel, is
+   * added).
+   */
+  async touchFromPanel(adminId: number, panel: string, path: string | null, title: string | null): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO admin_panel_presence
+         (admin_id, last_seen_at, session_started_at, signed_off_at, last_path, last_panel, last_title, hits)
+       VALUES (?, NOW(), NOW(), NULL, ?, ?, ?, 1)
+       ON DUPLICATE KEY UPDATE
+         session_started_at = IF(signed_off_at IS NOT NULL OR last_seen_at < NOW() - INTERVAL ${NEW_SESSION_AFTER_MINUTES} MINUTE, NOW(), session_started_at),
+         last_seen_at = NOW(),
+         signed_off_at = NULL,
+         last_path = VALUES(last_path),
+         last_panel = VALUES(last_panel),
+         last_title = VALUES(last_title),
+         hits = hits + 1`,
+      [adminId, path, panel, title],
+    );
+    await this.pool.query(
+      `INSERT INTO admin_panel_presence_day
+         (admin_id, day, first_seen_at, last_seen_at, active_seconds, sessions)
+       VALUES (?, DATE(${IST_NOW}), ${IST_NOW}, ${IST_NOW}, 0, 1)
+       ON DUPLICATE KEY UPDATE
+         active_seconds = active_seconds + IF(TIMESTAMPDIFF(SECOND, last_seen_at, ${IST_NOW}) BETWEEN 0 AND ${COUNTED_GAP_SECONDS},
+                                              TIMESTAMPDIFF(SECOND, last_seen_at, ${IST_NOW}), 0),
+         sessions = sessions + IF(last_seen_at < ${IST_NOW} - INTERVAL ${NEW_SESSION_AFTER_MINUTES} MINUTE, 1, 0),
+         last_seen_at = ${IST_NOW}`,
+      [adminId],
+    );
+  }
+
+  async signOffFromPanel(adminId: number, panel: string): Promise<void> {
+    // Only when that panel is where they were last: logging out of the Renewal
+    // panel must not mark someone logged out who is working on the admin panel.
+    await this.pool.query(
+      `UPDATE admin_panel_presence SET signed_off_at = NOW() WHERE admin_id = ? AND last_panel = ?`,
+      [adminId, panel],
+    );
+  }
 
   async findRecent(withinSeconds: number, adminIds: number[] | null): Promise<PresenceRow[]> {
     if (adminIds !== null && adminIds.length === 0) return [];
@@ -29,7 +109,7 @@ export class PresenceRepository implements IPresenceRepository {
     }
 
     const [rows] = await this.pool.query<RowDataPacket[]>(
-      `SELECT p.admin_id, a.name, a.role, p.last_path,
+      `SELECT p.admin_id, a.name, a.role, p.last_path, p.last_panel, p.last_title,
               TIMESTAMPDIFF(SECOND, p.last_seen_at, NOW())                AS seconds_ago,
               TIMESTAMPDIFF(MINUTE, p.session_started_at, p.last_seen_at) AS session_minutes,
               (p.signed_off_at IS NOT NULL)                               AS signed_off
@@ -47,6 +127,7 @@ export class PresenceRepository implements IPresenceRepository {
       name: String(r.name ?? ''),
       role: String(r.role ?? ''),
       last_path: r.last_path == null ? null : String(r.last_path),
+      ...PresenceRepository.panelOf(r),
       seconds_ago: Number(r.seconds_ago) || 0,
       session_minutes: Number(r.session_minutes) || 0,
       signed_off: Number(r.signed_off) || 0,
@@ -131,7 +212,7 @@ export class PresenceRepository implements IPresenceRepository {
     // `last_seen_at` here is stamped with the database's NOW(), whose zone is
     // not known, so India time is rebuilt from the age: UTC now + 5:30 − age.
     const [rows] = await this.pool.query<RowDataPacket[]>(
-      `SELECT p.last_path,
+      `SELECT p.last_path, p.last_panel, p.last_title,
               TIMESTAMPDIFF(SECOND, p.last_seen_at, NOW())                AS seconds_ago,
               TIMESTAMPDIFF(MINUTE, p.session_started_at, p.last_seen_at) AS session_minutes,
               (p.signed_off_at IS NOT NULL)                               AS signed_off,
@@ -146,6 +227,7 @@ export class PresenceRepository implements IPresenceRepository {
     if (!r) return null;
     return {
       last_path: r.last_path == null ? null : String(r.last_path),
+      ...PresenceRepository.panelOf(r),
       seconds_ago: Number(r.seconds_ago) || 0,
       session_minutes: Number(r.session_minutes) || 0,
       signed_off: Number(r.signed_off) || 0,
@@ -157,7 +239,7 @@ export class PresenceRepository implements IPresenceRepository {
    * The latest-presence columns, shared by the board queries. Ages are MySQL's
    * (NOW() against NOW()); India time is rebuilt from the age, as in findLatest.
    */
-  private static readonly LATEST_COLUMNS = `p.admin_id, p.last_path,
+  private static readonly LATEST_COLUMNS = `p.admin_id, p.last_path, p.last_panel, p.last_title,
               TIMESTAMPDIFF(SECOND, p.last_seen_at, NOW())                AS seconds_ago,
               TIMESTAMPDIFF(MINUTE, p.session_started_at, p.last_seen_at) AS session_minutes,
               (p.signed_off_at IS NOT NULL)                               AS signed_off,
@@ -169,6 +251,7 @@ export class PresenceRepository implements IPresenceRepository {
     return {
       admin_id: Number(r.admin_id),
       last_path: r.last_path == null ? null : String(r.last_path),
+      ...PresenceRepository.panelOf(r),
       seconds_ago: Number(r.seconds_ago) || 0,
       session_minutes: Number(r.session_minutes) || 0,
       signed_off: Number(r.signed_off) || 0,

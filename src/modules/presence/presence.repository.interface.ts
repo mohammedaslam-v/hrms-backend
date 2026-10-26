@@ -9,10 +9,20 @@ import {
 /**
  * Reads `admin_panel_presence`, which the new admin panel writes.
  *
- * Read-only on purpose: the admin panel is the one place presence is recorded.
- * HRMS neither pings nor creates the table.
+ * The admin panel records its own pings; HRMS also writes the pings of the
+ * OTHER Bambinos panels (Renewal, CRM, …), which report through the shared
+ * tracker script. HRMS still never creates the tables.
  */
 export interface IPresenceRepository {
+  /** The live admin account for an id or a login/work email; null if none. */
+  resolveAdminId(adminId: number | null, email: string | null): Promise<number | null>;
+
+  /** "This admin is on `path` of `panel` now" — same rules as the admin panel's ping. */
+  touchFromPanel(adminId: number, panel: string, path: string | null, title: string | null): Promise<void>;
+
+  /** A logout on `panel`, recorded only if that panel is where they were last. */
+  signOffFromPanel(adminId: number, panel: string): Promise<void>;
+
   /**
    * Everyone seen within the last `withinSeconds`, newest first.
    *

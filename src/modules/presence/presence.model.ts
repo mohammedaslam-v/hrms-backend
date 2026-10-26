@@ -7,6 +7,20 @@
  */
 export type PresenceStatus = 'online' | 'away' | 'signed_off';
 
+/**
+ * Where someone is: which Bambinos panel, and which page on it.
+ *
+ * `panel` is a short key ('admin', 'renewals', 'crm', …); `panelName` is how
+ * it reads ("Renewal panel"). `name` is the page's name when known — from the
+ * admin panel's page catalogue, or the title another panel's tab reported.
+ */
+export interface PageRef {
+  path: string | null;
+  name: string | null;
+  panel: string;
+  panelName: string;
+}
+
 export interface PresencePerson {
   admin_id: number;
   name: string;
@@ -14,7 +28,7 @@ export interface PresencePerson {
   status: PresenceStatus;
   seconds_ago: number;
   session_minutes: number;
-  page: { path: string | null; name: string | null };
+  page: PageRef;
 }
 
 export interface PresenceSummary {
@@ -34,6 +48,10 @@ export interface PresenceRow {
   name: string;
   role: string;
   last_path: string | null;
+  /** Which panel the last ping came from; null/absent = the admin panel. */
+  last_panel?: string | null;
+  /** The page title another panel reported, when it sent one. */
+  last_title?: string | null;
   seconds_ago: number;
   session_minutes: number;
   /** 1 when the last thing they did was log out. */
@@ -56,7 +74,7 @@ export interface AdminPanelNow {
   status: PresenceStatus;
   secondsAgo: number;
   sessionMinutes: number;
-  page: { path: string | null; name: string | null };
+  page: PageRef;
   /** India date and HH:MM of the last ping. */
   lastSeenDate: string;
   lastSeenTime: string;
@@ -74,6 +92,10 @@ export interface AdminPanelActivity {
 /** The latest `admin_panel_presence` row, ages computed by MySQL. */
 export interface LatestPresenceRow {
   last_path: string | null;
+  /** Which panel the last ping came from; null/absent = the admin panel. */
+  last_panel?: string | null;
+  /** The page title another panel reported, when it sent one. */
+  last_title?: string | null;
   seconds_ago: number;
   session_minutes: number;
   signed_off: number;
@@ -87,7 +109,7 @@ export interface BoardPresence {
   status: PresenceStatus;
   secondsAgo: number;
   sessionMinutes: number;
-  page: { path: string | null; name: string | null };
+  page: PageRef;
   /** India date and HH:MM of the last ping. */
   lastSeenDate: string;
   lastSeenTime: string;

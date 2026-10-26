@@ -7,7 +7,9 @@ import {
   MAX_ACTIVITY_RANGE_DAYS,
   ONLINE_WINDOW_SECONDS,
   RECENT_WINDOW_SECONDS,
+  isAllowedOrigin,
   nowFrom,
+  parseTrackerPing,
   summarise,
 } from './presence.domain';
 import { AdminPanelActivity, AdminPanelDay, PresenceBoard, PresenceCount, PresenceSummary } from './presence.model';
@@ -17,6 +19,11 @@ import { IPresenceService } from './presence.service.interface';
 
 /** The "No HRMS record" group covers people seen this recently. */
 const UNLINKED_WITHIN_DAYS = 30;
+
+/** Pings from other panels: at most one write per admin per panel this often. */
+const MIN_WRITE_GAP_MS = 20 * 1000;
+/** How long "who is admin 327 / this email" is remembered. */
+const ADMIN_CACHE_MS = 10 * 60 * 1000;
 
 /**
  * The admin panel's who-is-online list.
@@ -35,6 +42,49 @@ export class PresenceService implements IPresenceService {
     private readonly accessService: IAccessService,
     private readonly attendanceRepository: IAttendanceRepository,
   ) {}
+
+  // ── Pings from the other Bambinos panels (the shared tracker script) ───────
+
+  /** admin id or email → admin id (or null), so a ping a minute is not a lookup a minute. */
+  private readonly adminCache = new Map<string, { id: number | null; until: number }>();
+  /** admin+panel → when its last ping was written, to shed duplicates from extra tabs. */
+  private readonly lastWrite = new Map<string, number>();
+
+  async recordPanelPing(origin: string | undefined, body: unknown): Promise<boolean> {
+    if (!isAllowedOrigin(origin)) return false;
+    const ping = parseTrackerPing(body, origin!);
+    if (!ping) return false;
+
+    const adminId = await this.adminFor(ping.adminId, ping.email);
+    if (!adminId) return false;
+
+    if (ping.event === 'signoff') {
+      await this.repository.signOffFromPanel(adminId, ping.panel);
+      return true;
+    }
+
+    // Several tabs of one panel each ping every minute; one write per 20 s per
+    // page is plenty, and the daily total is unaffected (it adds the gap since
+    // the last ping, whichever tab sent it). A new page is written at once.
+    const key = `${adminId}:${ping.panel}:${ping.path ?? ''}`;
+    const now = Date.now();
+    if (now - (this.lastWrite.get(key) ?? 0) < MIN_WRITE_GAP_MS) return true;
+    this.lastWrite.set(key, now);
+    if (this.lastWrite.size > 5000) this.lastWrite.clear();
+
+    await this.repository.touchFromPanel(adminId, ping.panel, ping.path, ping.title);
+    return true;
+  }
+
+  private async adminFor(adminId: number | null, email: string | null): Promise<number | null> {
+    const key = adminId ? `id:${adminId}` : `email:${email}`;
+    const hit = this.adminCache.get(key);
+    if (hit && hit.until > Date.now()) return hit.id;
+    const id = await this.repository.resolveAdminId(adminId, email);
+    if (this.adminCache.size > 5000) this.adminCache.clear();
+    this.adminCache.set(key, { id, until: Date.now() + ADMIN_CACHE_MS });
+    return id;
+  }
 
   async getCount(_viewerId: number): Promise<PresenceCount> {
     // Null = every admin account, the same number the board shows.

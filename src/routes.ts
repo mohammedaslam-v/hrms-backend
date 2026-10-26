@@ -22,6 +22,7 @@ import { createPresenceRouter } from './modules/presence/presence.routes';
 import { createWorkActivityRouter } from './modules/work-activity/work-activity.routes';
 import { createInternalAttendanceRouter } from './modules/internal/internal-attendance.routes';
 import { createInternalPresenceRouter } from './modules/internal/internal-presence.routes';
+import { createPresenceTrackerRouter } from './modules/presence/presence.tracker.routes';
 
 export const createApiRouter = (container: Container): Router => {
   const router = Router();
@@ -45,6 +46,7 @@ export const createApiRouter = (container: Container): Router => {
   router.use('/reports', createReportsRouter(container.reportsController));
   router.use('/company-policies', createCompanyPolicyRouter(container.companyPolicyController));
   router.use('/presence', createPresenceRouter(container.presenceController));
+  router.use('/tracker', createPresenceTrackerRouter(container.presenceTrackerController));
   router.use('/work-activities', createWorkActivityRouter(container.workActivityController));
   router.use('/internal/attendance', createInternalAttendanceRouter(container.internalAttendanceController));
   router.use('/internal/presence', createInternalPresenceRouter(container.internalPresenceController));
