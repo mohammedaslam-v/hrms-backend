@@ -26,6 +26,19 @@ export const createApp = (): Application => {
     res.json({ status: 'ok', uptime: process.uptime() });
   });
 
+  // Block automated script agents from calling the HRMS API
+  app.use('/api/v1', (req, res, next) => {
+    const userAgent = req.get('user-agent') || '';
+    if (/^(python-requests|aiohttp|urllib|curl|wget|httpclient)/i.test(userAgent)) {
+      res.status(403).json({
+        success: false,
+        message: 'Automated script requests are not permitted on this API.',
+      });
+      return;
+    }
+    next();
+  });
+
   app.use('/api/v1', createApiRouter(container));
 
   app.use(notFoundHandler);

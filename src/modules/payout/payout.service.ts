@@ -1,5 +1,14 @@
 import crypto from 'crypto';
 import { IPayoutService } from './payout.service.interface';
+import { IOtpService } from '../auth/otp.service.interface';
+import { IAuthService } from '../auth/auth.service.interface';
+import { IReimbursementRepository } from '../reimbursement/reimbursement.repository.interface';
+import {
+  RequestPayoutOtpResponseDto,
+  PushLoanPayoutDto,
+  PushReimbursementPayoutDto,
+  PushReimbursementResponseDto,
+} from './payout.model';
 import { IPayoutRepository } from './payout.repository.interface';
 import { ISalaryService } from '../salary/salary.service.interface';
 import {
@@ -35,6 +44,9 @@ export class PayoutService implements IPayoutService {
   constructor(
     private readonly payoutRepository: IPayoutRepository,
     private readonly salaryService: ISalaryService,
+    private readonly otpService?: IOtpService,
+    private readonly authService?: IAuthService,
+    private readonly reimbursementRepository?: IReimbursementRepository,
   ) {}
 
   private isMockMode(): boolean {
@@ -338,11 +350,54 @@ export class PayoutService implements IPayoutService {
     };
   }
 
-  async pushLoanDisbursement(
-    loanId: number,
+  async requestPayoutOtp(
     adminId: number,
-    mode: PayoutMode = 'NEFT',
+    ipAddress: string | null,
+  ): Promise<RequestPayoutOtpResponseDto> {
+    if (this.authService) {
+      const viewer = await this.authService.getCurrentEmployee(adminId);
+      if (!viewer.tiers.includes('admin')) {
+        throw ApiError.forbidden('Only administrators can authorize payouts.');
+      }
+    }
+
+    const meta = await this.payoutRepository.findEmployeeBankMeta(adminId);
+    const email = meta?.workEmail;
+    if (!email) {
+      throw ApiError.badRequest('No admin work email found to send authorization code.');
+    }
+
+    if (!this.otpService) {
+      throw new Error('OTP service is not configured.');
+    }
+
+    const challenge = await this.otpService.issue(
+      adminId,
+      email,
+      'step_up',
+      ipAddress,
+    );
+
+    return {
+      challengeId: challenge.challengeId,
+      sentTo: challenge.sentTo,
+    };
+  }
+
+  async pushLoanDisbursement(
+    dto: PushLoanPayoutDto,
+    adminId: number,
   ): Promise<PushLoanResponseDto> {
+    const { loanId, challengeId, otp, mode = 'NEFT' } = dto;
+
+    if (!challengeId || !otp) {
+      throw ApiError.badRequest('Admin authorization OTP is required to disburse loan funds.');
+    }
+
+    if (this.otpService) {
+      await this.otpService.verify(challengeId, otp, 'step_up');
+    }
+
     const loan = await this.payoutRepository.findLoanById(loanId);
     if (!loan) {
       throw ApiError.notFound(`Loan ${loanId} not found`);
@@ -355,6 +410,10 @@ export class PayoutService implements IPayoutService {
     const meta = await this.payoutRepository.findEmployeeBankMeta(loan.employeeId);
     if (!meta) {
       throw ApiError.notFound(`Employee for loan ${loanId} not found`);
+    }
+
+    if (meta.employeeCode.startsWith('TEST') || (meta.workEmail && meta.workEmail.toLowerCase().includes('test'))) {
+      throw ApiError.badRequest('Bank disbursements are permanently disabled for test accounts.');
     }
 
     // 1. Ensure Contact & Fund Account
@@ -463,6 +522,165 @@ export class PayoutService implements IPayoutService {
     };
   }
 
+  async pushReimbursementDisbursement(
+    dto: PushReimbursementPayoutDto,
+    adminId: number,
+  ): Promise<PushReimbursementResponseDto> {
+    const { claimId, challengeId, otp, mode = 'NEFT' } = dto;
+
+    if (!challengeId || !otp) {
+      throw ApiError.badRequest('Admin authorization OTP is required to disburse reimbursement funds.');
+    }
+
+    if (this.otpService) {
+      await this.otpService.verify(challengeId, otp, 'step_up');
+    }
+
+    if (!this.reimbursementRepository) {
+      throw new Error('Reimbursement repository not wired.');
+    }
+
+    const claim = await this.reimbursementRepository.findById(claimId);
+    if (!claim) {
+      throw ApiError.notFound(`Reimbursement claim ${claimId} not found`);
+    }
+
+    if (claim.status === 'Paid') {
+      throw ApiError.badRequest('This reimbursement claim has already been paid.');
+    }
+
+    if (claim.status === 'Rejected' || claim.status === 'Cancelled') {
+      throw ApiError.badRequest(`Cannot disburse a claim with status: ${claim.status}`);
+    }
+
+    const payoutAmount = Number(dto.approvedAmount ?? claim.approvedAmount ?? claim.claimAmount);
+    if (isNaN(payoutAmount) || payoutAmount <= 0) {
+      throw ApiError.badRequest('A valid payout amount greater than ₹0 is required.');
+    }
+
+    // If claim was still Pending, mark it Approved
+    if (claim.status === 'Pending') {
+      await this.reimbursementRepository.updateDecision(claimId, {
+        status: 'Approved',
+        approvedAmount: payoutAmount,
+        rejectionReason: null,
+        adminNotes: 'Approved with RazorpayX disbursement authorization',
+        decidedBy: adminId,
+      });
+    }
+
+    const meta = await this.payoutRepository.findEmployeeBankMeta(claim.employeeId);
+    if (!meta) {
+      throw ApiError.notFound(`Employee bank details not found for employee ${claim.employeeId}`);
+    }
+
+    if (meta.employeeCode.startsWith('TEST') || (meta.workEmail && meta.workEmail.toLowerCase().includes('test'))) {
+      throw ApiError.badRequest('Bank disbursements are permanently disabled for test accounts.');
+    }
+
+    // 1. Ensure Contact & Fund Account
+    const { contactId, fundAccountId } =
+      await this.ensureEmployeeFundAccount(claim.employeeId);
+
+    // 2. Create Payout entry
+    const idempotencyKey = crypto.randomUUID();
+    const amountPaise = Math.round(payoutAmount * 100);
+    const narration = narrationOf(`Bambinos Exp ${claim.ref}`);
+
+    const record = await this.payoutRepository.createPayout({
+      payoutType: 'reimbursement',
+      referenceId: String(claimId),
+      employeeId: claim.employeeId,
+      adminId,
+      amount: payoutAmount,
+      amountPaise,
+      razorpayPayoutId: null,
+      razorpayContactId: contactId,
+      razorpayFundAccountId: fundAccountId,
+      status: 'processing',
+      mode,
+      purpose: 'salary',
+      narration,
+      utr: null,
+      failureReason: null,
+      failureDescription: null,
+      failureSource: null,
+      idempotencyKey,
+    });
+
+    // 3. Send to Razorpay
+    let razorpayPayoutId: string;
+    let finalStatus: PayoutStatus = 'processing';
+    let failureReason: string | null = null;
+    let failureDesc: string | null = null;
+
+    if (this.isMockMode()) {
+      razorpayPayoutId = `pout_reimb_mock_${Date.now()}`;
+    } else {
+      try {
+        const res = await fetch('https://api.razorpay.com/v1/payouts', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Payout-Idempotency': idempotencyKey,
+            Authorization: this.getAuthHeader(),
+          },
+          body: JSON.stringify({
+            account_number: env.razorpay.account,
+            fund_account_id: fundAccountId,
+            amount: amountPaise,
+            currency: 'INR',
+            mode,
+            purpose: 'salary',
+            queue_if_low_balance: true,
+            narration,
+          }),
+        });
+
+        const data: any = await res.json();
+        if (!res.ok) {
+          finalStatus = 'failed';
+          failureReason = data?.error?.code || 'PAYOUT_FAILED';
+          failureDesc = data?.error?.description || 'Razorpay reimbursement payout failed';
+          razorpayPayoutId = data?.id || `err_${Date.now()}`;
+        } else {
+          razorpayPayoutId = data.id;
+          finalStatus = data.status || 'processing';
+        }
+      } catch (err: any) {
+        finalStatus = 'failed';
+        failureReason = 'NETWORK_ERROR';
+        failureDesc = err.message || 'Error connecting to Razorpay';
+        razorpayPayoutId = `err_${Date.now()}`;
+      }
+    }
+
+    await this.payoutRepository.updatePayoutRazorpayInfo(
+      record.id,
+      razorpayPayoutId,
+      finalStatus,
+      failureReason,
+      failureDesc
+    );
+
+    if (finalStatus !== 'failed' && finalStatus !== 'rejected') {
+      const today = new Date().toISOString().slice(0, 10);
+      await this.reimbursementRepository.markPaid(claimId, {
+        paymentDate: today,
+        paymentReference: `RazorpayX: ${razorpayPayoutId}`,
+      });
+    }
+
+    return {
+      claimId,
+      employeeId: claim.employeeId,
+      amount: payoutAmount,
+      payoutId: record.id,
+      razorpayPayoutId,
+      status: finalStatus,
+      utr: null,
+    };
+  }
   async processWebhook(
     _event: string,
     payload: any,

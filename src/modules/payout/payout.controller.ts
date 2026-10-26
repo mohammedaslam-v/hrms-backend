@@ -55,23 +55,60 @@ export class PayoutController {
     }
   };
 
+    requestOtp = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const adminId = (req as any).employeeId || (req as any).user?.id || 1;
+      const result = await this.payoutService.requestPayoutOtp(adminId, req.ip ?? null);
+      res.status(200).json({ success: true, data: result });
+    } catch (err) {
+      next(err);
+    }
+  };
+
   pushLoanDisbursement = async (
     req: Request,
     res: Response,
     next: NextFunction
   ): Promise<void> => {
     try {
-      const adminId = (req as any).user?.id || (req as any).user?.employeeId;
-      const { loanId, mode } = req.body;
+      const adminId = (req as any).employeeId || (req as any).user?.id || 1;
+      const { loanId, challengeId, otp, mode } = req.body;
 
       if (!loanId) {
         throw ApiError.badRequest('loanId is required.');
       }
 
       const result = await this.payoutService.pushLoanDisbursement(
-        Number(loanId),
-        adminId,
-        mode
+        { loanId: Number(loanId), challengeId, otp, mode },
+        adminId
+      );
+
+      res.status(200).json({ success: true, data: result });
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  pushReimbursementDisbursement = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const adminId = (req as any).employeeId || (req as any).user?.id || 1;
+      const { claimId, approvedAmount, challengeId, otp, mode } = req.body;
+
+      if (!claimId) {
+        throw ApiError.badRequest('claimId is required.');
+      }
+
+      const result = await this.payoutService.pushReimbursementDisbursement(
+        { claimId: Number(claimId), approvedAmount, challengeId, otp, mode },
+        adminId
       );
 
       res.status(200).json({ success: true, data: result });

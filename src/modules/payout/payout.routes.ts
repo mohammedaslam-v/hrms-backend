@@ -12,7 +12,9 @@ export const createPayoutRouter = (controller: PayoutController): Router => {
   router.use(requireAuth);
   router.post('/push-salary', controller.pushSalaryPayouts);
   router.post('/push-single', controller.pushSingleSalary);
+  router.post('/request-otp', controller.requestOtp);
   router.post('/push-loan', controller.pushLoanDisbursement);
+  router.post('/push-reimbursement', controller.pushReimbursementDisbursement);
   router.post('/import-csv', controller.importCsv);
   router.post('/bank-details', controller.updateBankDetails);
 

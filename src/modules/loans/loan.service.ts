@@ -1,4 +1,3 @@
-import { IPayoutService } from '../payout/payout.service.interface';
 import { ILoanRepository } from './loan.repository.interface';
 import { ILoanService } from './loan.service.interface';
 import {
@@ -50,7 +49,6 @@ export class LoanService implements ILoanService {
   constructor(
     private readonly loanRepository: ILoanRepository,
     private readonly authService: IAuthService,
-    private readonly payoutService?: IPayoutService,
   ) {}
 
   private async assertAdmin(viewerId: number): Promise<void> {
@@ -174,15 +172,7 @@ export class LoanService implements ILoanService {
       emi,
     );
 
-    if (this.payoutService) {
-      try {
-        await this.payoutService.pushLoanDisbursement(created.id, adminId);
-        const reloaded = await this.loanRepository.findById(created.id);
-        if (reloaded) return reloaded;
-      } catch (err: unknown) {
-        console.error(`[LoanService] Auto-disbursement to Razorpay for loan ${created.id} failed:`, err);
-      }
-    }
+// Loan created as pending_disbursement; manual OTP-authorized disbursement required
 
     return created;
   }

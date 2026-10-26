@@ -1,4 +1,8 @@
 import {
+  RequestPayoutOtpResponseDto,
+  PushLoanPayoutDto,
+  PushReimbursementPayoutDto,
+  PushReimbursementResponseDto,
   PushSalaryPayoutDto,
   PushSalaryResponseDto,
   PushSalaryResultItem,
@@ -22,11 +26,18 @@ export interface IPayoutService {
     adminId: number,
     mode?: PayoutMode,
   ): Promise<PushSalaryResultItem>;
-  pushLoanDisbursement(
-    loanId: number,
+  requestPayoutOtp(
     adminId: number,
-    mode?: PayoutMode,
+    ipAddress: string | null,
+  ): Promise<RequestPayoutOtpResponseDto>;
+  pushLoanDisbursement(
+    dto: PushLoanPayoutDto,
+    adminId: number,
   ): Promise<PushLoanResponseDto>;
+  pushReimbursementDisbursement(
+    dto: PushReimbursementPayoutDto,
+    adminId: number,
+  ): Promise<PushReimbursementResponseDto>;
   processWebhook(
     event: string,
     payload: any,

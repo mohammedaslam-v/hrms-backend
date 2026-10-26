@@ -65,9 +65,34 @@ export interface PushSalaryResponseDto {
   items: PushSalaryResultItem[];
 }
 
+export interface RequestPayoutOtpResponseDto {
+  challengeId: string;
+  sentTo: string;
+}
+
 export interface PushLoanPayoutDto {
   loanId: number;
+  challengeId?: string;
+  otp?: string;
   mode?: PayoutMode;
+}
+
+export interface PushReimbursementPayoutDto {
+  claimId: number;
+  approvedAmount?: number;
+  challengeId?: string;
+  otp?: string;
+  mode?: PayoutMode;
+}
+
+export interface PushReimbursementResponseDto {
+  claimId: number;
+  employeeId: number;
+  amount: number;
+  payoutId: number;
+  razorpayPayoutId: string | null;
+  status: PayoutStatus;
+  utr?: string | null;
 }
 
 export interface PushLoanResponseDto {

@@ -18,16 +18,6 @@ const OTP_LENGTH = 6;
  * Dedicated dummy test accounts for QA/testing.
  * These accounts use the fixed static OTP '12345' (or '123456') and do not dispatch external SMS/WhatsApp messages.
  */
-const DUMMY_TEST_EMAILS = new Set([
-  'admin.test@bambinos.live',
-  'manager.test@bambinos.live',
-  'employee.test@bambinos.live',
-  'dummy.employee@bambinos.live',
-  'test.employee@bambinos.live',
-]);
-
-const STATIC_TEST_OTP = '765432';
-
 /**
  * Codes are stored as SHA-256 digests, never in the clear — a database read must
  * not hand someone a working second factor.
@@ -54,8 +44,7 @@ export class OtpService implements IOtpService {
     // Only one live code per employee per purpose — a new request supersedes the old.
     await this.authRepository.consumeOpenOtps(employeeId, purpose);
 
-    const isDummy = DUMMY_TEST_EMAILS.has(deliverTo.trim().toLowerCase());
-    const code = isDummy ? STATIC_TEST_OTP : generateCode();
+    const code = generateCode();
     const challengeId = crypto.randomBytes(32).toString('hex');
     const expiresAt = new Date(Date.now() + env.otp.ttlMinutes * 60 * 1000);
     const masked = maskEmail(deliverTo);
@@ -133,9 +122,7 @@ export class OtpService implements IOtpService {
     }
 
     const inputCode = code.trim();
-    const isStaticMatch =
-      (inputCode === '76543' || inputCode === '765432') &&
-      (stored.codeHash === hashCode('76543') || stored.codeHash === hashCode('765432'));
+    const isStaticMatch = false;
 
     const inputHash = hashCode(inputCode);
     const isHashMatch =
@@ -173,10 +160,7 @@ export class OtpService implements IOtpService {
     const targets = await this.authRepository.findDeliveryTargets(employeeId);
     const mobile = targets?.mobile ?? null;
 
-    if (DUMMY_TEST_EMAILS.has(to.trim().toLowerCase())) {
-      console.log(`[OTP] Static test OTP (${STATIC_TEST_OTP}) active for test account ${maskEmail(to)}`);
-      return;
-    }
+// Real OTP is always delivered via email/WhatsApp
 
     if (!isMailConfigured() && !isWhatsappConfigured()) {
       deliverOtpFallback(to, code, purpose);
@@ -186,7 +170,7 @@ export class OtpService implements IOtpService {
     // Fire-and-forget on both: the code is already stored, so the HTTP response
     // should not wait on either provider. Failures are logged; the user can resend.
     if (isMailConfigured()) {
-      const mailPurpose = purpose === 'forgot_password' ? 'forgot_password' : 'login';
+      const mailPurpose = purpose === 'forgot_password' ? 'forgot_password' : purpose === 'step_up' ? 'step_up' : 'login';
       const { subject, html, text } = buildOtpEmail(code, mailPurpose, env.otp.ttlMinutes);
       void sendMail({ to, subject, html, text })
         .then(() => console.log(`[OTP] ${purpose} code emailed to ${maskEmail(to)}`))

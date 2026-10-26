@@ -83,17 +83,23 @@ export function deliverOtpFallback(to: string, code: string, purpose: string): v
 
 export function buildOtpEmail(
   code: string,
-  purpose: 'login' | 'forgot_password',
+  purpose: 'login' | 'forgot_password' | 'step_up',
   ttlMinutes: number,
 ): { subject: string; html: string; text: string } {
   const isReset = purpose === 'forgot_password';
+  const isStepUp = purpose === 'step_up';
 
   const subject = isReset
     ? `${code} is your Bambinos HRMS password reset code`
-    : `${code} is your Bambinos HRMS verification code`;
+    : isStepUp
+      ? `${code} is your Bambinos authorization code for payout approval`
+      : `${code} is your Bambinos HRMS verification code`;
+
   const intro = isReset
     ? 'Use the code below to reset your Bambinos HRMS password.'
-    : 'Use the code below to finish signing in to Bambinos HRMS.';
+    : isStepUp
+      ? 'Use the authorization code below to approve and release company funds via RazorpayX.'
+      : 'Use the code below to finish signing in to Bambinos HRMS.';
 
   const text =
     `Your Bambinos HRMS verification code is ${code}. ` +
