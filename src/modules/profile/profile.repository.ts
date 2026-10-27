@@ -311,7 +311,51 @@ export class ProfileRepository implements IProfileRepository {
     }
   }
 
+
+  /**
+   * Synchronises the lifecycle status of an employee with the linked admins and
+   * customerserviceagents records in the main portal.
+   *
+   * - active = false: sets admins.deleted_at = NOW() and customerserviceagents.status = 'Inactive'
+   * - active = true: sets admins.deleted_at = NULL and customerserviceagents.status = 'Active'
+   */
+  private async syncAdminAccountState(adminId: number | null, active: boolean): Promise<void> {
+    if (!adminId) return;
+
+    if (active) {
+      await this.pool.execute(
+        'UPDATE admins SET deleted_at = NULL, updated_at = NOW() WHERE id = ?',
+        [adminId],
+      );
+      await this.pool.execute(
+        'UPDATE customerserviceagents csa ' +
+        'JOIN admins a ON a.customerserviceagent_id = csa.id ' +
+        'SET csa.status = \'Active\', csa.deleted_at = NULL ' +
+        'WHERE a.id = ?',
+        [adminId],
+      );
+    } else {
+      await this.pool.execute(
+        'UPDATE admins SET deleted_at = NOW(), updated_at = NOW() WHERE id = ? AND deleted_at IS NULL',
+        [adminId],
+      );
+      await this.pool.execute(
+        'UPDATE customerserviceagents csa ' +
+        'JOIN admins a ON a.customerserviceagent_id = csa.id ' +
+        'SET csa.status = \'Inactive\', csa.deleted_at = COALESCE(csa.deleted_at, NOW()) ' +
+        'WHERE a.id = ?',
+        [adminId],
+      );
+    }
+  }
+
   async updateLoginDisabled(employeeId: number, disabled: boolean): Promise<void> {
+    const [empRows] = await this.pool.execute<RowDataPacket[]>(
+      `SELECT admin_id FROM hrms_employees WHERE id = ?`,
+      [employeeId],
+    );
+    const adminId = (empRows[0]?.admin_id as number) ?? null;
+
     await this.pool.execute(
       `UPDATE hrms_employees
           SET is_login_disabled = ?,
@@ -328,6 +372,9 @@ export class ProfileRepository implements IProfileRepository {
           WHERE employee_id = ? AND revoked_at IS NULL`,
         [employeeId],
       );
+      await this.syncAdminAccountState(adminId, false);
+    } else {
+      await this.syncAdminAccountState(adminId, true);
     }
   }
 
@@ -356,6 +403,24 @@ export class ProfileRepository implements IProfileRepository {
         employeeId,
       ],
     );
+
+    const [empRows] = await this.pool.execute<RowDataPacket[]>(
+      `SELECT admin_id FROM hrms_employees WHERE id = ?`,
+      [employeeId],
+    );
+    const adminId = (empRows[0]?.admin_id as number) ?? null;
+    const todayStr = new Date().toISOString().slice(0, 10);
+
+    if (!lastWorking || lastWorking <= todayStr) {
+      await this.syncAdminAccountState(adminId, false);
+      await this.pool.execute(
+        `UPDATE hrms_sessions
+            SET revoked_at = NOW(),
+                revoked_reason = 'employee_dismissed_by_admin'
+          WHERE employee_id = ? AND revoked_at IS NULL`,
+        [employeeId],
+      );
+    }
   }
 
   async updateSalaryStopped(employeeId: number, stopped: boolean, reason?: string | null): Promise<void> {
@@ -477,8 +542,24 @@ export class ProfileRepository implements IProfileRepository {
       empValues.push(dto.confirmationDate?.trim() ? dto.confirmationDate.trim().slice(0, 10) : null);
     }
     if (dto.dateOfLeaving !== undefined) {
+      const leavingVal = dto.dateOfLeaving?.trim() ? dto.dateOfLeaving.trim().slice(0, 10) : null;
       empUpdates.push(`date_of_leaving = ?`);
-      empValues.push(dto.dateOfLeaving?.trim() ? dto.dateOfLeaving.trim().slice(0, 10) : null);
+      empValues.push(leavingVal);
+
+      if (adminId) {
+        const todayStr = new Date().toISOString().slice(0, 10);
+        if (leavingVal && leavingVal <= todayStr) {
+          await this.syncAdminAccountState(adminId, false);
+        } else if (!leavingVal || leavingVal > todayStr) {
+          const [checkDisabled] = await this.pool.execute<RowDataPacket[]>(
+            `SELECT is_login_disabled FROM hrms_employees WHERE id = ?`,
+            [employeeId],
+          );
+          if (!checkDisabled[0]?.is_login_disabled) {
+            await this.syncAdminAccountState(adminId, true);
+          }
+        }
+      }
     }
     if (dto.uan !== undefined) {
       empUpdates.push(`uan = ?`);
@@ -615,10 +696,7 @@ async updateEmploymentType(employeeId: number, employmentType: string): Promise<
     );
 
     if (adminId) {
-      await this.pool.execute(
-        `UPDATE admins SET deleted_at = NOW() WHERE id = ?`,
-        [adminId],
-      );
+      await this.syncAdminAccountState(adminId, false);
     }
 
     await this.pool.execute(

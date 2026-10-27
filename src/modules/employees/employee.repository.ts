@@ -285,6 +285,18 @@ export class EmployeeRepository implements IEmployeeRepository {
       let tempPassword: string | null = null;
       if (linkAdminId !== null) {
         adminId = linkAdminId;
+        // Ensure previously soft-deleted accounts are re-enabled upon employee onboarding
+        await connection.execute(
+          `UPDATE admins SET deleted_at = NULL, updated_at = NOW() WHERE id = ?`,
+          [adminId],
+        );
+        await connection.execute(
+          `UPDATE customerserviceagents csa
+           JOIN admins a ON a.customerserviceagent_id = csa.id
+           SET csa.status = 'Active', csa.deleted_at = NULL
+           WHERE a.id = ?`,
+          [adminId],
+        );
       } else {
         tempPassword = 'Bambinos@2026';
         const passwordHash = await bcrypt.hash(tempPassword, 10);
