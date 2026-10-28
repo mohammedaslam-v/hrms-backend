@@ -26,6 +26,16 @@ export interface PayoutRecord {
   updatedAt: string;
 }
 
+/**
+ * What a salary payout's slip was based on, saved when it is pushed. The next
+ * month's arrears or recovery is measured against it — see salary.domain.ts.
+ */
+export interface SalaryPayoutSnapshot {
+  lopDays: number;
+  lopRate: number;
+  arrearsAmount: number;
+}
+
 export interface EmployeeBankMeta {
   employeeId: number;
   employeeCode: string;

@@ -66,6 +66,11 @@ export interface DayFacts {
    */
   today: string;
   weeklyOff: string[];
+  /**
+   * An admin set this one date to a weekly off from the calendar, whatever the
+   * person's usual off days are. See `isMarkedOff`.
+   */
+  markedOff?: boolean;
   /** Set only when HR has declared a company-wide closure. Normally null. */
   holidayName: string | null;
   /** Approved leave covering this day, if any. */
@@ -479,7 +484,7 @@ export function resolveDayStatus(facts: DayFacts): AttendanceStatus {
 
   // A punch on a weekly off still records its hours — see attendanceOf() — but
   // the day is reported as the off day it was.
-  if (isWeeklyOff(facts.date, facts.weeklyOff)) return 'Weekly off';
+  if (facts.markedOff || isWeeklyOff(facts.date, facts.weeklyOff)) return 'Weekly off';
 
   if (facts.leave) return facts.leave.isHalfDay ? 'Half day' : 'Leave';
 
@@ -500,6 +505,15 @@ export function resolveDayStatus(facts: DayFacts): AttendanceStatus {
 
   return 'Absent';
 }
+
+/**
+ * A stored row that makes its date a weekly off: one an admin saved by hand as
+ * 'Weekly off'. Nothing else writes that status, so an app or imported row can
+ * never turn a working day into an off day.
+ */
+export const isMarkedOff = (
+  record: { source: string; status: string } | null | undefined,
+): boolean => record?.source === 'manual' && record.status === 'Weekly off';
 
 export interface DayAttendance {
   date: string;
@@ -522,6 +536,11 @@ export interface DayAttendance {
    * them and observed days ahead, and the chart should not pretend otherwise.
    */
   source: DaySource;
+  /**
+   * The kind of leave behind a 'Leave' or 'Half day', so the calendar can tell
+   * earned leave from loss of pay. Null on every other day.
+   */
+  leaveType: LeaveType | null;
 }
 
 /** How one day's hours were arrived at. */
@@ -530,6 +549,7 @@ export type DaySource = 'punch' | 'activity';
 /** A whole day resolved: its status and its numbers, from one set of facts. */
 export function attendanceOf(facts: DayFacts): DayAttendance {
   const status = resolveDayStatus(facts);
+  const leaveType = status === 'Leave' || status === 'Half day' ? (facts.leave?.type ?? null) : null;
 
   // Observed. First and last seen stand in for the punches, so every screen
   // downstream keeps one shape; hours come from the slots, and lateness is
@@ -546,6 +566,7 @@ export function attendanceOf(facts: DayFacts): DayAttendance {
       // Walked from the shift's own start, so a night reads forwards.
       segments: segmentsOf(facts.slots, slotOf(facts.shiftStart)),
       source: 'activity',
+      leaveType,
     };
   }
 
@@ -562,6 +583,7 @@ export function attendanceOf(facts: DayFacts): DayAttendance {
     // person is still checked in, which the card reads as "and counting".
     segments: facts.punch ? [{ from: facts.punch.loginAt, to: facts.punch.logoutAt }] : [],
     source: 'punch',
+    leaveType,
   };
 }
 
@@ -582,6 +604,8 @@ export interface WeekBar {
   segments: TimeRange[];
   /** Whether this day's hours were declared or observed. */
   source: DaySource;
+  /** Earned or unpaid, on a leave or half day — the calendar's EL / LOP. */
+  leaveType: LeaveType | null;
 }
 
 /**
@@ -613,5 +637,6 @@ export function dayBars(days: DayAttendance[], today: string): WeekBar[] {
     isToday: day.date === today,
     segments: day.segments,
     source: day.source,
+    leaveType: day.leaveType,
   }));
 }

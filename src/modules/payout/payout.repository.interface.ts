@@ -3,6 +3,7 @@ import {
   EmployeeBankMeta,
   PayoutType,
   PayoutStatus,
+  SalaryPayoutSnapshot,
 } from './payout.model';
 
 export interface IPayoutRepository {
@@ -26,6 +27,8 @@ export interface IPayoutRepository {
   createPayout(
     data: Omit<PayoutRecord, 'id' | 'createdAt' | 'updatedAt'>,
   ): Promise<PayoutRecord>;
+  /** Salary payouts only: what the pushed slip deducted and paid back. */
+  saveSalarySnapshot(id: number, snapshot: SalaryPayoutSnapshot): Promise<void>;
   updatePayoutRazorpayInfo(
     id: number,
     razorpayPayoutId: string,

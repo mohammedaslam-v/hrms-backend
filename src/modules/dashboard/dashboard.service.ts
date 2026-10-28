@@ -1,6 +1,7 @@
 import {
   attendanceOf,
   EMPTY_SLOTS,
+  isMarkedOff,
   readDayAsObserved,
   slotsForShiftDay,
   type DayAttendance,
@@ -183,6 +184,7 @@ export class DashboardService implements IDashboardService {
       // as a finished day with nothing on it.
       today: date,
       weeklyOff: schedule.weeklyOff,
+      markedOff: isMarkedOff(stored),
       holidayName: dayContext?.holidayName ?? null,
       leave: dayContext?.leave ?? null,
       punch: readAsObserved ? null : punch,

@@ -58,6 +58,13 @@ export interface ILeaveService {
 
   getOnLeaveToday(): Promise<OnLeaveEmployee[]>;
 
+  /**
+   * Loss-of-pay days the leave ledger settles in each month asked for
+   * (`YYYY-MM`) — unpaid leave plus any leave the balance could not cover.
+   * Salary reads it.
+   */
+  lopDaysByMonth(employeeId: number, months: string[]): Promise<Map<string, number>>;
+
   // ---------------------------------------------------------------- approvals
 
   /** Pending queue, team balances and the request log, scoped to the manager's tree. */

@@ -1,7 +1,21 @@
 import { ApiError } from "../../utils/api-error";
 import { IAccessService } from "../access/access.service.interface";
+import { IAttendanceService } from "../attendance/attendance.service.interface";
 import { ICompensationService } from "../compensation/compensation.service.interface";
-import { COMPANY_CONFIG, computeTax, fyMonths, monthLabel, payStructure, ptOf, words } from "./salary.domain";
+import { ILeaveService } from "../leave/leave.service.interface";
+import {
+  COMPANY_CONFIG,
+  NOT_MARKED_LOP_FROM,
+  arrearsOwed,
+  computeTax,
+  fyMonths,
+  monthLabel,
+  payStructure,
+  previousMonth,
+  ptOf,
+  words,
+  type PaidMonth,
+} from "./salary.domain";
 import {
   AnnualStructureView,
   EmployeeLoanView,
@@ -17,7 +31,73 @@ export class SalaryService implements ISalaryService {
     private readonly salaryRepository: ISalaryRepository,
     private readonly compensationService: ICompensationService,
     private readonly accessService: IAccessService,
+    private readonly leaveService: ILeaveService,
+    private readonly attendanceService: IAttendanceService,
   ) {}
+
+  /**
+   * Loss-of-pay days for each month asked for: what the leave ledger settles,
+   * plus every working day the calendar shows as Not Marked.
+   *
+   * Both halves are derived on read, so an admin correcting a day from the
+   * calendar changes that month's pay the next time it is opened — no reversal
+   * to remember. Not Marked only counts from NOT_MARKED_LOP_FROM, the day
+   * employees started using the portal; before it, an empty day means nothing.
+   *
+   * Many months cost the same as one: one ledger per leave year, and one
+   * attendance read per year-long span.
+   */
+  private async lopDaysByMonth(
+    employeeId: number,
+    months: string[],
+    dateOfJoining: string | null,
+    dateOfLeaving: string | null,
+  ): Promise<Map<string, number>> {
+    const sorted = [...new Set(months)].sort();
+    if (sorted.length === 0) return new Map();
+
+    const spans: { from: string; to: string }[] = [];
+    for (const month of sorted) {
+      const from = `${month}-01`;
+      const [y, mo] = month.split("-").map(Number);
+      const to = `${month}-${String(new Date(y, mo, 0).getDate()).padStart(2, "0")}`;
+      const last = spans[spans.length - 1];
+      // getDays reads at most 366 days, so a run of months is split by year.
+      if (last && last.from.slice(0, 4) === from.slice(0, 4)) last.to = to;
+      else spans.push({ from, to });
+    }
+
+    const [leaveLop, ...dayRuns] = await Promise.all([
+      this.leaveService.lopDaysByMonth(employeeId, sorted),
+      // The attendance read refuses anyone who has already left, so a leaver's
+      // final months are settled on leave alone.
+      ...spans.map((span) => this.attendanceService.getDays(employeeId, span.from, span.to).catch(() => [])),
+    ]);
+
+    const wanted = new Set(sorted);
+    const notMarked = new Map<string, number>();
+    for (const d of dayRuns.flat()) {
+      // 'Absent' is only ever a past working day with no punch, no activity and
+      // no leave — the domain gives today and later 'Not in yet'.
+      if (
+        d.status !== "Absent" ||
+        d.date < NOT_MARKED_LOP_FROM ||
+        (dateOfJoining && d.date < dateOfJoining) ||
+        (dateOfLeaving && d.date > dateOfLeaving)
+      ) {
+        continue;
+      }
+      const month = d.date.slice(0, 7);
+      if (wanted.has(month)) notMarked.set(month, (notMarked.get(month) ?? 0) + 1);
+    }
+
+    const out = new Map<string, number>();
+    for (const month of sorted) {
+      const total = (leaveLop.get(month) ?? 0) + (notMarked.get(month) ?? 0);
+      out.set(month, Math.round(total * 10) / 10);
+    }
+    return out;
+  }
 
   async getMySalary(
     viewerId: number,
@@ -104,6 +184,7 @@ export class SalaryService implements ISalaryService {
         payableDays: Number(frozenSlip.payable_days),
         lopDays: Number(frozenSlip.lop_days),
         lopAmount: Math.round(Number(frozenSlip.gross) / frozenSlip.month_days * Number(frozenSlip.lop_days)),
+        lopRate: Math.round((Number(frozenSlip.gross) / frozenSlip.month_days) * 100) / 100,
         isContractor: emp.isContractor,
         employee: {
           id: emp.id,
@@ -122,6 +203,7 @@ export class SalaryService implements ISalaryService {
           basic: Number(frozenSlip.basic),
           hra: Number(frozenSlip.hra),
           special: Number(frozenSlip.special_allowance),
+          arrears: 0,
           gross: Number(frozenSlip.gross),
         },
         deductions: {
@@ -147,13 +229,31 @@ export class SalaryService implements ISalaryService {
         isFrozen: true,
       };
     } else if (isPaidInMonth) {
-      const lopDays = await this.salaryRepository.findApprovedLopDays(subjectId, targetMonth);
+      // A month already pushed keeps showing what was sent. Otherwise its LOP
+      // is live, and — if the month before it was pushed — it also settles
+      // whatever corrections have changed in paid months since.
+      const pushes = await this.salaryRepository.findSalaryPushes(subjectId);
+      const sent = pushes.get(targetMonth) ?? null;
+      const paidBefore = pushes.has(previousMonth(targetMonth))
+        ? [...pushes.values()].filter((p): p is PaidMonth => p != null && p.month < targetMonth)
+        : [];
+      const live = await this.lopDaysByMonth(
+        subjectId,
+        [...(sent ? [] : [targetMonth]), ...paidBefore.map((p) => p.month)],
+        emp.dateOfJoining,
+        emp.dateOfLeaving,
+      );
+
+      const lopDays = Math.min(monthDays, sent ? sent.lopDays : (live.get(targetMonth) ?? 0));
+      const arrears = sent ? sent.arrearsAmount : arrearsOwed(paidBefore, live);
       const payableDays = Math.max(0, monthDays - lopDays);
       const factor = monthDays > 0 ? payableDays / monthDays : 1;
+      const monthlyGross = emp.isContractor ? Math.round(ctc / 12) : s.grossM;
+      const lopRate = sent ? sent.lopRate : monthDays > 0 ? Math.round((monthlyGross / monthDays) * 100) / 100 : 0;
 
       if (emp.isContractor) {
-        const monthlyRetainer = Math.round(ctc / 12);
-        const gross = Math.round(monthlyRetainer * factor);
+        const monthlyRetainer = monthlyGross;
+        const gross = Math.round(monthlyRetainer * factor) + arrears;
         const tds = Math.round(gross * 0.10);
         const net = Math.max(0, gross - tds - loanEmi);
         const totalDeductions = tds + loanEmi;
@@ -164,7 +264,8 @@ export class SalaryService implements ISalaryService {
           monthDays,
           payableDays,
           lopDays,
-          lopAmount: Math.round((monthlyRetainer / monthDays) * lopDays),
+          lopAmount: Math.round(lopRate * lopDays),
+          lopRate,
           isContractor: true,
           employee: {
             id: emp.id,
@@ -180,9 +281,10 @@ export class SalaryService implements ISalaryService {
             workState: emp.workState,
           },
           earnings: {
-            basic: gross,
+            basic: gross - arrears,
             hra: 0,
             special: 0,
+            arrears,
             gross,
           },
           deductions: {
@@ -211,7 +313,9 @@ export class SalaryService implements ISalaryService {
         const basic = Math.round(s.basicM * factor);
         const hra = Math.round(s.hraM * factor);
         const special = Math.round(s.specialM * factor);
-        const gross = basic + hra + special;
+        // Arrears are paid on top of the month's earnings; PF and tax stay on
+        // the month's own earnings.
+        const gross = basic + hra + special + arrears;
 
         const pt = ptOf(comp?.components, emp.workState, s.grossM, targetMonth);
         // Employee PF on the Basic actually earned this month, under the same
@@ -230,7 +334,8 @@ export class SalaryService implements ISalaryService {
           monthDays,
           payableDays,
           lopDays,
-          lopAmount: Math.round((s.grossM / monthDays) * lopDays),
+          lopAmount: Math.round(lopRate * lopDays),
+          lopRate,
           isContractor: false,
           employee: {
             id: emp.id,
@@ -249,6 +354,7 @@ export class SalaryService implements ISalaryService {
             basic,
             hra,
             special,
+            arrears,
             gross,
           },
           deductions: {

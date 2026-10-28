@@ -781,14 +781,35 @@ export class LeaveService implements ILeaveService {
     return projectRequest(baseline, { ...request, status: 'Approved' });
   }
 
+  async lopDaysByMonth(employeeId: number, months: string[]): Promise<Map<string, number>> {
+    // The ledger's figure, not a count of Unpaid requests: it already halves a
+    // half day, skips weekly offs inside a range, and includes earned leave the
+    // balance could not cover. One ledger covers a whole leave year, so it is
+    // read once per year, however many months are asked for.
+    const out = new Map<string, number>();
+    let resolved: Resolved | null = null;
+    for (const month of [...new Set(months)].sort()) {
+      const date = `${month}-01`;
+      if (!resolved || date < resolved.year.startDate || date > resolved.year.endDate) {
+        resolved = await this.resolve(employeeId, date);
+      }
+      out.set(month, resolved.ledger.rows.find((r) => r.month === month)?.lop ?? 0);
+    }
+    return out;
+  }
+
   // ---------------------------------------------------------------- internals
 
-  private async resolve(employeeId: number): Promise<Resolved> {
+  /**
+   * `onDate` picks the leave year to read — today's unless a caller needs an
+   * earlier one, as salary does for a month in last year's ledger.
+   */
+  private async resolve(employeeId: number, onDate?: string): Promise<Resolved> {
     const today = new Date().toISOString().slice(0, 10);
 
     const [context, year] = await Promise.all([
       this.leaveRepository.findLeaveContext(employeeId),
-      this.leaveRepository.findLeaveYearForDate(today),
+      this.leaveRepository.findLeaveYearForDate(onDate ?? today),
     ]);
 
     if (!context) throw ApiError.notFound('No HRMS profile found for this account.');

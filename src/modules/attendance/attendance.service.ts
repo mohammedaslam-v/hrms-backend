@@ -6,6 +6,7 @@ import {
   crossesMidnight,
   dayBars,
   isLate,
+  isMarkedOff,
   EMPTY_SLOTS,
   readDayAsObserved,
   minutesOf,
@@ -223,8 +224,11 @@ export class AttendanceService implements IAttendanceService {
       dto.status === 'Earned leave' ||
       dto.status === 'Unpaid full day' ||
       dto.status === 'LOP full day';
-    const loginAt = dto.loginAt || null;
-    const logoutAt = isFullLeave ? null : dto.logoutAt || null;
+    // An off day has no working times at all, exactly like a full day's leave.
+    const isOff = dto.status === 'Weekly off';
+    const noTimes = isFullLeave || isOff;
+    const loginAt = isOff ? null : dto.loginAt || null;
+    const logoutAt = noTimes ? null : dto.logoutAt || null;
 
     for (const [label, value] of [['Check-in', loginAt], ['Check-out', logoutAt]] as const) {
       if (value && !HH_MM.test(value)) throw ApiError.badRequest(`${label} must be a time in HH:MM form.`);
@@ -232,7 +236,7 @@ export class AttendanceService implements IAttendanceService {
     if (dto.status === 'Present' && !loginAt) {
       throw ApiError.badRequest('A present day needs a check-in time.');
     }
-    if (!isFullLeave && loginAt && !logoutAt && date !== now.date) {
+    if (!noTimes && loginAt && !logoutAt && date !== now.date) {
       throw ApiError.badRequest('Add a check-out time — only today can be left still checked in.');
     }
     if (!loginAt && logoutAt) throw ApiError.badRequest('A check-out needs a check-in before it.');
@@ -240,15 +244,17 @@ export class AttendanceService implements IAttendanceService {
       throw ApiError.badRequest('Choose which half of the day was taken.');
     }
 
-    const punch = !isFullLeave && loginAt ? { loginAt, logoutAt } : null;
+    const punch = !noTimes && loginAt ? { loginAt, logoutAt } : null;
     if (punch?.logoutAt && activeHours({ loginAt: punch.loginAt, logoutAt: punch.logoutAt }) === 0) {
       throw ApiError.badRequest('Those check-in and check-out times do not make a valid working span.');
     }
 
     // Leave first: editing an approved leave clears that day's punch, so the
-    // punch the admin typed is written after it, not before.
+    // punch the admin typed is written after it, not before. Present and
+    // Weekly off both carry no leave, which cancels a single-day leave on the
+    // date and gives its days back to the balance.
     const isLop = dto.status.startsWith('Unpaid') || dto.status.startsWith('LOP');
-    const leaveType = dto.status === 'Present' ? null : isLop ? 'Unpaid' : 'Earned';
+    const leaveType = dto.status === 'Present' || isOff ? null : isLop ? 'Unpaid' : 'Earned';
     const leaveMessage = await this.leaveService.setDayLeave(
       viewerId,
       subjectId,
@@ -268,6 +274,9 @@ export class AttendanceService implements IAttendanceService {
     if (dto.status === 'Present') {
       lateBy = minutesLate(punch!.loginAt, schedule.shiftStart);
       status = isLate(lateBy, policy.lateGraceMinutes) ? 'Late' : 'On time';
+    } else if (isOff) {
+      // Read back by isMarkedOff(): a paid day off, never a loss of pay.
+      status = 'Weekly off';
     } else {
       status = isHalf ? 'Half day' : 'Leave';
     }
@@ -340,6 +349,7 @@ export class AttendanceService implements IAttendanceService {
 
     const day = attendanceOf({
       ...facts,
+      markedOff: isMarkedOff(stored),
       punch: stored?.loginAt ? { loginAt: stored.loginAt, logoutAt: stored.logoutAt } : null,
     });
 
@@ -612,6 +622,7 @@ export class AttendanceService implements IAttendanceService {
         date,
         today: now.date,
         weeklyOff: schedule.weeklyOff,
+        markedOff: isMarkedOff(record),
         holidayName: day?.holidayName ?? null,
         leave: day?.leave ?? null,
         punch: readAsObserved ? null : punch,

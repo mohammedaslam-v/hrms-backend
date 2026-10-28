@@ -237,10 +237,14 @@ export const createContainer = () => {
   const profileController = new ProfileController(profileService);
 
   const salaryRepository: ISalaryRepository = new SalaryRepository(pool);
+  // Loss of pay is read from the leave ledger and the attendance calendar, so
+  // a day corrected on the calendar moves the payslip with it.
   const salaryService: ISalaryService = new SalaryService(
     salaryRepository,
     compensationService,
     accessService,
+    leaveService,
+    attendanceService,
   );
   const salaryController = new SalaryController(salaryService);
 

@@ -6,6 +6,7 @@ import {
   PayoutType,
   PayoutStatus,
   PayoutMode,
+  SalaryPayoutSnapshot,
 } from './payout.model';
 
 interface PayoutRow extends RowDataPacket {
@@ -163,6 +164,15 @@ export class PayoutRepository implements IPayoutRepository {
     const created = await this.findPayoutById(result.insertId);
     if (!created) throw new Error(`Failed to retrieve created payout ${result.insertId}`);
     return created;
+  }
+
+  async saveSalarySnapshot(id: number, snapshot: SalaryPayoutSnapshot): Promise<void> {
+    await this.pool.execute(
+      `UPDATE hrms_payouts
+          SET lop_days = ?, lop_rate = ?, arrears_amount = ?
+        WHERE id = ? AND payout_type = 'salary'`,
+      [snapshot.lopDays, snapshot.lopRate, snapshot.arrearsAmount, id],
+    );
   }
 
   async updatePayoutRazorpayInfo(

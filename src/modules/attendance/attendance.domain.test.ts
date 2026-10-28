@@ -12,6 +12,7 @@ import {
   minutesLate,
   minutesOf,
   resolveDayStatus,
+  isMarkedOff,
   shiftDateOf,
   isPunchExpired,
   CHECKOUT_GRACE_MINUTES,
@@ -43,6 +44,7 @@ const day = (date: string, hours: number): DayAttendance => ({
   source: 'punch' as const,
   activeHours: hours,
   lateByMinutes: 0,
+  leaveType: null,
 });
 
 describe('reading times and dates', () => {
@@ -160,6 +162,16 @@ describe('what a day was — precedence', () => {
       }),
     );
     assert.equal(status, 'Weekly off');
+  });
+
+  it('2b. a date an admin marked off is a weekly off on a working day', () => {
+    const status = resolveDayStatus(facts({ date: '2026-09-01', markedOff: true }));
+    assert.equal(status, 'Weekly off');
+    // Only a manual row saying so marks a day off.
+    assert.equal(isMarkedOff({ source: 'manual', status: 'Weekly off' }), true);
+    assert.equal(isMarkedOff({ source: 'app', status: 'Weekly off' }), false);
+    assert.equal(isMarkedOff({ source: 'manual', status: 'On time' }), false);
+    assert.equal(isMarkedOff(null), false);
   });
 
   it('3. approved leave beats absence — the rule that matters most', () => {
