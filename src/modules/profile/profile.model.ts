@@ -86,10 +86,12 @@ export interface UpdatePersonalDetailsDto {
   homeLng?: number | string | null;
 }
 
+/** The two saved places an employee can punch from besides the office. */
+export type LocationSlot = 'home' | 'second';
+
 /**
- * The one saved location an employee punches from besides the office —
- * `hrms_employees.home_lat/home_lng`. WFH: their only allowed place.
- * WFO: their second allowed place, after the office.
+ * A saved punching place — `hrms_employees.home_*` or `second_*`.
+ * WFH: home is their only required place. WFO: extra places beside the office.
  */
 export interface HomeLocation {
   lat: number;
@@ -105,6 +107,34 @@ export interface HomeLocationStatus {
   /** WFO or WFH — the work modes the geofence uses a home location for. */
   required: boolean;
   saved: boolean;
+}
+
+/**
+ * Everything the admin's Locations popup shows and edits for one person.
+ * The second location is HR's alone — the employee never sets or sees it.
+ */
+export interface EmployeeLocations {
+  employeeId: number;
+  fullName: string;
+  workMode: WorkMode;
+  /** WFO: the office always counts, whatever is set here. */
+  officeAlwaysAllowed: boolean;
+  /** Each place counts only while its switch is on. */
+  homeEnabled: boolean;
+  home: HomeLocation | null;
+  secondEnabled: boolean;
+  /** Kept while switched off, so switching back on restores it. */
+  second: HomeLocation | null;
+}
+
+/** The admin popup's Save. Points are validated and rounded in the service. */
+export interface SaveLocationsDto {
+  homeEnabled: boolean;
+  /** Empty = clear it. Refused while homeEnabled — an "on" place needs a point. */
+  home: { lat: unknown; lng: unknown } | null;
+  secondEnabled: boolean;
+  /** Required when secondEnabled; ignored (left as saved) when not. */
+  second: { lat: unknown; lng: unknown } | null;
 }
 
 export interface DismissEmployeeDto {
@@ -189,6 +219,11 @@ export interface ProfileRecord {
   panNumber: string | null;
   aadharNumber: string | null;
   homeLocation: HomeLocation | null;
+  /** HR's switch for home (default on). Off: the saved point does not count. */
+  homeLocationEnabled: boolean;
+  /** HR switched the second location on (it counts only while on). */
+  secondLocationEnabled: boolean;
+  secondLocation: HomeLocation | null;
   hrmsRole?: "employee" | "admin";
   isManagerOverride?: boolean;
   role?: "employee" | "manager" | "admin";

@@ -1,4 +1,10 @@
-import { DismissEmployeeDto, DocumentKey, ProfileRecord, UpdatePersonalDetailsDto } from './profile.model';
+import {
+  DismissEmployeeDto,
+  DocumentKey,
+  LocationSlot,
+  ProfileRecord,
+  UpdatePersonalDetailsDto,
+} from './profile.model';
 
 export interface IProfileRepository {
   findProfile(employeeId: number): Promise<ProfileRecord | null>;
@@ -29,17 +35,21 @@ export interface IProfileRepository {
 
   updatePersonalDetails(employeeId: number, dto: UpdatePersonalDetailsDto): Promise<void>;
 
-  /** Saves the geofence home point (null clears it) and stamps who did it, and when. */
-  saveHomeLocation(
+  /** Saves a geofence place (null clears it) and stamps who did it, and when. */
+  saveLocation(
     employeeId: number,
+    slot: LocationSlot,
     point: { lat: number; lng: number } | null,
     setBy: number,
   ): Promise<void>;
 
+  /** HR's on/off switches for both places. Coordinates are kept either way. */
+  setLocationsEnabled(employeeId: number, homeEnabled: boolean, secondEnabled: boolean): Promise<void>;
+
   /** Work mode and whether a home point is saved — one cheap row for the reminder. */
   findHomeLocationStatus(
     employeeId: number,
-  ): Promise<{ workMode: string | null; saved: boolean } | null>;
+  ): Promise<{ workMode: string | null; saved: boolean; enabled: boolean } | null>;
 
   deleteEmployee(employeeId: number, adminId: number | null): Promise<void>;
 }

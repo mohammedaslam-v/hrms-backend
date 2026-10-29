@@ -29,6 +29,8 @@ export const createProfileRouter = (controller: ProfileController): Router => {
   router.post('/:id/toggle-login', controller.toggleLogin);
   router.post('/:id/employment-type', controller.updateEmploymentType);
   router.post('/:id/work-mode', controller.updateWorkMode);
+  router.get('/:id/locations', controller.getLocations);
+  router.put('/:id/locations', controller.saveLocations);
   router.post('/:id/personal-details', controller.updatePersonalDetails);
   router.post('/:id/dismiss', controller.dismissEmployee);
   router.post('/:id/toggle-salary', controller.toggleSalary);

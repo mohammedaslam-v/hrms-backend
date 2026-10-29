@@ -21,6 +21,8 @@ export interface DirectoryView {
    * withheld one, and the table would silently drop the column for admins.
    */
   canSeePay: boolean;
+  /** Whether to draw the admin-only Locations column (its Edit button). */
+  canManageLocations: boolean;
   /** Why this person can see this list — drives the page's subtitle. */
   scope: 'company' | 'team';
   members: DirectoryMember[];

@@ -50,6 +50,11 @@ export interface WorkSchedule {
   /** `hrms_employees.home_lat/home_lng`. Null until saved. */
   homeLat: number | null;
   homeLng: number | null;
+  /** The admin's switch for home. Off: the saved point does not count. */
+  homeEnabled: boolean;
+  /** The second location — null when the admin has it off, or it is not saved. */
+  secondLat: number | null;
+  secondLng: number | null;
 }
 
 /**

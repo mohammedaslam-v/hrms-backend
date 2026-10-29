@@ -28,6 +28,9 @@ interface ScheduleRow extends RowDataPacket {
   // DECIMAL(9,6). mysql2 returns DECIMAL as a string so no digit is lost.
   home_lat: string | null;
   home_lng: string | null;
+  home_location_enabled: number | null;
+  second_lat: string | null;
+  second_lng: string | null;
 }
 
 /** A DECIMAL column as a number, or null when empty. */
@@ -118,7 +121,10 @@ export class AttendanceRepository implements IAttendanceRepository {
   async findSchedule(employeeId: number): Promise<WorkSchedule | null> {
     const [rows] = await this.pool.execute<ScheduleRow[]>(
       `SELECT e.shift_start, e.shift_end, e.weekly_off, e.date_of_leaving,
-              COALESCE(a.role, e.designation) AS portal_role, e.work_mode, e.home_lat, e.home_lng
+              COALESCE(a.role, e.designation) AS portal_role, e.work_mode, e.home_lat, e.home_lng, e.home_location_enabled,
+              -- Only while an admin has it switched on; off means "not a place".
+              IF(e.second_location_enabled = 1, e.second_lat, NULL) AS second_lat,
+              IF(e.second_location_enabled = 1, e.second_lng, NULL) AS second_lng
          FROM hrms_employees e
          LEFT JOIN admins a ON a.id = e.admin_id AND a.deleted_at IS NULL
         WHERE e.id = ?`,
@@ -136,6 +142,9 @@ export class AttendanceRepository implements IAttendanceRepository {
       workMode: row.work_mode,
       homeLat: coordinate(row.home_lat),
       homeLng: coordinate(row.home_lng),
+      homeEnabled: row.home_location_enabled === null ? true : Boolean(row.home_location_enabled),
+      secondLat: coordinate(row.second_lat),
+      secondLng: coordinate(row.second_lng),
     };
   }
 
@@ -187,7 +196,10 @@ export class AttendanceRepository implements IAttendanceRepository {
 
     const [rows] = await this.pool.query<(ScheduleRow & { id: number })[]>(
       `SELECT e.id, e.shift_start, e.shift_end, e.weekly_off, e.date_of_leaving,
-              a.role AS portal_role, e.work_mode, e.home_lat, e.home_lng
+              a.role AS portal_role, e.work_mode, e.home_lat, e.home_lng, e.home_location_enabled,
+              -- Only while an admin has it switched on; off means "not a place".
+              IF(e.second_location_enabled = 1, e.second_lat, NULL) AS second_lat,
+              IF(e.second_location_enabled = 1, e.second_lng, NULL) AS second_lng
          FROM hrms_employees e
          LEFT JOIN admins a ON a.id = e.admin_id AND a.deleted_at IS NULL
         WHERE e.id IN (${AttendanceRepository.idList(employeeIds)})`,
@@ -203,6 +215,9 @@ export class AttendanceRepository implements IAttendanceRepository {
         workMode: row.work_mode,
         homeLat: coordinate(row.home_lat),
         homeLng: coordinate(row.home_lng),
+        homeEnabled: row.home_location_enabled === null ? true : Boolean(row.home_location_enabled),
+        secondLat: coordinate(row.second_lat),
+        secondLng: coordinate(row.second_lng),
       });
     }
     return byId;

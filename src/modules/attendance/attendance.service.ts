@@ -389,16 +389,21 @@ export class AttendanceService implements IAttendanceService {
   }
 
   /**
-   * Every place this person may punch from (office and/or home), or null when
-   * they may punch anywhere. The rule itself is policyFor() in the domain.
+   * Every place this person may punch from (office, home, second location), or
+   * null when they may punch anywhere. The rule itself is policyFor() in the
+   * domain; the repository already blanks a second location that is switched off.
    */
   private fenceFor(schedule: WorkSchedule): GeofencePolicy | null {
     if (!this.geofenceConfig) return null;
-    const home =
-      schedule.homeLat !== null && schedule.homeLng !== null
-        ? { lat: schedule.homeLat, lng: schedule.homeLng }
-        : null;
-    return policyFor(schedule.workMode, home, this.geofenceConfig);
+    const point = (lat: number | null, lng: number | null) =>
+      lat !== null && lng !== null ? { lat, lng } : null;
+    return policyFor(
+      schedule.workMode,
+      point(schedule.homeLat, schedule.homeLng),
+      this.geofenceConfig,
+      point(schedule.secondLat, schedule.secondLng),
+      schedule.homeEnabled,
+    );
   }
 
   /**

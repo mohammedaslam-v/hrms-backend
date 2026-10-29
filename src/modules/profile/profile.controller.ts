@@ -100,6 +100,34 @@ export class ProfileController {
     res.json({ success: true, data: await this.profileService.getHomeLocationStatus(employeeId) });
   });
 
+  /** GET /profile/:id/locations — admin only, checked in the service. */
+  getLocations: RequestHandler = asyncHandler(async (req, res) => {
+    const { employeeId } = req as AuthenticatedRequest;
+    const subjectId = this.readId(req.params.id);
+    res.json({ success: true, data: await this.profileService.getLocations(employeeId, subjectId) });
+  });
+
+  /** PUT /profile/:id/locations { homeEnabled, home, secondEnabled, second } — admin only. */
+  saveLocations: RequestHandler = asyncHandler(async (req, res) => {
+    const { employeeId } = req as AuthenticatedRequest;
+    const subjectId = this.readId(req.params.id);
+    const body = req.body ?? {};
+    if (typeof body.homeEnabled !== 'boolean' || typeof body.secondEnabled !== 'boolean') {
+      throw ApiError.badRequest('homeEnabled and secondEnabled must be true or false.');
+    }
+    const point = (p: unknown) =>
+      p && typeof p === 'object'
+        ? { lat: (p as Record<string, unknown>).lat, lng: (p as Record<string, unknown>).lng }
+        : null;
+    const data = await this.profileService.saveLocations(employeeId, subjectId, {
+      homeEnabled: body.homeEnabled,
+      home: point(body.home),
+      secondEnabled: body.secondEnabled,
+      second: point(body.second),
+    });
+    res.json({ success: true, message: 'Locations saved.', data });
+  });
+
     updatePersonalDetails: RequestHandler = asyncHandler(async (req, res) => {
     const { employeeId } = req as AuthenticatedRequest;
     const subjectId = req.params.id && req.params.id !== "me" ? this.readId(req.params.id) : employeeId;

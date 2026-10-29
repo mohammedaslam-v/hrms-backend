@@ -1,4 +1,4 @@
-import { DismissEmployeeDto, DocumentFileResult, DocumentKey, ProfileDocument, ProfileView, SaveDocumentDto, ToggleSalaryDto, UpdateCompensationDto, CompensationView, UpdatePersonalDetailsDto, HomeLocationStatus } from './profile.model';
+import { DismissEmployeeDto, DocumentFileResult, DocumentKey, ProfileDocument, ProfileView, SaveDocumentDto, ToggleSalaryDto, UpdateCompensationDto, CompensationView, UpdatePersonalDetailsDto, HomeLocationStatus, EmployeeLocations, SaveLocationsDto } from './profile.model';
 
 export interface IProfileService {
   getProfile(viewerId: number, subjectId: number): Promise<ProfileView>;
@@ -59,6 +59,12 @@ export interface IProfileService {
 
   /** Is a home location needed (WFO/WFH), and is it saved? For the reminder. */
   getHomeLocationStatus(employeeId: number): Promise<HomeLocationStatus>;
+
+  /** Admin only: one person's check-in locations, for the Team directory popup. */
+  getLocations(viewerId: number, subjectId: number): Promise<EmployeeLocations>;
+
+  /** Admin only: save home, the dual-location switch and the second point. */
+  saveLocations(viewerId: number, subjectId: number, dto: SaveLocationsDto): Promise<EmployeeLocations>;
 
   deleteEmployee(
     viewerId: number,

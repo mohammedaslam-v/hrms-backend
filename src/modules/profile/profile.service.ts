@@ -27,7 +27,10 @@ import {
   DismissEmployeeDto,
   DocumentFileResult,
   DocumentKey,
+  EmployeeLocations,
   HomeLocationStatus,
+  LocationSlot,
+  SaveLocationsDto,
   ProfileDocument,
   ProfileRecord,
   ProfileView,
@@ -39,37 +42,45 @@ import {
 import { ApiError } from '../../utils/api-error';
 import { isValidPoint, needsHomeLocation, type GeoPoint } from '../attendance/geofence.domain';
 
+const SLOT_NAME: Record<LocationSlot, string> = { home: 'home location', second: 'second location' };
+
 /**
- * The home location out of a personal-details body, and off it.
+ * A latitude/longitude pair as typed, as a point.
  *
- *   undefined  — not being changed (neither field sent)
- *   null       — being cleared (both sent empty)
- *   GeoPoint   — being set, rounded to 6 decimals (~0.11 m), which is all
- *                DECIMAL(9,6) keeps anyway
+ *   null       — both empty (clear it)
+ *   GeoPoint   — rounded to 6 decimals (~0.11 m), which is all DECIMAL(9,6)
+ *                keeps anyway
  *
  * Half a location (one field without the other) is refused, as is anything
  * off the planet.
+ */
+function toPoint(lat: unknown, lng: unknown, slot: LocationSlot): GeoPoint | null {
+  const empty = (v: unknown) => v === null || v === undefined || String(v).trim() === '';
+  if (empty(lat) && empty(lng)) return null;
+  if (empty(lat) || empty(lng)) {
+    throw ApiError.badRequest(`Enter both latitude and longitude for the ${SLOT_NAME[slot]}.`);
+  }
+
+  const point = { lat: Number(lat), lng: Number(lng) };
+  if (!isValidPoint(point)) {
+    throw ApiError.badRequest(
+      `The ${SLOT_NAME[slot]} must be a latitude between -90 and 90 and a longitude between -180 and 180.`,
+    );
+  }
+  const round6 = (n: number) => Math.round(n * 1e6) / 1e6;
+  return { lat: round6(point.lat), lng: round6(point.lng) };
+}
+
+/**
+ * The home location out of a personal-details body, and off it — undefined
+ * when neither field was sent (not being changed).
  */
 function takeHomeLocation(dto: UpdatePersonalDetailsDto): GeoPoint | null | undefined {
   const { homeLat, homeLng } = dto;
   delete dto.homeLat;
   delete dto.homeLng;
   if (homeLat === undefined && homeLng === undefined) return undefined;
-
-  const empty = (v: unknown) => v === null || v === undefined || String(v).trim() === '';
-  if (empty(homeLat) && empty(homeLng)) return null;
-  if (empty(homeLat) || empty(homeLng)) {
-    throw ApiError.badRequest('Enter both latitude and longitude for the home location.');
-  }
-
-  const point = { lat: Number(homeLat), lng: Number(homeLng) };
-  if (!isValidPoint(point)) {
-    throw ApiError.badRequest(
-      'Home location must be a latitude between -90 and 90 and a longitude between -180 and 180.',
-    );
-  }
-  const round6 = (n: number) => Math.round(n * 1e6) / 1e6;
-  return { lat: round6(point.lat), lng: round6(point.lng) };
+  return toPoint(homeLat, homeLng, 'home');
 }
 
 const toCompensationView = (
@@ -449,7 +460,8 @@ export class ProfileService implements IProfileService {
 
     // Home location: the employee sets it ONCE, while it is empty. After that
     // only HR/admin may change or clear it. "Locked" is not stored anywhere — it
-    // is simply "a location is already saved".
+    // is simply "a location is already saved". (The second location is not
+    // here at all: only an admin sets it, from the Team directory's popup.)
     const home = takeHomeLocation(dto);
     if (home !== undefined && access === "self") {
       if (record.homeLocation) {
@@ -531,7 +543,7 @@ export class ProfileService implements IProfileService {
 
     await this.profileRepository.updatePersonalDetails(subjectId, dto);
     if (home !== undefined) {
-      await this.profileRepository.saveHomeLocation(subjectId, home, viewerId);
+      await this.profileRepository.saveLocation(subjectId, "home", home, viewerId);
     }
     return this.getProfile(viewerId, subjectId);
   }
@@ -540,7 +552,66 @@ export class ProfileService implements IProfileService {
   async getHomeLocationStatus(employeeId: number): Promise<HomeLocationStatus> {
     const status = await this.profileRepository.findHomeLocationStatus(employeeId);
     if (!status) throw ApiError.notFound("That employee record does not exist.");
-    return { required: needsHomeLocation(status.workMode), saved: status.saved };
+    // HR switched home off: it does not count, so there is nothing to ask for.
+    return { required: needsHomeLocation(status.workMode) && status.enabled, saved: status.saved };
+  }
+
+  /** Admin only: what the Team directory's Locations popup opens with. */
+  async getLocations(viewerId: number, subjectId: number): Promise<EmployeeLocations> {
+    const record = await this.requireAdminFor(viewerId, subjectId);
+    return {
+      employeeId: record.employeeId,
+      fullName: record.fullName,
+      workMode: record.workMode,
+      officeAlwaysAllowed: record.workMode === "WFO",
+      homeEnabled: record.homeLocationEnabled,
+      home: record.homeLocation,
+      secondEnabled: record.secondLocationEnabled,
+      second: record.secondLocation,
+    };
+  }
+
+  /**
+   * Admin only: the popup's Save — both places and their switches, in one go.
+   *
+   *   - A place counts only while its switch is on. Off keeps the saved point,
+   *     so switching back on restores it.
+   *   - A place switched ON needs both coordinates — an "on" place with nowhere
+   *     on the map would block a WFH employee from checking in at all.
+   *   - Both OFF: WFH is not location-checked at all; WFO keeps the office.
+   *
+   * Everything is validated before anything is written.
+   */
+  async saveLocations(
+    viewerId: number,
+    subjectId: number,
+    dto: SaveLocationsDto,
+  ): Promise<EmployeeLocations> {
+    await this.requireAdminFor(viewerId, subjectId);
+
+    const home = toPoint(dto.home?.lat, dto.home?.lng, "home");
+    const second = toPoint(dto.second?.lat, dto.second?.lng, "second");
+    if (dto.homeEnabled && !home) {
+      throw ApiError.badRequest("Enter the first location's latitude and longitude, or switch it off.");
+    }
+    if (dto.secondEnabled && !second) {
+      throw ApiError.badRequest("Enter the second location's latitude and longitude, or switch it off.");
+    }
+
+    await this.profileRepository.saveLocation(subjectId, "home", home, viewerId);
+    await this.profileRepository.saveLocation(subjectId, "second", second, viewerId);
+    await this.profileRepository.setLocationsEnabled(subjectId, dto.homeEnabled, dto.secondEnabled);
+    return this.getLocations(viewerId, subjectId);
+  }
+
+  private async requireAdminFor(viewerId: number, subjectId: number): Promise<ProfileRecord> {
+    const access = await this.accessService.require(viewerId, subjectId);
+    if (access !== "admin") {
+      throw ApiError.forbidden("Only administrators can manage check-in locations.");
+    }
+    const record = await this.profileRepository.findProfile(subjectId);
+    if (!record) throw ApiError.notFound("That employee record does not exist.");
+    return record;
   }
 
 async updateEmploymentType(
@@ -641,7 +712,7 @@ async updateEmploymentType(
       panNumber: personal ? record.panNumber : null,
       aadharNumber: personal ? record.aadharNumber : null,
       homeLocation: personal ? record.homeLocation : null,
-      homeLocationRequired: needsHomeLocation(record.workMode),
+      homeLocationRequired: needsHomeLocation(record.workMode) && record.homeLocationEnabled,
       // Only the employee is ever locked out, and only after their one save.
       homeLocationLocked: access === 'self' && record.homeLocation !== null,
       linkedinProfile: personal ? record.linkedinProfile : null,

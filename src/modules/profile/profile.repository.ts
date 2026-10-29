@@ -1,6 +1,15 @@
 import { Pool, RowDataPacket } from 'mysql2/promise';
 import { IProfileRepository } from './profile.repository.interface';
-import { DismissEmployeeDto, DocumentKey, ProfileDocument, ProfileRecord, UpdatePersonalDetailsDto, WorkMode } from './profile.model';
+import {
+  DismissEmployeeDto,
+  DocumentKey,
+  HomeLocation,
+  LocationSlot,
+  ProfileDocument,
+  ProfileRecord,
+  UpdatePersonalDetailsDto,
+  WorkMode,
+} from './profile.model';
 
 interface ProfileRow extends RowDataPacket {
   employee_id: number;
@@ -65,7 +74,40 @@ interface ProfileRow extends RowDataPacket {
   home_location_set_at: string | null;
   home_location_set_by: number | null;
   home_location_set_by_name: string | null;
+  home_location_enabled: number | null;
+  second_location_enabled: number | null;
+  second_lat: string | null;
+  second_lng: string | null;
+  second_location_set_at: string | null;
+  second_location_set_by: number | null;
+  second_location_set_by_name: string | null;
 }
+
+/**
+ * The columns behind each saved place. A fixed map, never built from input,
+ * so the slot can be named in SQL safely.
+ */
+const SLOT_COLUMNS: Record<LocationSlot, { lat: string; lng: string; at: string; by: string }> = {
+  home: { lat: 'home_lat', lng: 'home_lng', at: 'home_location_set_at', by: 'home_location_set_by' },
+  second: {
+    lat: 'second_lat',
+    lng: 'second_lng',
+    at: 'second_location_set_at',
+    by: 'second_location_set_by',
+  },
+};
+
+/** A saved place out of its four columns, or null when it is not saved. */
+const toLocation = (
+  lat: string | null,
+  lng: string | null,
+  at: string | null,
+  byId: number | null,
+  byName: string | null,
+): HomeLocation | null =>
+  lat !== null && lng !== null
+    ? { lat: Number(lat), lng: Number(lng), setAt: at ? String(at) : null, setById: byId, setByName: byName }
+    : null;
 
 const DOCUMENT_COLUMNS: { key: DocumentKey; label: string; column: keyof ProfileRow; numberColumn?: keyof ProfileRow }[] = [
   { key: 'pan', label: 'PAN card', column: 'pan_upload', numberColumn: 'pan_number' },
@@ -141,11 +183,19 @@ export class ProfileRepository implements IProfileRepository {
               e.home_lng,
               e.home_location_set_at,
               e.home_location_set_by,
-              hs.full_name               AS home_location_set_by_name
+              hs.full_name               AS home_location_set_by_name,
+              e.home_location_enabled,
+              e.second_location_enabled,
+              e.second_lat,
+              e.second_lng,
+              e.second_location_set_at,
+              e.second_location_set_by,
+              ss.full_name               AS second_location_set_by_name
          FROM hrms_employees e
          LEFT JOIN admins a          ON a.id = e.admin_id AND a.deleted_at IS NULL
          LEFT JOIN hrms_employees m  ON m.id = e.manager_id
          LEFT JOIN hrms_employees hs ON hs.id = e.home_location_set_by
+         LEFT JOIN hrms_employees ss ON ss.id = e.second_location_set_by
         WHERE e.id = ?`,
       [employeeId],
     );
@@ -769,53 +819,70 @@ async updateEmploymentType(employeeId: number, employmentType: string): Promise<
       isRehireEligible: row.is_rehire_eligible === undefined ? true : Boolean(row.is_rehire_eligible),
       exitNotes: this.text(row.exit_notes ?? null),
       deletedAt: row.deleted_at ? String(row.deleted_at) : null,
-      homeLocation:
-        row.home_lat !== null && row.home_lng !== null
-          ? {
-              lat: Number(row.home_lat),
-              lng: Number(row.home_lng),
-              setAt: row.home_location_set_at ? String(row.home_location_set_at) : null,
-              setById: row.home_location_set_by,
-              setByName: row.home_location_set_by_name,
-            }
-          : null,
+      homeLocation: toLocation(
+        row.home_lat,
+        row.home_lng,
+        row.home_location_set_at,
+        row.home_location_set_by,
+        row.home_location_set_by_name,
+      ),
+      homeLocationEnabled: row.home_location_enabled === null ? true : Boolean(row.home_location_enabled),
+      secondLocationEnabled: Boolean(row.second_location_enabled),
+      secondLocation: toLocation(
+        row.second_lat,
+        row.second_lng,
+        row.second_location_set_at,
+        row.second_location_set_by,
+        row.second_location_set_by_name,
+      ),
     };
   }
 
   /**
-   * Saves (or, with null, clears) the home location and stamps who did it.
+   * Saves (or, with null, clears) a saved place and stamps who did it.
    * The time is the database clock's — NOW() — never this process's.
    */
-  async saveHomeLocation(
+  async saveLocation(
     employeeId: number,
+    slot: LocationSlot,
     point: { lat: number; lng: number } | null,
     setBy: number,
   ): Promise<void> {
+    const c = SLOT_COLUMNS[slot];
     await this.pool.execute(
       point
         ? `UPDATE hrms_employees
-              SET home_lat = ?, home_lng = ?,
-                  home_location_set_at = NOW(), home_location_set_by = ?,
-                  updated_at = NOW()
+              SET ${c.lat} = ?, ${c.lng} = ?, ${c.at} = NOW(), ${c.by} = ?, updated_at = NOW()
             WHERE id = ?`
         : `UPDATE hrms_employees
-              SET home_lat = NULL, home_lng = NULL,
-                  home_location_set_at = NULL, home_location_set_by = NULL,
-                  updated_at = NOW()
+              SET ${c.lat} = NULL, ${c.lng} = NULL, ${c.at} = NULL, ${c.by} = NULL, updated_at = NOW()
             WHERE id = ?`,
       point ? [point.lat, point.lng, setBy, employeeId] : [employeeId],
     );
   }
 
+  /** HR's two on/off switches. The saved coordinates are kept either way. */
+  async setLocationsEnabled(employeeId: number, homeEnabled: boolean, secondEnabled: boolean): Promise<void> {
+    await this.pool.execute(
+      `UPDATE hrms_employees
+          SET home_location_enabled = ?, second_location_enabled = ?, updated_at = NOW()
+        WHERE id = ?`,
+      [homeEnabled ? 1 : 0, secondEnabled ? 1 : 0, employeeId],
+    );
+  }
+
   async findHomeLocationStatus(
     employeeId: number,
-  ): Promise<{ workMode: string | null; saved: boolean } | null> {
+  ): Promise<{ workMode: string | null; saved: boolean; enabled: boolean } | null> {
     const [rows] = await this.pool.execute<RowDataPacket[]>(
-      `SELECT work_mode, home_lat IS NOT NULL AS saved FROM hrms_employees WHERE id = ?`,
+      `SELECT work_mode, home_lat IS NOT NULL AS saved, home_location_enabled AS enabled
+         FROM hrms_employees WHERE id = ?`,
       [employeeId],
     );
     const row = rows[0];
-    return row ? { workMode: row.work_mode, saved: Boolean(row.saved) } : null;
+    return row
+      ? { workMode: row.work_mode, saved: Boolean(row.saved), enabled: row.enabled === null || Boolean(row.enabled) }
+      : null;
   }
 
   private mapDocuments(row: ProfileRow): ProfileDocument[] {

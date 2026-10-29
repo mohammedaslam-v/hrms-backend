@@ -43,10 +43,12 @@ export class TeamService implements ITeamService {
       for (const member of members) {
         member.ctc = pay.get(member.id)?.ctc ?? null;
       }
+
     }
 
     return {
       canSeePay: isAdmin,
+      canManageLocations: isAdmin,
       scope: isAdmin ? 'company' : 'team',
       members,
     };
