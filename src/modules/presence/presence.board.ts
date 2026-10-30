@@ -29,7 +29,9 @@ export interface BoardInput {
   /** admins.role by admin id. */
   roleOf: Map<number, string>;
   latest: Map<number, LatestPresenceRow>;
-  leaveOf: Map<number, { type: string; isHalfDay: boolean }>;
+  leaveOf?: Map<number, { type: string; isHalfDay: boolean }>;
+  leaveTodayOf?: Map<number, { type: string; isHalfDay: boolean }>;
+  leaveYesterdayOf?: Map<number, { type: string; isHalfDay: boolean }>;
   /** Admin-panel users with no HRMS record, seen in the last 30 days. */
   unlinked: UnlinkedPresenceRow[];
   now?: Date;
@@ -39,6 +41,8 @@ export interface BoardInput {
   weeklyOffOf?: Map<number, string[]>;
   /** Today's declared holiday, if any. */
   holidayToday?: string | null;
+  /** Yesterday's declared holiday, if any. */
+  holidayYesterday?: string | null;
   /** Seconds active on the admin panel by admin id (number, or Map<date, number>). */
   activeSecondsOf?: Map<number, number | Map<string, number>>;
 }
@@ -149,20 +153,29 @@ export function buildBoard(input: BoardInput): PresenceBoard {
     }
     const adminId = input.adminOf.get(m.employeeId) ?? null;
     const presence = presenceOf(adminId ? input.latest.get(adminId) : undefined);
-    const leave = input.leaveOf.get(m.employeeId) ?? null;
 
-    // Off is judged against the shift running now (or today's, outside it).
+    // Off and leave are judged against the shift running now (or today's, outside it).
     const running = input.time ? shiftNow(m.shiftStart, m.shiftEnd, input.today, input.time) : null;
     const isNight = crossesMidnight(m.shiftStart, m.shiftEnd);
     const weeklyOffs = input.weeklyOffOf?.get(m.employeeId) ?? [];
 
     let isOff = false;
+    let holidayName: string | null = null;
+    let leave: { type: string; isHalfDay: boolean } | null = null;
+
     if (running) {
+      // Shift is actively running right now.
+      // If after midnight (00:00 to shiftEnd), running.shiftDate is yesterday.
+      const isYesterday = running.shiftDate !== input.today;
       isOff = isWeeklyOff(running.shiftDate, weeklyOffs);
+      holidayName = isYesterday ? (input.holidayYesterday ?? null) : (input.holidayToday ?? null);
+      leave = isYesterday
+        ? (input.leaveYesterdayOf?.get(m.employeeId) ?? null)
+        : (input.leaveTodayOf?.get(m.employeeId) ?? input.leaveOf?.get(m.employeeId) ?? null);
     } else if (isNight && input.time) {
       // Between shifts for a night shift employee (e.g. daytime between 07:00 and 21:00):
-      // If today starts a weekly off shift, or yesterday's shift was a weekly off:
-      // they are on weekly off from shift end until their next working shift starts.
+      // If today starts a weekly off/leave shift, or yesterday's shift was off/leave:
+      // they remain on weekly off / leave from shift end until their next working shift starts.
       const nowMin = minutesOf(input.time);
       const startMin = minutesOf(m.shiftStart);
       const endMin = minutesOf(m.shiftEnd);
@@ -170,16 +183,26 @@ export function buildBoard(input: BoardInput): PresenceBoard {
         const todayOff = isWeeklyOff(input.today, weeklyOffs);
         const yesterdayOff = isWeeklyOff(addDays(input.today, -1), weeklyOffs);
         isOff = todayOff || yesterdayOff;
+
+        holidayName = input.holidayToday || input.holidayYesterday || null;
+
+        const lToday = input.leaveTodayOf?.get(m.employeeId) ?? input.leaveOf?.get(m.employeeId) ?? null;
+        const lYesterday = input.leaveYesterdayOf?.get(m.employeeId) ?? null;
+        leave = lToday ?? lYesterday;
       } else {
         isOff = isWeeklyOff(input.today, weeklyOffs);
+        holidayName = input.holidayToday ?? null;
+        leave = input.leaveTodayOf?.get(m.employeeId) ?? input.leaveOf?.get(m.employeeId) ?? null;
       }
     } else {
       isOff = isWeeklyOff(input.today, weeklyOffs);
+      holidayName = input.holidayToday ?? null;
+      leave = input.leaveTodayOf?.get(m.employeeId) ?? input.leaveOf?.get(m.employeeId) ?? null;
     }
 
     const dayOff = isOff
       ? 'Weekly off'
-      : input.holidayToday
+      : holidayName
         ? 'Holiday'
         : null;
 

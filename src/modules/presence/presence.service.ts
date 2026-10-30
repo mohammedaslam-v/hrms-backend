@@ -138,15 +138,17 @@ export class PresenceService implements IPresenceService {
   ): Promise<PresenceBoard> {
     const ids = members.map((m) => m.employeeId);
     const now = await this.attendanceRepository.now();
-    const [adminOf, context, schedules, unlinked] = await Promise.all([
+    const yesterday = addDays(now.date, -1);
+
+    const [adminOf, contextToday, contextYesterday, schedules, unlinked] = await Promise.all([
       this.repository.findAdminIdMap(ids),
       this.attendanceRepository.findDayContextFor(ids, now.date),
+      this.attendanceRepository.findDayContextFor(ids, yesterday),
       // Weekly offs, so the Active tab can leave out people not expected today.
       this.attendanceRepository.findSchedulesFor(ids),
       this.repository.findUnlinkedSeen(UNLINKED_WITHIN_DAYS),
     ]);
     const adminIds = [...new Set(adminOf.values())];
-    const yesterday = addDays(now.date, -1);
 
     const [latest, roleOf, days] = await Promise.all([
       this.repository.findLatestForMany(adminIds),
@@ -163,12 +165,20 @@ export class PresenceService implements IPresenceService {
       activeSecondsOf.set(adminId, byDate);
     }
 
-    const leaveOf = new Map<number, { type: string; isHalfDay: boolean }>();
+    const leaveTodayOf = new Map<number, { type: string; isHalfDay: boolean }>();
+    const leaveYesterdayOf = new Map<number, { type: string; isHalfDay: boolean }>();
     let holidayToday: string | null = null;
-    for (const [employeeId, day] of context) {
-      if (day.leave) leaveOf.set(employeeId, { type: day.leave.type, isHalfDay: day.leave.isHalfDay });
+    let holidayYesterday: string | null = null;
+
+    for (const [employeeId, day] of contextToday) {
+      if (day.leave) leaveTodayOf.set(employeeId, { type: day.leave.type, isHalfDay: day.leave.isHalfDay });
       holidayToday ??= day.holidayName;
     }
+    for (const [employeeId, day] of contextYesterday) {
+      if (day.leave) leaveYesterdayOf.set(employeeId, { type: day.leave.type, isHalfDay: day.leave.isHalfDay });
+      holidayYesterday ??= day.holidayName;
+    }
+
     const weeklyOffOf = new Map([...schedules].map(([id, s]) => [id, s.weeklyOff]));
 
     return buildBoard({
@@ -176,13 +186,16 @@ export class PresenceService implements IPresenceService {
       time: now.time,
       weeklyOffOf,
       holidayToday,
+      holidayYesterday,
       viewerId,
       viewerAdminIds,
       members,
       adminOf,
       roleOf,
       latest,
-      leaveOf,
+      leaveOf: leaveTodayOf,
+      leaveTodayOf,
+      leaveYesterdayOf,
       unlinked,
       activeSecondsOf,
     });

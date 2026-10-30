@@ -243,3 +243,60 @@ test('night shift shows weekly off between shift end and next shift start', () =
   assert.equal(friNight.onDuty, true);
 });
 
+test('night shift shows leave across midnight and between shift end and next shift start', () => {
+  const mirnal = {
+    employeeId: 6,
+    name: 'Mirnal',
+    designation: 'CSR',
+    department: 'Sales',
+    shiftStart: '21:00',
+    shiftEnd: '07:00',
+  };
+  // Mirnal has approved leave on 2026-10-29 (Thursday)
+  const leaveThu = new Map([[6, { type: 'Earned', isHalfDay: false }]]);
+  const leaveFri = new Map<number, { type: string; isHalfDay: boolean }>();
+
+  // Case 1: Thursday at 11:30 (during daytime before 21:00 shift starts, leave on Thursday)
+  const thuDaytime = buildBoard(input({
+    today: '2026-10-29',
+    time: '11:30',
+    members: [mirnal],
+    leaveTodayOf: leaveThu,
+  })).groups[0].people[0];
+  assert.deepEqual(thuDaytime.leave, { type: 'Earned', isHalfDay: false });
+  assert.equal(thuDaytime.onDuty, false);
+
+  // Case 2: Friday at 02:00 (after midnight, running shift belongs to Thursday 2026-10-29)
+  const friNight = buildBoard(input({
+    today: '2026-10-30',
+    time: '02:00',
+    members: [mirnal],
+    leaveTodayOf: leaveFri,
+    leaveYesterdayOf: leaveThu,
+  })).groups[0].people[0];
+  assert.deepEqual(friNight.leave, { type: 'Earned', isHalfDay: false });
+  assert.equal(friNight.onDuty, false);
+
+  // Case 3: Friday at 11:30 (shift ended at 07:00, daytime between shifts before next shift at 21:00)
+  const friDaytime = buildBoard(input({
+    today: '2026-10-30',
+    time: '11:30',
+    members: [mirnal],
+    leaveTodayOf: leaveFri,
+    leaveYesterdayOf: leaveThu,
+  })).groups[0].people[0];
+  assert.deepEqual(friDaytime.leave, { type: 'Earned', isHalfDay: false });
+  assert.equal(friDaytime.onDuty, false);
+
+  // Case 4: Friday at 21:30 (Friday night shift has started, no leave for Friday)
+  const friNextShift = buildBoard(input({
+    today: '2026-10-30',
+    time: '21:30',
+    members: [mirnal],
+    leaveTodayOf: leaveFri,
+    leaveYesterdayOf: leaveThu,
+  })).groups[0].people[0];
+  assert.equal(friNextShift.leave, null);
+  assert.equal(friNextShift.onDuty, true);
+});
+
