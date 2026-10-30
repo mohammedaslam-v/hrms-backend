@@ -127,6 +127,8 @@ export interface BoardPerson {
    * new admin shows it), or the HRMS department for someone with no account.
    */
   team: string | null;
+  /** Shift start time (HH:MM), or null for unlinked accounts. */
+  shiftStart: string | null;
   /** Approved leave today. Shown instead of the online status. */
   leave: { type: string; isHalfDay: boolean } | null;
   /** 'Weekly off' or 'Holiday' for the shift day running now, else null. */

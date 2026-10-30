@@ -200,6 +200,7 @@ export function buildBoard(input: BoardInput): PresenceBoard {
       name: m.name,
       subtitle: m.designation,
       team: (adminId ? input.roleOf.get(adminId) : undefined) || m.department || null,
+      shiftStart: start,
       leave,
       dayOff,
       // Any leave, half day included, takes someone off the expected list;
@@ -229,6 +230,7 @@ export function buildBoard(input: BoardInput): PresenceBoard {
         name: u.name,
         subtitle: u.role || null,
         team: u.role || null,
+        shiftStart: null,
         leave: null,
         // No HRMS record means no shift: shown only while active.
         dayOff: null,
