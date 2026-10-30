@@ -151,3 +151,95 @@ test("today's admin-panel time is carried per person; no account or no row reads
   assert.equal(of(2).activeTodaySeconds, 0, 'linked but not on the panel today');
   assert.equal(of(4).activeTodaySeconds, 0, 'no admin account');
 });
+
+test('night shift active time does not reset at midnight when crossing into next day', () => {
+  const nightMember = {
+    employeeId: 6,
+    name: 'Mirnal',
+    designation: 'CSR',
+    department: 'Sales',
+    shiftStart: '21:00',
+    shiftEnd: '07:00',
+  };
+  const activeMap = new Map([
+    [106, new Map([['2026-10-17', 7200], ['2026-10-18', 3600]])],
+  ]);
+
+  // At 02:00 (during the night shift, after midnight on 2026-10-18):
+  // Yesterday (2026-10-17) + today (2026-10-18) active time are combined
+  const nightInput = input({
+    today: '2026-10-18',
+    time: '02:00',
+    members: [nightMember],
+    adminOf: new Map([[6, 106]]),
+    activeSecondsOf: activeMap,
+  });
+  const atNight = buildBoard(nightInput).groups[0].people[0];
+  assert.equal(atNight.activeTodaySeconds, 10800, 'active time should not reset at midnight');
+
+  // At 11:30 (during daytime before the next 21:00 shift begins):
+  const daytimeInput = input({
+    today: '2026-10-18',
+    time: '11:30',
+    members: [nightMember],
+    adminOf: new Map([[6, 106]]),
+    activeSecondsOf: activeMap,
+  });
+  const atDaytime = buildBoard(daytimeInput).groups[0].people[0];
+  assert.equal(atDaytime.activeTodaySeconds, 10800, 'carries combined shift active time until next shift starts');
+
+  // At 21:30 (after the new shift has started):
+  const nextShiftInput = input({
+    today: '2026-10-18',
+    time: '21:30',
+    members: [nightMember],
+    adminOf: new Map([[6, 106]]),
+    activeSecondsOf: activeMap,
+  });
+  const atNextShift = buildBoard(nextShiftInput).groups[0].people[0];
+  assert.equal(atNextShift.activeTodaySeconds, 3600, 'new shift resets to today only');
+});
+
+test('night shift shows weekly off between shift end and next shift start', () => {
+  const mirnal = {
+    employeeId: 6,
+    name: 'Mirnal',
+    designation: 'CSR',
+    department: 'Sales',
+    shiftStart: '21:00',
+    shiftEnd: '07:00',
+  };
+  // 2026-10-29 is Thursday (Weekly Off), 2026-10-30 is Friday
+  const weeklyOffOf = new Map([[6, ['Thu']]]);
+
+  // Case 1: Friday at 11:30 (yesterday Thursday was weekly off, today's shift starts at 21:00)
+  const friDaytime = buildBoard(input({
+    today: '2026-10-30',
+    time: '11:30',
+    members: [mirnal],
+    weeklyOffOf,
+  })).groups[0].people[0];
+  assert.equal(friDaytime.dayOff, 'Weekly off');
+  assert.equal(friDaytime.onDuty, false);
+
+  // Case 2: Thursday at 11:30 (Wednesday night shift ended at 07:00, today Thursday is weekly off)
+  const thuDaytime = buildBoard(input({
+    today: '2026-10-29',
+    time: '11:30',
+    members: [mirnal],
+    weeklyOffOf,
+  })).groups[0].people[0];
+  assert.equal(thuDaytime.dayOff, 'Weekly off');
+  assert.equal(thuDaytime.onDuty, false);
+
+  // Case 3: Friday at 21:30 (Friday night shift is running)
+  const friNight = buildBoard(input({
+    today: '2026-10-30',
+    time: '21:30',
+    members: [mirnal],
+    weeklyOffOf,
+  })).groups[0].people[0];
+  assert.equal(friNight.dayOff, null);
+  assert.equal(friNight.onDuty, true);
+});
+

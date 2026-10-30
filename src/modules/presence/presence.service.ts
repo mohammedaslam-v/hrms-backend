@@ -1,5 +1,6 @@
 import { IAccessService } from '../access/access.service.interface';
 import { IAttendanceRepository } from '../attendance/attendance.repository.interface';
+import { addDays } from '../attendance/attendance.domain';
 import { IAuthService } from '../auth/auth.service.interface';
 import { IOrgRepository } from '../org/org.repository.interface';
 import { ApiError } from '../../utils/api-error';
@@ -145,17 +146,22 @@ export class PresenceService implements IPresenceService {
       this.repository.findUnlinkedSeen(UNLINKED_WITHIN_DAYS),
     ]);
     const adminIds = [...new Set(adminOf.values())];
-
+    const yesterday = addDays(now.date, -1);
 
     const [latest, roleOf, days] = await Promise.all([
       this.repository.findLatestForMany(adminIds),
       this.repository.findAdminRoles(adminIds),
-      // Today's total on the panel, for linked and unlinked accounts alike.
-      this.repository.findDaysForMany([...adminIds, ...unlinked.map((u) => u.admin_id)], now.date, now.date),
+      // Today and yesterday totals on the panel, so night shifts spanning two calendar days don't reset at midnight.
+      this.repository.findDaysForMany([...adminIds, ...unlinked.map((u) => u.admin_id)], yesterday, now.date),
     ]);
-    const activeSecondsOf = new Map(
-      [...days].map(([adminId, list]) => [adminId, list.reduce((s, d) => s + d.activeSeconds, 0)]),
-    );
+    const activeSecondsOf = new Map<number, Map<string, number>>();
+    for (const [adminId, list] of days) {
+      const byDate = new Map<string, number>();
+      for (const d of list) {
+        byDate.set(d.date, d.activeSeconds);
+      }
+      activeSecondsOf.set(adminId, byDate);
+    }
 
     const leaveOf = new Map<number, { type: string; isHalfDay: boolean }>();
     let holidayToday: string | null = null;
