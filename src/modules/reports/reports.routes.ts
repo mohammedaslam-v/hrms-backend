@@ -10,6 +10,8 @@ export const createReportsRouter = (controller: ReportsController): Router => {
   router.get('/catalog', controller.getCatalog);
   router.get('/data', controller.getReportData);
   router.get('/export', controller.exportReport);
+  // Attendance & activity → Active time (managers and admins; scoped in the service).
+  router.get('/active-time', controller.getActiveTime);
 
   return router;
 };

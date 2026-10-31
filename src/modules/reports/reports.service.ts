@@ -32,6 +32,8 @@ import {
   type AttendanceDay,
 } from './reports.attendance';
 import { ApiError } from '../../utils/api-error';
+import { IOrgRepository } from '../org/org.repository.interface';
+import { buildActiveTimeRows, type ActiveTimeView } from './reports.active-time';
 
 const PAYROLL_REPORT_TYPES: ReadonlySet<ReportType> = new Set([
   'salary',
@@ -48,6 +50,9 @@ const PAYROLL_REPORT_TYPES: ReadonlySet<ReportType> = new Set([
 ]);
 /** Attendance-side reports that only admins may open. */
 const ADMIN_ONLY_REPORT_TYPES: ReadonlySet<ReportType> = new Set(['activity_log']);
+
+/** The Active time tab's longest range: about two months stays readable. */
+const ACTIVE_TIME_MAX_DAYS = 62;
 
 import { payStructure, ptOf } from '../salary/salary.domain';
 import { computeTaxComputation, TAX_CONFIG } from '../tax/tax.domain';
@@ -158,7 +163,67 @@ export class ReportsService implements IReportsService {
     private readonly presenceService?: IPresenceService,
     private readonly leaveRepository?: ILeaveRepository,
     private readonly goalsRepository?: IGoalsRepository,
+    /** Who a manager may see: their reporting tree (the Active time tab). */
+    private readonly orgRepository?: IOrgRepository,
   ) {}
+
+  /**
+   * The Active time tab: panel active time and checked-in time per person per
+   * day. An admin sees the whole company; a manager only their reporting tree
+   * — the same scope as the rest of Attendance & activity. Anyone else is
+   * refused, and ids outside the viewer's scope are dropped, not trusted.
+   */
+  async getActiveTime(
+    viewerId: number,
+    options: { from: string; to: string; employeeIds?: number[]; department?: string },
+  ): Promise<ActiveTimeView> {
+    if (!this.authService || !this.orgRepository || !this.attendanceRepository) {
+      throw new ApiError(503, 'Active time is not available right now.');
+    }
+    const viewer = await this.authService.getCurrentEmployee(viewerId);
+    const isAdmin = viewer.tiers.includes('admin');
+    if (!isAdmin && !viewer.tiers.includes('manager')) {
+      throw ApiError.forbidden('Active time is for managers and admins.');
+    }
+
+    const { from, to } = options;
+    const dates = datesBetween(from, to, ACTIVE_TIME_MAX_DAYS + 1);
+    if (dates.length === 0) throw ApiError.badRequest('The end date must not be before the start date.');
+    if (dates.length > ACTIVE_TIME_MAX_DAYS) {
+      throw ApiError.badRequest(`Choose at most ${ACTIVE_TIME_MAX_DAYS} days at a time.`);
+    }
+
+    // Leavers are included so a past range still shows the days they worked;
+    // anyone gone before the range, or not yet joined, is left out.
+    const scope = (await this.orgRepository.findRoster({ rootId: isAdmin ? null : viewerId, includeLeavers: true }))
+      .filter((m) => (!m.dateOfLeaving || m.dateOfLeaving >= from) && (!m.dateOfJoining || m.dateOfJoining <= to));
+
+    let members = scope;
+    if (options.department) members = members.filter((m) => m.department === options.department);
+    if (options.employeeIds && options.employeeIds.length > 0) {
+      const wanted = new Set(options.employeeIds);
+      members = members.filter((m) => wanted.has(m.id));
+    }
+
+    const now = istNow();
+    const [attendance, panel] = await Promise.all([
+      this.attendanceFor(members, from, to),
+      this.presenceService
+        ? this.presenceService.adminPanelForReport(members.map((m) => m.id), from, to)
+        : Promise.resolve(new Map()),
+    ]);
+
+    return {
+      from,
+      to,
+      today: now.date,
+      dates,
+      people: scope
+        .map((m) => ({ id: m.id, code: m.employeeCode, name: m.fullName, department: m.department }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+      rows: buildActiveTimeRows(members, dates, attendance, panel, now.date, now.time),
+    };
+  }
 
   private filterEmployees(employees: any[], filter: ReportFilterDto): any[] {
     let result = employees;

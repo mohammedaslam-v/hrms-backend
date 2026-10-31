@@ -317,6 +317,7 @@ export const createContainer = () => {
     presenceService,
     leaveRepository,
     goalsRepository,
+    orgRepository,
   );
   const reportsController = new ReportsController(reportsService);
   const companyPolicyRepository: ICompanyPolicyRepository = new CompanyPolicyRepository(pool);
