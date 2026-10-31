@@ -386,11 +386,11 @@ export class LeaveService implements ILeaveService {
       };
     });
 
+    // Every request in the leave year, newest first — the page filters and searches all of them.
     const logRows = await this.leaveRepository.findRequestsForEmployees(
       isAdmin ? undefined : teamIds,
       year.startDate,
       year.endDate,
-      200,
     );
     const nameOf = new Map(team.map((t) => [t.id, t.fullName]));
 

@@ -432,7 +432,7 @@ export class LeaveRepository implements ILeaveRepository {
     employeeIds: number[] | undefined,
     yearStart: string,
     yearEnd: string,
-    limit: number,
+    limit?: number,
   ): Promise<StoredLeaveRequest[]> {
     if (employeeIds && employeeIds.length === 0) return [];
     const hasIds = Array.isArray(employeeIds) && employeeIds.length > 0;
@@ -440,9 +440,10 @@ export class LeaveRepository implements ILeaveRepository {
     const where = hasIds
       ? `WHERE l.employee_id IN (${placeholders}) AND l.from_date <= ? AND l.to_date >= ?`
       : `WHERE l.from_date <= ? AND l.to_date >= ?`;
-    const params = hasIds
-      ? [...employeeIds, yearEnd, yearStart, limit]
-      : [yearEnd, yearStart, limit];
+    const params: (number | string)[] = hasIds
+      ? [...employeeIds, yearEnd, yearStart]
+      : [yearEnd, yearStart];
+    if (limit !== undefined) params.push(limit);
     const [rows] = await this.pool.query<RequestRow[]>(
       `SELECT ${REQUEST_COLUMNS}
          FROM hrms_leave_requests l
@@ -450,7 +451,7 @@ export class LeaveRepository implements ILeaveRepository {
          LEFT JOIN hrms_employees d ON d.id = l.decided_by
         ${where}
         ORDER BY l.from_date DESC, l.id DESC
-        LIMIT ?`,
+        ${limit !== undefined ? 'LIMIT ?' : ''}`,
       params,
     );
     return rows.map(mapRequest);

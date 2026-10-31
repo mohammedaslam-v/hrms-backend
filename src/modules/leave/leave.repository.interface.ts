@@ -86,12 +86,12 @@ export interface ILeaveRepository {
   /** Pending requests belonging to the given employees, oldest first. */
   findPendingForEmployees(employeeIds?: number[]): Promise<StoredLeaveRequest[]>;
 
-  /** Decided requests for the log, most recent first. */
+  /** Requests overlapping the period, most recent first. No limit = all of them. */
   findRequestsForEmployees(
     employeeIds: number[] | undefined,
     yearStart: string,
     yearEnd: string,
-    limit: number,
+    limit?: number,
   ): Promise<StoredLeaveRequest[]>;
 
   /**
