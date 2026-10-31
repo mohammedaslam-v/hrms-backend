@@ -1173,18 +1173,18 @@ export class ReportsService implements IReportsService {
     const allEmployees = await this.repository.findActiveEmployees(filter.department);
     const employees = this.filterEmployees(allEmployees, filter);
 
+    // Who was on leave in the chosen dates, and how much of it. Every count is
+    // for the period only; the balance is the one year-to-date figure, kept for
+    // reference. The whole-year view is Leave approvals → Balances.
     const columns: ReportColumn[] = [
       { key: 'code', label: 'Code', width: '100px' },
       { key: 'employee', label: 'Employee', width: '200px' },
       { key: 'department', label: 'Department', width: '160px' },
-      { key: 'opening', label: 'Opening balance', isNumeric: true },
-      { key: 'credited', label: 'Credited this FY', isNumeric: true },
-      { key: 'taken', label: 'Taken this FY', isNumeric: true },
-      { key: 'inPeriod', label: 'Taken in period', isNumeric: true },
-      { key: 'lop', label: 'Loss of pay', isNumeric: true },
+      { key: 'dates', label: 'Leave dates', width: '220px' },
+      { key: 'paid', label: 'Paid leave (EL)', isNumeric: true },
+      { key: 'lop', label: 'Loss of pay (LOP)', isNumeric: true },
       { key: 'pending', label: 'Awaiting approval', isNumeric: true },
-      { key: 'balance', label: 'Balance', isNumeric: true },
-      { key: 'lastLeave', label: 'Last leave', width: '120px' },
+      { key: 'balance', label: 'Balance today', isNumeric: true },
     ];
 
     const today = istNow().date;
@@ -1233,85 +1233,99 @@ export class ReportsService implements IReportsService {
       requestsByEmp.set(req.employeeId, list);
     }
 
-    let sumOpening = 0;
-    let sumCredited = 0;
-    let sumTaken = 0;
-    let sumInPeriod = 0;
+    const round1 = (n: number) => Math.round(n * 10) / 10;
+    const short = (date: string) =>
+      new Date(`${date}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+    const spanLabel = (from: string, to: string) =>
+      from === to
+        ? short(from)
+        : from.slice(0, 7) === to.slice(0, 7)
+          ? `${Number(from.slice(8))}–${short(to)}`
+          : `${short(from)} – ${short(to)}`;
+
+    let sumPaid = 0;
     let sumLop = 0;
     let sumPending = 0;
-    let sumBalance = 0;
 
-    const rows = employees.map((e) => {
-      const weeklyOff = e.weekly_off ? String(e.weekly_off).split(',').filter(Boolean) : ['Sun'];
-      const openingLeave = Number(e.opening_leave ?? 0);
-      const empReqs = requestsByEmp.get(e.id) || [];
+    const rows = employees
+      // Test logins are not people.
+      .filter((e) => !String(e.employee_code ?? '').toUpperCase().startsWith('TEST-'))
+      .map((e) => {
+        const weeklyOff = e.weekly_off ? String(e.weekly_off).split(',').filter(Boolean) : ['Sun'];
+        const empReqs = requestsByEmp.get(e.id) || [];
 
-      // Compute standard ledger
-      const ledger = computeLedger({
-        openingLeave,
-        carryCap: yearConfig.carryCap,
-        weeklyOff,
-        holidays: holidaySet,
-        dateOfJoining: e.date_of_joining,
-        dateOfLeaving: e.date_of_leaving,
-        yearStart: yearConfig.startDate,
-        leavePerMonth: yearConfig.leavePerMonth,
-        uptoMonth: today > yearConfig.endDate ? monthKeyOf(yearConfig.endDate) : monthKeyOf(today),
-        requests: empReqs,
-        adjustments: 0,
-      });
+        let paid = 0;
+        let lop = 0;
+        let pending = 0;
+        const dates: string[] = [];
 
-      // Calculate working leave days falling in [range.from, range.to]
-      let inPeriod = 0;
-      for (const req of empReqs) {
-        if (req.status !== 'Approved') continue;
-        if (req.toDate < range.from || req.fromDate > range.to) continue;
-        const spanStart = req.fromDate < range.from ? range.from : req.fromDate;
-        const spanEnd = req.toDate > range.to ? range.to : req.toDate;
-        const wDays = workingDaysBetween(spanStart, spanEnd, weeklyOff, holidaySet);
-        const days = req.isHalfDay ? wDays * 0.5 : wDays;
-        inPeriod += days;
-      }
-      inPeriod = Math.round(inPeriod * 10) / 10;
+        const inRange = empReqs
+          .filter((r) => r.status === 'Approved' || r.status === 'Pending')
+          .filter((r) => r.toDate >= range.from && r.fromDate <= range.to)
+          .sort((a, b) => a.fromDate.localeCompare(b.fromDate));
 
-      // Pending working days awaiting approval
-      let pending = 0;
-      for (const req of empReqs) {
-        if (req.status === 'Pending') {
-          pending += Number(req.days);
+        for (const req of inRange) {
+          const spanStart = req.fromDate < range.from ? range.from : req.fromDate;
+          const spanEnd = req.toDate > range.to ? range.to : req.toDate;
+          const working = workingDaysBetween(spanStart, spanEnd, weeklyOff, holidaySet);
+          const days = req.isHalfDay ? working * 0.5 : working;
+          if (days <= 0) continue;
+
+          const unpaid = req.leaveType === 'Unpaid';
+          let tag = req.isHalfDay ? ' (half)' : '';
+          if (req.status === 'Pending') {
+            pending += days;
+            tag += ' · awaiting';
+          } else if (unpaid) {
+            lop += days;
+            tag += ' · LOP';
+          } else {
+            // An earned request the balance only partly covered: its unpaid
+            // share is spread evenly over its days, as the ledger does.
+            const unpaidShare = req.days > 0 ? Math.min(1, (req.unpaidDays ?? 0) / req.days) : 0;
+            lop += days * unpaidShare;
+            paid += days * (1 - unpaidShare);
+            if (unpaidShare > 0) tag += ' · part LOP';
+          }
+          dates.push(spanLabel(spanStart, spanEnd) + tag);
         }
-      }
-      pending = Math.round(pending * 10) / 10;
 
-      // Determine latest approved leave date
-      const approvedPast = empReqs
-        .filter((r) => r.status === 'Approved')
-        .sort((a, b) => b.fromDate.localeCompare(a.fromDate));
-      const lastLeave = approvedPast.length > 0 ? approvedPast[0].toDate : (ledger.lastLeaveOn || '—');
+        if (dates.length === 0) return null;
 
-      sumOpening += ledger.opening;
-      sumCredited += ledger.credited;
-      sumTaken += ledger.taken;
-      sumInPeriod += inPeriod;
-      sumLop += ledger.lop;
-      sumPending += pending;
-      sumBalance += ledger.balance;
+        const ledger = computeLedger({
+          openingLeave: Number(e.opening_leave ?? 0),
+          carryCap: yearConfig.carryCap,
+          weeklyOff,
+          holidays: holidaySet,
+          dateOfJoining: e.date_of_joining,
+          dateOfLeaving: e.date_of_leaving,
+          yearStart: yearConfig.startDate,
+          leavePerMonth: yearConfig.leavePerMonth,
+          uptoMonth: today > yearConfig.endDate ? monthKeyOf(yearConfig.endDate) : monthKeyOf(today),
+          requests: empReqs,
+          adjustments: 0,
+        });
 
-      return {
-        code: e.employee_code,
-        employee: e.full_name,
-        department: e.department || 'General',
-        opening: ledger.opening,
-        credited: ledger.credited,
-        taken: ledger.taken,
-        inPeriod,
-        lop: ledger.lop,
-        pending,
-        balance: ledger.balance,
-        lastLeave,
-      };
-    });
+        sumPaid += paid;
+        sumLop += lop;
+        sumPending += pending;
 
+        const department = String(e.department ?? '').trim();
+        return {
+          code: e.employee_code,
+          employee: e.full_name,
+          department: department && department !== '0' ? department : '—',
+          dates: dates.join(', '),
+          paid: round1(paid),
+          lop: round1(lop),
+          pending: round1(pending),
+          balance: ledger.balance,
+        };
+      })
+      .filter((row): row is NonNullable<typeof row> => row !== null)
+      .sort((a, b) => String(a.employee).localeCompare(String(b.employee)));
+
+    const note = 'Only people with leave in the selected dates. EL, LOP and awaiting approval count working days inside the period; balance is as of today.';
     return {
       type: 'leave',
       meta: {
@@ -1321,20 +1335,16 @@ export class ReportsService implements IReportsService {
         periodLabel: range.label,
         generatedAt: new Date().toISOString(),
         totalRecords: rows.length,
-        note: '2 paid leaves are credited on the 1st of every month. Balance = opening + credited − taken.',
+        note,
       },
-      note: '2 paid leaves are credited on the 1st of every month. Balance = opening + credited − taken.',
+      note,
       columns,
       rows,
       totals: {
         employee: 'Total',
-        opening: Math.round(sumOpening * 10) / 10,
-        credited: Math.round(sumCredited * 10) / 10,
-        taken: Math.round(sumTaken * 10) / 10,
-        inPeriod: Math.round(sumInPeriod * 10) / 10,
-        lop: Math.round(sumLop * 10) / 10,
-        pending: Math.round(sumPending * 10) / 10,
-        balance: Math.round(sumBalance * 10) / 10,
+        paid: round1(sumPaid),
+        lop: round1(sumLop),
+        pending: round1(sumPending),
       },
     };
   }
@@ -2249,6 +2259,9 @@ export class ReportsService implements IReportsService {
     lines.push(`"${report.meta.reportTitle}"`);
     if (report.meta.reportSubtitle) {
       lines.push(`"${report.meta.reportSubtitle}"`);
+    }
+    if (report.meta.periodLabel) {
+      lines.push(`"Period: ${report.meta.periodLabel}"`);
     }
     lines.push('');
 
