@@ -13,6 +13,7 @@ import {
   minutesOf,
   resolveDayStatus,
   isMarkedOff,
+  isMarkedWorking,
   shiftDateOf,
   isPunchExpired,
   CHECKOUT_GRACE_MINUTES,
@@ -172,6 +173,23 @@ describe('what a day was — precedence', () => {
     assert.equal(isMarkedOff({ source: 'app', status: 'Weekly off' }), false);
     assert.equal(isMarkedOff({ source: 'manual', status: 'On time' }), false);
     assert.equal(isMarkedOff(null), false);
+  });
+
+  it('2c. an admin edit on a usual off day shows what the admin set', () => {
+    const sunday = '2026-09-06';
+    const worked = resolveDayStatus(
+      facts({ date: sunday, markedWorking: true, punch: { loginAt: '10:00', logoutAt: '19:00' } }),
+    );
+    assert.equal(worked, 'On time');
+    const onLeave = resolveDayStatus(
+      facts({ date: sunday, markedWorking: true, leave: { type: 'Unpaid', isHalfDay: false } }),
+    );
+    assert.equal(onLeave, 'Leave');
+    // Only a manual row that is not itself a weekly off overrides the schedule.
+    assert.equal(isMarkedWorking({ source: 'manual', status: 'On time' }), true);
+    assert.equal(isMarkedWorking({ source: 'manual', status: 'Weekly off' }), false);
+    assert.equal(isMarkedWorking({ source: 'app', status: 'On time' }), false);
+    assert.equal(isMarkedWorking(null), false);
   });
 
   it('3. approved leave beats absence — the rule that matters most', () => {

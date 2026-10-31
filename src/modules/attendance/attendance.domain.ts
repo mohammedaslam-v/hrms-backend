@@ -71,6 +71,12 @@ export interface DayFacts {
    * person's usual off days are. See `isMarkedOff`.
    */
   markedOff?: boolean;
+  /**
+   * An admin set this date, one of the person's usual off days, to something
+   * other than a weekly off — they came in, or it is leave. The edit wins over
+   * the schedule. See `isMarkedWorking`.
+   */
+  markedWorking?: boolean;
   /** Set only when HR has declared a company-wide closure. Normally null. */
   holidayName: string | null;
   /** Approved leave covering this day, if any. */
@@ -483,8 +489,9 @@ export function resolveDayStatus(facts: DayFacts): AttendanceStatus {
   if (facts.holidayName) return 'Holiday';
 
   // A punch on a weekly off still records its hours — see attendanceOf() — but
-  // the day is reported as the off day it was.
-  if (facts.markedOff || isWeeklyOff(facts.date, facts.weeklyOff)) return 'Weekly off';
+  // the day is reported as the off day it was, unless an admin edited it.
+  if (facts.markedOff) return 'Weekly off';
+  if (!facts.markedWorking && isWeeklyOff(facts.date, facts.weeklyOff)) return 'Weekly off';
 
   if (facts.leave) return facts.leave.isHalfDay ? 'Half day' : 'Leave';
 
@@ -514,6 +521,15 @@ export function resolveDayStatus(facts: DayFacts): AttendanceStatus {
 export const isMarkedOff = (
   record: { source: string; status: string } | null | undefined,
 ): boolean => record?.source === 'manual' && record.status === 'Weekly off';
+
+/**
+ * A stored row an admin saved by hand as anything but 'Weekly off'. On one of
+ * the person's usual off days it makes the date a working day (or leave), so
+ * the calendar shows what the admin set rather than WO.
+ */
+export const isMarkedWorking = (
+  record: { source: string; status: string } | null | undefined,
+): boolean => record?.source === 'manual' && record.status !== 'Weekly off';
 
 export interface DayAttendance {
   date: string;

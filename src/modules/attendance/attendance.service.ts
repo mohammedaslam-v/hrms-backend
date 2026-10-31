@@ -7,6 +7,7 @@ import {
   dayBars,
   isLate,
   isMarkedOff,
+  isMarkedWorking,
   EMPTY_SLOTS,
   readDayAsObserved,
   minutesOf,
@@ -350,6 +351,7 @@ export class AttendanceService implements IAttendanceService {
     const day = attendanceOf({
       ...facts,
       markedOff: isMarkedOff(stored),
+      markedWorking: isMarkedWorking(stored),
       punch: stored?.loginAt ? { loginAt: stored.loginAt, logoutAt: stored.logoutAt } : null,
     });
 
@@ -628,6 +630,7 @@ export class AttendanceService implements IAttendanceService {
         today: now.date,
         weeklyOff: schedule.weeklyOff,
         markedOff: isMarkedOff(record),
+        markedWorking: isMarkedWorking(record),
         holidayName: day?.holidayName ?? null,
         leave: day?.leave ?? null,
         punch: readAsObserved ? null : punch,
