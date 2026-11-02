@@ -6,6 +6,12 @@ export interface StoredLeaveRequest extends LeaveRequestRecord {
   employeeName?: string;
   employeeCode?: string;
   designation?: string | null;
+  department?: string | null;
+  managerId?: number | null;
+  directManagerName?: string | null;
+  grandManagerId?: number | null;
+  grandManagerName?: string | null;
+  decisionNote?: string | null;
   isHalfDay: boolean;
   halfDaySession: 'first' | 'second' | null;
   reason: string;
@@ -111,6 +117,9 @@ export interface ILeaveRepository {
     note: string | null,
     unpaidDays: number,
   ): Promise<void>;
+
+  /** Updates the decision note and preserves pending status for multi-level approval progress. */
+  updatePendingProgress(requestId: number, note: string): Promise<void>;
 
   findOnLeaveToday(today: string): Promise<OnLeaveEmployee[]>;
 

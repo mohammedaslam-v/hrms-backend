@@ -43,10 +43,16 @@ interface RequestRow extends RowDataPacket {
   status: LeaveStatus;
   reason: string;
   applied_on: string;
+  decision_note?: string | null;
   decided_by_name: string | null;
   employee_name?: string | null;
   employee_code?: string | null;
   designation?: string | null;
+  department?: string | null;
+  manager_id?: number | null;
+  direct_manager_name?: string | null;
+  grand_manager_id?: number | null;
+  grand_manager_name?: string | null;
 }
 
 interface SumRow extends RowDataPacket {
@@ -55,8 +61,9 @@ interface SumRow extends RowDataPacket {
 
 const REQUEST_COLUMNS = `l.id, l.employee_id, l.ref, l.leave_type, l.from_date, l.to_date,
   l.days, l.unpaid_days, l.is_half_day, l.half_day_session,
-  l.status, l.reason, l.applied_on, d.full_name AS decided_by_name,
-  e.full_name AS employee_name, e.employee_code, e.designation`;
+  l.status, l.reason, l.applied_on, l.decision_note, d.full_name AS decided_by_name,
+  e.full_name AS employee_name, e.employee_code, e.designation, e.department, e.manager_id,
+  m.full_name AS direct_manager_name, m.manager_id AS grand_manager_id, gm.full_name AS grand_manager_name`;
 
 const mapRequest = (row: RequestRow): StoredLeaveRequest => ({
   id: row.id,
@@ -64,6 +71,12 @@ const mapRequest = (row: RequestRow): StoredLeaveRequest => ({
   employeeName: row.employee_name ?? undefined,
   employeeCode: row.employee_code ?? undefined,
   designation: row.designation ?? null,
+  department: row.department ?? null,
+  managerId: row.manager_id != null && Number(row.manager_id) > 0 ? Number(row.manager_id) : null,
+  directManagerName: row.direct_manager_name ?? null,
+  grandManagerId: row.grand_manager_id != null && Number(row.grand_manager_id) > 0 ? Number(row.grand_manager_id) : null,
+  grandManagerName: row.grand_manager_name ?? null,
+  decisionNote: row.decision_note ?? null,
   ref: row.ref,
   leaveType: row.leave_type,
   fromDate: row.from_date,
@@ -142,6 +155,8 @@ export class LeaveRepository implements ILeaveRepository {
          FROM hrms_leave_requests l
          LEFT JOIN hrms_employees e ON e.id = l.employee_id
          LEFT JOIN hrms_employees d ON d.id = l.decided_by
+         LEFT JOIN hrms_employees m ON m.id = e.manager_id
+         LEFT JOIN hrms_employees gm ON gm.id = m.manager_id
         WHERE l.employee_id = ? AND l.from_date <= ? AND l.to_date >= ?
         ORDER BY l.from_date DESC, l.id DESC`,
       [employeeId, yearEnd, yearStart],
@@ -167,6 +182,8 @@ export class LeaveRepository implements ILeaveRepository {
          FROM hrms_leave_requests l
          LEFT JOIN hrms_employees e ON e.id = l.employee_id
          LEFT JOIN hrms_employees d ON d.id = l.decided_by
+         LEFT JOIN hrms_employees m ON m.id = e.manager_id
+         LEFT JOIN hrms_employees gm ON gm.id = m.manager_id
         WHERE l.employee_id = ?
           AND l.status IN ('Pending','Approved')
           AND l.from_date <= ? AND l.to_date >= ?
@@ -187,6 +204,8 @@ export class LeaveRepository implements ILeaveRepository {
          FROM hrms_leave_requests l
          LEFT JOIN hrms_employees e ON e.id = l.employee_id
          LEFT JOIN hrms_employees d ON d.id = l.decided_by
+         LEFT JOIN hrms_employees m ON m.id = e.manager_id
+         LEFT JOIN hrms_employees gm ON gm.id = m.manager_id
         WHERE l.employee_id = ?
           AND l.status IN ('Pending','Approved')
           AND l.id != ?
@@ -378,6 +397,8 @@ export class LeaveRepository implements ILeaveRepository {
          FROM hrms_leave_requests l
          LEFT JOIN hrms_employees e ON e.id = l.employee_id
          LEFT JOIN hrms_employees d ON d.id = l.decided_by
+         LEFT JOIN hrms_employees m ON m.id = e.manager_id
+         LEFT JOIN hrms_employees gm ON gm.id = m.manager_id
         WHERE l.id = ?`,
       [requestId],
     );
@@ -421,6 +442,8 @@ export class LeaveRepository implements ILeaveRepository {
          FROM hrms_leave_requests l
          LEFT JOIN hrms_employees e ON e.id = l.employee_id
          LEFT JOIN hrms_employees d ON d.id = l.decided_by
+         LEFT JOIN hrms_employees m ON m.id = e.manager_id
+         LEFT JOIN hrms_employees gm ON gm.id = m.manager_id
         ${where}
         ORDER BY l.from_date ASC, l.id ASC`,
       params,
@@ -449,12 +472,23 @@ export class LeaveRepository implements ILeaveRepository {
          FROM hrms_leave_requests l
          LEFT JOIN hrms_employees e ON e.id = l.employee_id
          LEFT JOIN hrms_employees d ON d.id = l.decided_by
+         LEFT JOIN hrms_employees m ON m.id = e.manager_id
+         LEFT JOIN hrms_employees gm ON gm.id = m.manager_id
         ${where}
         ORDER BY l.from_date DESC, l.id DESC
         ${limit !== undefined ? 'LIMIT ?' : ''}`,
       params,
     );
     return rows.map(mapRequest);
+  }
+
+  async updatePendingProgress(requestId: number, note: string): Promise<void> {
+    await this.pool.execute(
+      `UPDATE hrms_leave_requests
+          SET decision_note = ?
+        WHERE id = ? AND status = 'Pending'`,
+      [note, requestId],
+    );
   }
 
   /**

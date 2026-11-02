@@ -1,11 +1,22 @@
-import { HalfDaySession, LeaveLedger, LeaveRequestRecord, LeaveType } from './leave.domain';
+import {
+  ApprovalStep,
+  HalfDaySession,
+  LeaveLedger,
+  LeaveRequestRecord,
+  LeaveType,
+} from './leave.domain';
 
 export {
-  LeaveType,
-  LeaveStatus,
-  LeaveRequestRecord,
-  LeaveLedger,
+  ApprovalProgress,
+  ApprovalStep,
+  formatDecisionNote,
   HalfDaySession,
+  isTwoLevelLeave,
+  LeaveLedger,
+  LeaveRequestRecord,
+  LeaveStatus,
+  LeaveType,
+  parseApprovalProgress,
 } from './leave.domain';
 
 /** Per-employee inputs the ledger needs, read once per request. */
@@ -83,6 +94,11 @@ export interface MyLeaveView {
      * which is what keeps the accrual ledger's arithmetic balanced.
      */
     daysCounted: number;
+    isTwoLevel?: boolean;
+    directApproval?: ApprovalStep | null;
+    seniorApproval?: ApprovalStep | null;
+    awaitingApproval?: 'direct' | 'senior' | 'both' | null;
+    decisionNote?: string | null;
   })[];
   // The holiday calendar is not part of this view — per the design it belongs to
   // Leave approvals (Policy & holidays). Holidays are still applied server-side
@@ -108,6 +124,7 @@ export interface PendingApproval {
   employeeName: string;
   employeeCode: string;
   designation: string | null;
+  department?: string | null;
   leaveType: LeaveType;
   fromDate: string;
   toDate: string;
@@ -128,6 +145,14 @@ export interface PendingApproval {
    * so this is flagged for an explicit confirmation rather than blocked.
    */
   createsLossOfPay: boolean;
+  isTwoLevel?: boolean;
+  directApproval?: ApprovalStep | null;
+  seniorApproval?: ApprovalStep | null;
+  directManagerName?: string | null;
+  grandManagerName?: string | null;
+  hasViewerApproved?: boolean;
+  awaitingApproval?: 'direct' | 'senior' | 'both' | null;
+  decisionNote?: string | null;
 }
 
 /** One row of the consolidated team balances table. */
@@ -156,6 +181,10 @@ export interface ApprovalsView {
     decidedBy: string | null;
     isHalfDay: boolean;
     halfDaySession: HalfDaySession | null;
+    isTwoLevel?: boolean;
+    directApproval?: ApprovalStep | null;
+    seniorApproval?: ApprovalStep | null;
+    decisionNote?: string | null;
   })[];
   policy: {
     leaveYear: number;

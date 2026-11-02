@@ -1,12 +1,17 @@
 import {
   addMonths,
+  ApprovalProgress,
+  ApprovalStep,
   computeLedger,
   daysByMonth,
   eachDay,
+  formatDecisionNote,
   formatMonthRange,
+  isTwoLevelLeave,
   LeaveLedger,
   LeaveType,
   monthKeyOf,
+  parseApprovalProgress,
   projectRequest,
   round1,
   workingDaysBetween,
@@ -332,6 +337,20 @@ export class LeaveService implements ILeaveService {
       // from the baseline so it is not counted twice.
       const projected = this.project(resolved, request);
 
+      const isTwoLevel = isTwoLevelLeave(request);
+      const progress = parseApprovalProgress(request.decisionNote);
+      const directApproval = progress?.l1 ?? null;
+      const seniorApproval = progress?.l2 ?? null;
+      const hasViewerApproved = Boolean(
+        (directApproval && directApproval.by === managerId) ||
+        (seniorApproval && seniorApproval.by === managerId),
+      );
+      const awaitingApproval = !isTwoLevel ? null
+        : (!directApproval && !seniorApproval) ? 'both'
+        : (!directApproval) ? 'direct'
+        : (!seniorApproval) ? 'senior'
+        : null;
+
       return {
         id: request.id,
         ref: request.ref,
@@ -339,6 +358,7 @@ export class LeaveService implements ILeaveService {
         employeeName,
         employeeCode,
         designation,
+        department: request.department ?? null,
         leaveType: request.leaveType,
         fromDate: request.fromDate,
         toDate: request.toDate,
@@ -352,6 +372,14 @@ export class LeaveService implements ILeaveService {
         paidDays: projected.paidDays,
         unpaidDays: projected.lopDays,
         createsLossOfPay: projected.lopDays > 0,
+        isTwoLevel,
+        directApproval,
+        seniorApproval,
+        directManagerName: request.directManagerName ?? null,
+        grandManagerName: request.grandManagerName ?? null,
+        hasViewerApproved,
+        awaitingApproval,
+        decisionNote: request.decisionNote ?? null,
       };
     });
 
@@ -397,23 +425,31 @@ export class LeaveService implements ILeaveService {
     return {
       pending,
       balances,
-      log: logRows.map((r) => ({
-        id: r.id,
-        ref: r.ref,
-        employeeId: r.employeeId,
-        leaveType: r.leaveType,
-        fromDate: r.fromDate,
-        toDate: r.toDate,
-        days: r.days,
-        unpaidDays: r.unpaidDays,
-        status: r.status,
-        employeeName: r.employeeName ?? nameOf.get(r.employeeId) ?? '—',
-        reason: r.reason,
-        appliedOn: r.appliedOn,
-        decidedBy: r.decidedBy,
-        isHalfDay: r.isHalfDay,
-        halfDaySession: r.halfDaySession,
-      })),
+      log: logRows.map((r) => {
+        const isTwoLevel = isTwoLevelLeave(r);
+        const progress = parseApprovalProgress(r.decisionNote);
+        return {
+          id: r.id,
+          ref: r.ref,
+          employeeId: r.employeeId,
+          leaveType: r.leaveType,
+          fromDate: r.fromDate,
+          toDate: r.toDate,
+          days: r.days,
+          unpaidDays: r.unpaidDays,
+          status: r.status,
+          employeeName: r.employeeName ?? nameOf.get(r.employeeId) ?? '—',
+          reason: r.reason,
+          appliedOn: r.appliedOn,
+          decidedBy: r.decidedBy,
+          isHalfDay: r.isHalfDay,
+          halfDaySession: r.halfDaySession,
+          isTwoLevel,
+          directApproval: progress?.l1 ?? null,
+          seniorApproval: progress?.l2 ?? null,
+          decisionNote: r.decisionNote ?? null,
+        };
+      }),
       policy: {
         leaveYear: year.leaveYear,
         leavePerMonth: year.leavePerMonth,
@@ -449,17 +485,32 @@ export class LeaveService implements ILeaveService {
       );
     }
 
-    let convertedToUnpaid = false;
-    let message: string;
+    const isTwoLevel = isTwoLevelLeave(request);
 
     if (dto.decision === 'Rejected') {
-      await this.leaveRepository.decide(request.id, 'Rejected', managerId, dto.note ?? null, 0);
-      message = `${request.ref} rejected.`;
-    } else {
+      const progress = parseApprovalProgress(request.decisionNote) ?? {};
+      const today = new Date().toISOString().slice(0, 10);
+      const approverName = viewer?.fullName || (isAdmin ? 'Admin' : 'Manager');
+      const rejectAuditLine = `[Rejected by ${approverName} on ${today}]${dto.note ? `: ${dto.note}` : ''}`;
+      const finalNote = formatDecisionNote(request.decisionNote, progress, rejectAuditLine);
+
+      await this.leaveRepository.decide(request.id, 'Rejected', managerId, finalNote, 0);
+      await this.leaveRepository.recordAudit(
+        managerId,
+        'leave.rejected',
+        request.id,
+        { status: request.status, leaveType: request.leaveType },
+        { status: 'Rejected', note: dto.note ?? null },
+      );
+      return { view: await this.getApprovals(managerId), message: `${request.ref} rejected.`, convertedToUnpaid: false };
+    }
+
+    // Decision is 'Approved'
+    if (!isTwoLevel) {
       const resolved = await this.resolve(request.employeeId);
       const projected = this.project(resolved, request);
       const unpaid = projected.lopDays;
-      convertedToUnpaid = unpaid > 0;
+      const convertedToUnpaid = unpaid > 0;
 
       // `unpaid_days` is stored as a record of what the approver was shown. The
       // ledger derives loss of pay independently, month by month, so the two
@@ -472,20 +523,117 @@ export class LeaveService implements ILeaveService {
         unpaid,
       );
 
-      message = convertedToUnpaid
+      const message = convertedToUnpaid
         ? `${request.ref} approved — ${projected.paidDays} paid and ${unpaid} as loss of pay.`
         : `${request.ref} approved.`;
+
+      await this.leaveRepository.recordAudit(
+        managerId,
+        'leave.approved',
+        request.id,
+        { status: request.status, leaveType: request.leaveType },
+        {
+          status: 'Approved',
+          leaveType: convertedToUnpaid ? 'Unpaid' : request.leaveType,
+          convertedToUnpaid,
+        },
+      );
+
+      return { view: await this.getApprovals(managerId), message, convertedToUnpaid };
     }
+
+    // 2-level approval logic for Sales department
+    const progress: ApprovalProgress = parseApprovalProgress(request.decisionNote) ?? { l1: null, l2: null };
+    const isDirectManager = request.managerId === managerId;
+    const isGrandManager = request.grandManagerId === managerId;
+
+    let slot: 'l1' | 'l2';
+    let role: 'manager' | 'senior_manager' | 'admin';
+
+    if (isDirectManager) {
+      if (progress.l1) {
+        throw ApiError.badRequest('You have already approved this request at Level 1 (Direct Manager). It is awaiting Level 2 approval.');
+      }
+      slot = 'l1';
+      role = 'manager';
+    } else if (isGrandManager || isAdmin) {
+      if (progress.l2) {
+        throw ApiError.badRequest('This request has already received Level 2 (Senior / Admin) approval.');
+      }
+      if (progress.l1 && progress.l1.by === managerId) {
+        throw ApiError.badRequest('You have already approved this request at Level 1. Level 2 approval must be provided by a different approver.');
+      }
+      slot = 'l2';
+      role = isAdmin ? 'admin' : 'senior_manager';
+    } else {
+      throw ApiError.forbidden('Only the direct manager, senior manager, or an administrator can approve leave for Sales department employees.');
+    }
+
+    const nowIso = new Date().toISOString();
+    const today = nowIso.slice(0, 10);
+    const approverName = viewer?.fullName || (role === 'admin' ? 'Admin' : 'Manager');
+    const step: ApprovalStep = {
+      by: managerId,
+      name: approverName,
+      at: nowIso,
+      note: dto.note ?? null,
+      role,
+    };
+
+    if (slot === 'l1') {
+      progress.l1 = step;
+    } else {
+      progress.l2 = step;
+    }
+
+    const bothApproved = Boolean(progress.l1 && progress.l2);
+    const slotLabel = slot === 'l1' ? 'Direct Manager' : (role === 'admin' ? 'Admin' : 'Senior Manager');
+    const auditLine = `[Level ${slot === 'l1' ? '1' : '2'} (${slotLabel}) Approved by ${approverName} on ${today}]${dto.note ? `: ${dto.note}` : ''}`;
+    const formattedNote = formatDecisionNote(request.decisionNote, progress, auditLine);
+
+    if (!bothApproved) {
+      await this.leaveRepository.updatePendingProgress(request.id, formattedNote);
+      await this.leaveRepository.recordAudit(
+        managerId,
+        'leave.partially_approved',
+        request.id,
+        { status: request.status, progressBefore: parseApprovalProgress(request.decisionNote) },
+        { status: 'Pending', slot, progressAfter: progress },
+      );
+
+      const awaitingLabel = slot === 'l1' ? 'Senior Manager or Admin' : 'Direct Manager';
+      const message = `${request.ref}: Approved (1 of 2). Awaiting approval from ${awaitingLabel}.`;
+      return { view: await this.getApprovals(managerId), message, convertedToUnpaid: false };
+    }
+
+    // Both approved: complete the approval
+    const resolved = await this.resolve(request.employeeId);
+    const projected = this.project(resolved, request);
+    const unpaid = projected.lopDays;
+    const convertedToUnpaid = unpaid > 0;
+
+    await this.leaveRepository.decide(
+      request.id,
+      'Approved',
+      managerId,
+      formattedNote,
+      unpaid,
+    );
+
+    const message = convertedToUnpaid
+      ? `${request.ref} fully approved (2 of 2) — ${projected.paidDays} paid and ${unpaid} as loss of pay.`
+      : `${request.ref} fully approved (2 of 2).`;
 
     await this.leaveRepository.recordAudit(
       managerId,
-      dto.decision === 'Approved' ? 'leave.approved' : 'leave.rejected',
+      'leave.approved',
       request.id,
       { status: request.status, leaveType: request.leaveType },
       {
-        status: dto.decision,
+        status: 'Approved',
         leaveType: convertedToUnpaid ? 'Unpaid' : request.leaveType,
         convertedToUnpaid,
+        progress,
       },
     );
 
@@ -1004,22 +1152,38 @@ export class LeaveService implements ILeaveService {
 
     return {
       ledger,
-      requests: requests.map((r) => ({
-        daysCounted: countedDays(r),
-        id: r.id,
-        ref: r.ref,
-        leaveType: r.leaveType,
-        fromDate: r.fromDate,
-        toDate: r.toDate,
-        days: r.days,
-        unpaidDays: r.unpaidDays,
-        status: r.status,
-        reason: r.reason,
-        appliedOn: r.appliedOn,
-        isHalfDay: r.isHalfDay,
-        halfDaySession: r.halfDaySession,
-        decidedBy: r.decidedBy,
-      })),
+      requests: requests.map((r) => {
+        const isTwoLevel = isTwoLevelLeave(r);
+        const progress = parseApprovalProgress(r.decisionNote);
+        const directApproval = progress?.l1 ?? null;
+        const seniorApproval = progress?.l2 ?? null;
+        const awaitingApproval = !isTwoLevel ? null
+          : (!directApproval && !seniorApproval) ? 'both'
+          : (!directApproval) ? 'direct'
+          : (!seniorApproval) ? 'senior'
+          : null;
+        return {
+          daysCounted: countedDays(r),
+          id: r.id,
+          ref: r.ref,
+          leaveType: r.leaveType,
+          fromDate: r.fromDate,
+          toDate: r.toDate,
+          days: r.days,
+          unpaidDays: r.unpaidDays,
+          status: r.status,
+          reason: r.reason,
+          appliedOn: r.appliedOn,
+          isHalfDay: r.isHalfDay,
+          halfDaySession: r.halfDaySession,
+          decidedBy: r.decidedBy,
+          isTwoLevel,
+          directApproval,
+          seniorApproval,
+          awaitingApproval,
+          decisionNote: r.decisionNote ?? null,
+        };
+      }),
       policy: {
         leaveYear: year.leaveYear,
         leavePerMonth: year.leavePerMonth,

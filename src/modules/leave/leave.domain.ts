@@ -46,6 +46,55 @@ export const HALF_DAY_SESSION_LABEL: Record<HalfDaySession, string> = {
   second: 'Session 2 · second half',
 };
 
+export interface ApprovalStep {
+  by: number;
+  name: string;
+  at: string;
+  note?: string | null;
+  role?: 'manager' | 'senior_manager' | 'admin';
+}
+
+export interface ApprovalProgress {
+  l1?: ApprovalStep | null;
+  l2?: ApprovalStep | null;
+}
+
+const PROGRESS_REGEX = /<!--approvals:(\{.*?\})-->/;
+
+export function parseApprovalProgress(decisionNote?: string | null): ApprovalProgress | null {
+  if (!decisionNote) return null;
+  const match = decisionNote.match(PROGRESS_REGEX);
+  if (!match || !match[1]) return null;
+  try {
+    return JSON.parse(match[1]) as ApprovalProgress;
+  } catch {
+    return null;
+  }
+}
+
+export function formatDecisionNote(
+  existingNote: string | null | undefined,
+  progress: ApprovalProgress,
+  newAuditLine?: string | null,
+): string {
+  const cleanExisting = (existingNote || '').replace(PROGRESS_REGEX, '').trim();
+  const metadata = `<!--approvals:${JSON.stringify(progress)}-->`;
+  const lines: string[] = [];
+  if (cleanExisting) lines.push(cleanExisting);
+  if (newAuditLine && newAuditLine.trim()) lines.push(newAuditLine.trim());
+  return lines.length > 0 ? `${metadata}\n${lines.join('\n')}` : metadata;
+}
+
+export function isTwoLevelLeave(request: {
+  department?: string | null;
+  managerId?: number | null;
+  grandManagerId?: number | null;
+}): boolean {
+  const dept = (request.department ?? '').trim().toLowerCase();
+  if (dept !== 'sales') return false;
+  return Boolean(request.managerId && request.grandManagerId);
+}
+
 export interface LedgerInput {
   openingLeave: number;
   /** Needed to attribute a request's days to the months they fall in. */

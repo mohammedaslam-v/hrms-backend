@@ -1,10 +1,14 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
+  ApprovalProgress,
   computeLedger,
+  formatDecisionNote,
+  formatMonthRange,
+  isTwoLevelLeave,
   leaveYearMonths,
   LeaveRequestRecord,
-  formatMonthRange,
+  parseApprovalProgress,
   projectRequest,
   workingDaysBetween,
 } from './leave.domain';
@@ -348,5 +352,68 @@ describe('loss of pay — confirmed policy', () => {
     assert.equal(projected.paidDays, 4);
     assert.equal(projected.lopDays, 2);
     assert.equal(projected.balanceAfter, 0);
+  });
+
+  describe('two-level approval workflow domain logic', () => {
+    it('identifies 2-level requests only for sales department with both managers', () => {
+      // Sales employee with direct and grand manager
+      assert.equal(isTwoLevelLeave({ department: 'Sales', managerId: 10, grandManagerId: 5 }), true);
+      assert.equal(isTwoLevelLeave({ department: 'sales', managerId: 10, grandManagerId: 5 }), true);
+      assert.equal(isTwoLevelLeave({ department: ' SALES ', managerId: 10, grandManagerId: 5 }), true);
+
+      // Non-Sales department
+      assert.equal(isTwoLevelLeave({ department: 'Engineering', managerId: 10, grandManagerId: 5 }), false);
+      assert.equal(isTwoLevelLeave({ department: 'Marketing', managerId: 10, grandManagerId: 5 }), false);
+      assert.equal(isTwoLevelLeave({ department: null, managerId: 10, grandManagerId: 5 }), false);
+      assert.equal(isTwoLevelLeave({ department: '', managerId: 10, grandManagerId: 5 }), false);
+
+      // Sales employee with single manager (no grand manager)
+      assert.equal(isTwoLevelLeave({ department: 'Sales', managerId: 10, grandManagerId: null }), false);
+      assert.equal(isTwoLevelLeave({ department: 'Sales', managerId: null, grandManagerId: 5 }), false);
+      assert.equal(isTwoLevelLeave({ department: 'Sales', managerId: null, grandManagerId: null }), false);
+    });
+
+    it('parses structured approval metadata comments from decision notes', () => {
+      assert.equal(parseApprovalProgress(null), null);
+      assert.equal(parseApprovalProgress(''), null);
+      assert.equal(parseApprovalProgress('Plain text note with no metadata'), null);
+      assert.equal(parseApprovalProgress('<!--approvals:bad-json-->'), null);
+
+      const progress: ApprovalProgress = {
+        l1: { by: 12, name: 'Alice Direct', at: '2026-11-02T10:00:00.000Z', note: 'Looks fine', role: 'manager' },
+        l2: null,
+      };
+      const note = `<!--approvals:${JSON.stringify(progress)}-->\n[L1 Approved by Alice Direct on 2026-11-02]: Looks fine`;
+      const parsed = parseApprovalProgress(note);
+      assert.deepEqual(parsed, progress);
+    });
+
+    it('formats decision note with lossless metadata and human-readable audit lines', () => {
+      const step1: ApprovalProgress = {
+        l1: { by: 10, name: 'Alice C', at: '2026-11-02T10:00:00.000Z', note: 'First ok', role: 'manager' },
+        l2: null,
+      };
+      const line1 = '[Level 1 (Direct Manager) Approved by Alice C on 2026-11-02]: First ok';
+      const note1 = formatDecisionNote(null, step1, line1);
+
+      assert.match(note1, /<!--approvals:\{"l1":\{"by":10.*?"l2":null\}-->/);
+      assert.match(note1, /\[Level 1 \(Direct Manager\) Approved by Alice C on 2026-11-02\]: First ok/);
+
+      // Second approval updates metadata and appends audit line without duplicating metadata
+      const step2: ApprovalProgress = {
+        ...step1,
+        l2: { by: 2, name: 'Admin Bob', at: '2026-11-02T11:00:00.000Z', note: 'Final ok', role: 'admin' },
+      };
+      const line2 = '[Level 2 (Admin) Approved by Admin Bob on 2026-11-02]: Final ok';
+      const note2 = formatDecisionNote(note1, step2, line2);
+
+      const parsed2 = parseApprovalProgress(note2);
+      assert.deepEqual(parsed2, step2);
+      assert.match(note2, /First ok/);
+      assert.match(note2, /Final ok/);
+      // Ensure only ONE metadata block exists
+      const matches = note2.match(/<!--approvals:/g);
+      assert.equal(matches?.length, 1);
+    });
   });
 });

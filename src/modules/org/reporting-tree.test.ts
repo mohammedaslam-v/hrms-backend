@@ -13,3 +13,4 @@ test('reportingTreeCte caps recursion at the requested depth', () => {
   assert.match(reportingTreeCte(0), /t\.depth < 1/);
   assert.match(reportingTreeCte(99), new RegExp(`t\\.depth < ${MAX_REPORTING_DEPTH}`));
 });
+
