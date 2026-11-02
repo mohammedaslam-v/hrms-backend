@@ -85,13 +85,30 @@ export function formatDecisionNote(
   return lines.length > 0 ? `${metadata}\n${lines.join('\n')}` : metadata;
 }
 
+const TWO_LEVEL_DEPARTMENTS = new Set([
+  'sales',
+  'operations',
+  'sales and operations',
+  'sales & operations',
+  'sales/operations',
+  'sales & ops',
+  'operations and sales',
+  'operations & sales',
+]);
+
 export function isTwoLevelLeave(request: {
   department?: string | null;
   managerId?: number | null;
   grandManagerId?: number | null;
 }): boolean {
   const dept = (request.department ?? '').trim().toLowerCase();
-  if (dept !== 'sales') return false;
+  const isMatch =
+    TWO_LEVEL_DEPARTMENTS.has(dept) ||
+    dept === 'sales' ||
+    dept === 'operations' ||
+    (dept.includes('sales') && dept.includes('operat'));
+
+  if (!isMatch) return false;
   return Boolean(request.managerId && request.grandManagerId);
 }
 

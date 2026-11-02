@@ -542,7 +542,7 @@ export class LeaveService implements ILeaveService {
       return { view: await this.getApprovals(managerId), message, convertedToUnpaid };
     }
 
-    // 2-level approval logic for Sales department
+    // 2-level approval logic for Sales and Operations departments
     const progress: ApprovalProgress = parseApprovalProgress(request.decisionNote) ?? { l1: null, l2: null };
     const isDirectManager = request.managerId === managerId;
     const isGrandManager = request.grandManagerId === managerId;
@@ -566,7 +566,7 @@ export class LeaveService implements ILeaveService {
       slot = 'l2';
       role = isAdmin ? 'admin' : 'senior_manager';
     } else {
-      throw ApiError.forbidden('Only the direct manager, senior manager, or an administrator can approve leave for Sales department employees.');
+      throw ApiError.forbidden('Only the direct manager, senior manager, or an administrator can approve leave for Sales and Operations department employees.');
     }
 
     const nowIso = new Date().toISOString();

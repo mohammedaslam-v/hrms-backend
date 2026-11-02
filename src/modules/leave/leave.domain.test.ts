@@ -355,22 +355,34 @@ describe('loss of pay — confirmed policy', () => {
   });
 
   describe('two-level approval workflow domain logic', () => {
-    it('identifies 2-level requests only for sales department with both managers', () => {
+    it('identifies 2-level requests for sales and operations departments with both managers', () => {
       // Sales employee with direct and grand manager
       assert.equal(isTwoLevelLeave({ department: 'Sales', managerId: 10, grandManagerId: 5 }), true);
       assert.equal(isTwoLevelLeave({ department: 'sales', managerId: 10, grandManagerId: 5 }), true);
       assert.equal(isTwoLevelLeave({ department: ' SALES ', managerId: 10, grandManagerId: 5 }), true);
 
-      // Non-Sales department
+      // Operations department
+      assert.equal(isTwoLevelLeave({ department: 'Operations', managerId: 10, grandManagerId: 5 }), true);
+      assert.equal(isTwoLevelLeave({ department: 'operations', managerId: 10, grandManagerId: 5 }), true);
+      assert.equal(isTwoLevelLeave({ department: ' OPERATIONS ', managerId: 10, grandManagerId: 5 }), true);
+
+      // Sales and Operations variants
+      assert.equal(isTwoLevelLeave({ department: 'Sales and Operations', managerId: 10, grandManagerId: 5 }), true);
+      assert.equal(isTwoLevelLeave({ department: 'Sales & Operations', managerId: 10, grandManagerId: 5 }), true);
+      assert.equal(isTwoLevelLeave({ department: 'Sales/Operations', managerId: 10, grandManagerId: 5 }), true);
+
+      // Other departments
       assert.equal(isTwoLevelLeave({ department: 'Engineering', managerId: 10, grandManagerId: 5 }), false);
+      assert.equal(isTwoLevelLeave({ department: 'Tech', managerId: 10, grandManagerId: 5 }), false);
       assert.equal(isTwoLevelLeave({ department: 'Marketing', managerId: 10, grandManagerId: 5 }), false);
       assert.equal(isTwoLevelLeave({ department: null, managerId: 10, grandManagerId: 5 }), false);
       assert.equal(isTwoLevelLeave({ department: '', managerId: 10, grandManagerId: 5 }), false);
 
-      // Sales employee with single manager (no grand manager)
+      // Sales/Operations employee with single manager (no grand manager)
       assert.equal(isTwoLevelLeave({ department: 'Sales', managerId: 10, grandManagerId: null }), false);
+      assert.equal(isTwoLevelLeave({ department: 'Operations', managerId: 10, grandManagerId: null }), false);
       assert.equal(isTwoLevelLeave({ department: 'Sales', managerId: null, grandManagerId: 5 }), false);
-      assert.equal(isTwoLevelLeave({ department: 'Sales', managerId: null, grandManagerId: null }), false);
+      assert.equal(isTwoLevelLeave({ department: 'Operations', managerId: null, grandManagerId: null }), false);
     });
 
     it('parses structured approval metadata comments from decision notes', () => {
