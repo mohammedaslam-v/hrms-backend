@@ -41,4 +41,6 @@ export interface RosterScope {
   rootId: number | null;
   /** The directory's Active / Exited filter needs both. Defaults to false. */
   includeLeavers?: boolean;
+  /** Maximum reporting levels to walk below rootId. Defaults to MAX_REPORTING_DEPTH (10). */
+  maxDepth?: number;
 }

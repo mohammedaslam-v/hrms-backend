@@ -19,13 +19,16 @@
 export const MAX_REPORTING_DEPTH = 10;
 
 /**
- * A `WITH RECURSIVE tree AS (…)` clause yielding every employee below `rootId`.
+ * Builds a `WITH RECURSIVE tree AS (…)` clause yielding employees below `rootId`
+ * up to `maxDepth` levels deep.
  *
  * Takes three bind parameters, all the root id:
  * `[rootId, rootId, rootId]` — seed manager, seed self-exclusion, recursive
  * self-exclusion. Callers append their own parameters after these.
  */
-export const REPORTING_TREE_CTE = `WITH RECURSIVE tree AS (
+export const reportingTreeCte = (maxDepth: number = MAX_REPORTING_DEPTH): string => {
+  const depthCap = Math.max(1, Math.min(maxDepth, MAX_REPORTING_DEPTH));
+  return `WITH RECURSIVE tree AS (
          SELECT id, 1 AS depth
            FROM hrms_employees
           WHERE manager_id = ? AND id <> ?
@@ -33,8 +36,15 @@ export const REPORTING_TREE_CTE = `WITH RECURSIVE tree AS (
          SELECT e.id, t.depth + 1
            FROM hrms_employees e
            JOIN tree t ON e.manager_id = t.id
-          WHERE t.depth < ${MAX_REPORTING_DEPTH} AND e.id <> ?
+          WHERE t.depth < ${depthCap} AND e.id <> ?
        )`;
+};
+
+/**
+ * A `WITH RECURSIVE tree AS (…)` clause yielding every employee below `rootId`
+ * using the default MAX_REPORTING_DEPTH.
+ */
+export const REPORTING_TREE_CTE = reportingTreeCte(MAX_REPORTING_DEPTH);
 
 /** The bind parameters `REPORTING_TREE_CTE` expects, in order. */
 export const reportingTreeParams = (rootId: number): number[] => [rootId, rootId, rootId];

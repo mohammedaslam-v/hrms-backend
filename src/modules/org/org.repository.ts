@@ -2,7 +2,7 @@ import { Pool, RowDataPacket } from 'mysql2/promise';
 import { IOrgRepository } from './org.repository.interface';
 import { RosterMember, RosterScope, TeamMember } from './org.model';
 import { WorkMode } from '../profile/profile.model';
-import { REPORTING_TREE_CTE, reportingTreeParams } from './reporting-tree.sql';
+import { REPORTING_TREE_CTE, reportingTreeCte, reportingTreeParams } from './reporting-tree.sql';
 
 interface TreeRow extends RowDataPacket {
   id: number;
@@ -89,7 +89,7 @@ export class OrgRepository implements IOrgRepository {
             ORDER BY e.full_name`,
         )
       : await this.pool.execute<RosterRow[]>(
-          `${REPORTING_TREE_CTE}
+          `${reportingTreeCte(scope.maxDepth)}
            SELECT DISTINCT ${columns}
              FROM hrms_employees e
              JOIN tree ON tree.id = e.id

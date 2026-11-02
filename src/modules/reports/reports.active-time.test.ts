@@ -78,7 +78,7 @@ test('rows come back by name', () => {
 // ── Who may see whom ──────────────────────────────────────────────────────
 
 function serviceFor(tiers: string[]) {
-  const asked: { rootId?: number | null } = {};
+  const asked: { rootId?: number | null; maxDepth?: number } = {};
   const roster = [1, 2, 3].map((id) => ({
     id,
     employeeCode: `E${id}`,
@@ -111,8 +111,9 @@ function serviceFor(tiers: string[]) {
     undefined,
     undefined,
     {
-      findRoster: async (scope: { rootId: number | null }) => {
+      findRoster: async (scope: { rootId: number | null; maxDepth?: number }) => {
         asked.rootId = scope.rootId;
+        asked.maxDepth = scope.maxDepth;
         return roster;
       },
     } as never,
@@ -122,7 +123,7 @@ function serviceFor(tiers: string[]) {
 
 const RANGE = { from: '2026-10-27', to: '2026-10-28' };
 
-test('an admin is given the whole company; a manager only their reporting tree', async () => {
+test('an admin is given the whole company; a manager only their reporting tree up to 2 levels', async () => {
   const admin = serviceFor(['employee', 'admin']);
   await admin.service.getActiveTime(9, RANGE);
   assert.equal(admin.asked.rootId, null);
@@ -130,6 +131,7 @@ test('an admin is given the whole company; a manager only their reporting tree',
   const manager = serviceFor(['employee', 'manager']);
   await manager.service.getActiveTime(9, RANGE);
   assert.equal(manager.asked.rootId, 9);
+  assert.equal(manager.asked.maxDepth, 2);
 });
 
 test('an employee is refused', async () => {

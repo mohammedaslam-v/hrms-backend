@@ -195,7 +195,12 @@ export class ReportsService implements IReportsService {
 
     // Leavers are included so a past range still shows the days they worked;
     // anyone gone before the range, or not yet joined, is left out.
-    const scope = (await this.orgRepository.findRoster({ rootId: isAdmin ? null : viewerId, includeLeavers: true }))
+    // Managers see up to 2 levels below them; admins see the whole company.
+    const scope = (await this.orgRepository.findRoster({
+      rootId: isAdmin ? null : viewerId,
+      includeLeavers: true,
+      maxDepth: 2,
+    }))
       .filter((m) => (!m.dateOfLeaving || m.dateOfLeaving >= from) && (!m.dateOfJoining || m.dateOfJoining <= to));
 
     let members = scope;
