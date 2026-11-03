@@ -5,11 +5,14 @@ import {
   computeLedger,
   formatDecisionNote,
   formatMonthRange,
+  isSpecialSeniorApprover,
   isTwoLevelLeave,
   leaveYearMonths,
   LeaveRequestRecord,
   parseApprovalProgress,
   projectRequest,
+  SPECIAL_SENIOR_APPROVER_EMAILS,
+  SPECIAL_SENIOR_APPROVER_IDS,
   workingDaysBetween,
 } from './leave.domain';
 
@@ -355,7 +358,7 @@ describe('loss of pay — confirmed policy', () => {
   });
 
   describe('two-level approval workflow domain logic', () => {
-    it('identifies 2-level requests for sales and operations departments with both managers', () => {
+    it('identifies 2-level requests for sales and operations departments', () => {
       // Sales employee with direct and grand manager
       assert.equal(isTwoLevelLeave({ department: 'Sales', managerId: 10, grandManagerId: 5 }), true);
       assert.equal(isTwoLevelLeave({ department: 'sales', managerId: 10, grandManagerId: 5 }), true);
@@ -378,11 +381,32 @@ describe('loss of pay — confirmed policy', () => {
       assert.equal(isTwoLevelLeave({ department: null, managerId: 10, grandManagerId: 5 }), false);
       assert.equal(isTwoLevelLeave({ department: '', managerId: 10, grandManagerId: 5 }), false);
 
-      // Sales/Operations employee with single manager (no grand manager)
-      assert.equal(isTwoLevelLeave({ department: 'Sales', managerId: 10, grandManagerId: null }), false);
-      assert.equal(isTwoLevelLeave({ department: 'Operations', managerId: 10, grandManagerId: null }), false);
+      // Sales/Operations employee with direct manager (grand manager can be null since Rhea or Admin provides Level 2)
+      assert.equal(isTwoLevelLeave({ department: 'Sales', managerId: 10, grandManagerId: null }), true);
+      assert.equal(isTwoLevelLeave({ department: 'Operations', managerId: 10, grandManagerId: null }), true);
+
+      // Without a direct manager (managerId is null), 2-level flow is not applicable
       assert.equal(isTwoLevelLeave({ department: 'Sales', managerId: null, grandManagerId: 5 }), false);
       assert.equal(isTwoLevelLeave({ department: 'Operations', managerId: null, grandManagerId: null }), false);
+    });
+
+    it('identifies special senior approvers (Rhea Diwan)', () => {
+      // By employee ID 5
+      assert.equal(isSpecialSeniorApprover(5), true);
+      assert.equal(isSpecialSeniorApprover(5, null), true);
+      assert.equal(isSpecialSeniorApprover(5, 'rhea@bambinos.live'), true);
+
+      // By email rhea@bambinos.live (case-insensitive, trimmed)
+      assert.equal(isSpecialSeniorApprover(99, 'rhea@bambinos.live'), true);
+      assert.equal(isSpecialSeniorApprover(99, ' Rhea@Bambinos.LIVE '), true);
+
+      // Other employees
+      assert.equal(isSpecialSeniorApprover(10, 'other@bambinos.live'), false);
+      assert.equal(isSpecialSeniorApprover(10, null), false);
+      assert.equal(isSpecialSeniorApprover(10), false);
+
+      assert.deepEqual(SPECIAL_SENIOR_APPROVER_IDS, [5]);
+      assert.deepEqual(SPECIAL_SENIOR_APPROVER_EMAILS, ['rhea@bambinos.live']);
     });
 
     it('parses structured approval metadata comments from decision notes', () => {

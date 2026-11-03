@@ -7,6 +7,7 @@ import {
   eachDay,
   formatDecisionNote,
   formatMonthRange,
+  isSpecialSeniorApprover,
   isTwoLevelLeave,
   LeaveLedger,
   LeaveType,
@@ -298,6 +299,7 @@ export class LeaveService implements ILeaveService {
   async getApprovals(managerId: number): Promise<ApprovalsView> {
     const viewer = this.authService ? await this.authService.getCurrentEmployee(managerId) : null;
     const isAdmin = viewer?.tiers.includes('admin') ?? false;
+    const isSpecialSenior = isSpecialSeniorApprover(managerId, viewer?.workEmail);
 
     const team = await this.orgRepository.findReportingTree(managerId);
     const teamIds = team.map((t) => t.id);
@@ -309,10 +311,18 @@ export class LeaveService implements ILeaveService {
     }
 
     // When an admin is logged in, show all pending leave approval requests.
-    // For managers, only their reporting tree's requests are shown.
-    const pendingRequests = isAdmin
+    // When a special senior approver (e.g. Rhea Diwan) is logged in, include her reporting
+    // tree's requests PLUS any 2-level pending requests for Sales and Operations.
+    // For other managers, only their reporting tree's requests are shown.
+    let pendingRequests = (isAdmin || isSpecialSenior)
       ? await this.leaveRepository.findPendingForEmployees()
       : await this.leaveRepository.findPendingForEmployees(teamIds);
+
+    if (!isAdmin && isSpecialSenior) {
+      pendingRequests = pendingRequests.filter(
+        (req) => teamIds.includes(req.employeeId) || isTwoLevelLeave(req),
+      );
+    }
 
     // The ledger for each report, plus any applicant whose request is pending,
     // so the queue can show the consequence of a decision and the balances table can be built.
@@ -384,7 +394,7 @@ export class LeaveService implements ILeaveService {
     });
 
     const balanceMembers = [...team];
-    if (isAdmin) {
+    if (isAdmin || isSpecialSenior) {
       for (const req of pendingRequests) {
         if (!balanceMembers.some((m) => m.id === req.employeeId)) {
           balanceMembers.push({
@@ -467,10 +477,18 @@ export class LeaveService implements ILeaveService {
 
     const viewer = this.authService ? await this.authService.getCurrentEmployee(managerId) : null;
     const isAdmin = viewer?.tiers.includes('admin') ?? false;
+    const isSpecialSenior = isSpecialSeniorApprover(managerId, viewer?.workEmail);
 
-    // Scope check: the request must belong to someone in this manager's tree, unless viewer is admin.
+    if (managerId === request.employeeId) {
+      throw ApiError.forbidden('You cannot approve or reject your own leave request.');
+    }
+
+    const isTwoLevel = isTwoLevelLeave(request);
+
+    // Scope check: the request must belong to someone in this manager's tree, unless viewer is admin,
+    // OR viewer is a special senior approver (e.g. Rhea Diwan) deciding a 2-level leave request.
     // A manager cannot decide their own leave, and the tree excludes them.
-    if (!isAdmin) {
+    if (!isAdmin && !(isSpecialSenior && isTwoLevel)) {
       const team = await this.orgRepository.findReportingTree(managerId);
       const member = team.find((t) => t.id === request.employeeId);
       if (!member) {
@@ -484,8 +502,6 @@ export class LeaveService implements ILeaveService {
         `${request.ref} has already been ${request.status.toLowerCase()}.`,
       );
     }
-
-    const isTwoLevel = isTwoLevelLeave(request);
 
     if (dto.decision === 'Rejected') {
       const progress = parseApprovalProgress(request.decisionNote) ?? {};
@@ -546,6 +562,7 @@ export class LeaveService implements ILeaveService {
     const progress: ApprovalProgress = parseApprovalProgress(request.decisionNote) ?? { l1: null, l2: null };
     const isDirectManager = request.managerId === managerId;
     const isGrandManager = request.grandManagerId === managerId;
+    const canApproveL2 = isGrandManager || isAdmin || isSpecialSenior;
 
     let slot: 'l1' | 'l2';
     let role: 'manager' | 'senior_manager' | 'admin';
@@ -556,7 +573,7 @@ export class LeaveService implements ILeaveService {
       }
       slot = 'l1';
       role = 'manager';
-    } else if (isGrandManager || isAdmin) {
+    } else if (canApproveL2) {
       if (progress.l2) {
         throw ApiError.badRequest('This request has already received Level 2 (Senior / Admin) approval.');
       }
@@ -566,7 +583,7 @@ export class LeaveService implements ILeaveService {
       slot = 'l2';
       role = isAdmin ? 'admin' : 'senior_manager';
     } else {
-      throw ApiError.forbidden('Only the direct manager, senior manager, or an administrator can approve leave for Sales and Operations department employees.');
+      throw ApiError.forbidden('Only the direct manager, senior manager, Rhea Diwan, or an administrator can approve leave for Sales and Operations department employees.');
     }
 
     const nowIso = new Date().toISOString();

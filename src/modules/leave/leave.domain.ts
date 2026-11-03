@@ -96,6 +96,22 @@ const TWO_LEVEL_DEPARTMENTS = new Set([
   'operations & sales',
 ]);
 
+/**
+ * Designated senior approvers who are authorized to provide Level 2 leave
+ * approvals across Sales and Operations departments, in addition to the
+ * employee's direct manager's manager or any administrator.
+ *
+ * Rhea Diwan (id: 5, rhea@bambinos.live) — Head of Sales.
+ */
+export const SPECIAL_SENIOR_APPROVER_IDS: readonly number[] = [5];
+export const SPECIAL_SENIOR_APPROVER_EMAILS: readonly string[] = ['rhea@bambinos.live'];
+
+export function isSpecialSeniorApprover(employeeId: number, email?: string | null): boolean {
+  if (SPECIAL_SENIOR_APPROVER_IDS.includes(employeeId)) return true;
+  if (email && SPECIAL_SENIOR_APPROVER_EMAILS.includes(email.trim().toLowerCase())) return true;
+  return false;
+}
+
 export function isTwoLevelLeave(request: {
   department?: string | null;
   managerId?: number | null;
@@ -109,7 +125,7 @@ export function isTwoLevelLeave(request: {
     (dept.includes('sales') && dept.includes('operat'));
 
   if (!isMatch) return false;
-  return Boolean(request.managerId && request.grandManagerId);
+  return Boolean(request.managerId);
 }
 
 export interface LedgerInput {
