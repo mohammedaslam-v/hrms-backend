@@ -73,6 +73,7 @@ export interface CheckInInput {
   loginAt: string;
   status: AttendanceStatus;
   lateByMinutes: number;
+  leaveType?: LeaveType | string | null;
 }
 
 /** A whole day as an admin decided it, written with source = 'manual'. */

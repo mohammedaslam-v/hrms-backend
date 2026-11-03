@@ -449,9 +449,9 @@ export class AttendanceRepository implements IAttendanceRepository {
     //    and only the first one matches.
     const [claimed] = await this.pool.execute<ResultSetHeader>(
       `UPDATE hrms_attendance
-          SET login_at = ?, status = ?, late_by_minutes = ?, source = 'app'
+          SET login_at = ?, status = ?, late_by_minutes = ?, leave_type = ?, source = 'app'
         WHERE employee_id = ? AND att_date = ? AND login_at IS NULL`,
-      [input.loginAt, input.status, input.lateByMinutes, input.employeeId, input.date],
+      [input.loginAt, input.status, input.lateByMinutes, input.leaveType ?? null, input.employeeId, input.date],
     );
     if (claimed.affectedRows === 1) {
       return this.findByDate(input.employeeId, input.date);
@@ -477,9 +477,9 @@ export class AttendanceRepository implements IAttendanceRepository {
     try {
       await this.pool.execute<ResultSetHeader>(
         `INSERT INTO hrms_attendance
-           (employee_id, att_date, status, login_at, late_by_minutes, source)
-         VALUES (?, ?, ?, ?, ?, 'app')`,
-        [input.employeeId, input.date, input.status, input.loginAt, input.lateByMinutes],
+           (employee_id, att_date, status, login_at, late_by_minutes, leave_type, source)
+         VALUES (?, ?, ?, ?, ?, ?, 'app')`,
+        [input.employeeId, input.date, input.status, input.loginAt, input.lateByMinutes, input.leaveType ?? null],
       );
     } catch (error) {
       if (isDuplicateKey(error)) return null;

@@ -214,10 +214,25 @@ describe('what a day was — precedence', () => {
     );
   });
 
-  it('4b. a punch past the grace window is Late', () => {
+  it('4b. a punch past the grace window but under 25 min is Late', () => {
     assert.equal(
       resolveDayStatus(facts({ punch: { loginAt: '10:16', logoutAt: '19:00' } })),
       'Late',
+    );
+    assert.equal(
+      resolveDayStatus(facts({ punch: { loginAt: '10:24', logoutAt: '19:00' } })),
+      'Late',
+    );
+  });
+
+  it('4c. a punch 25 minutes or more late is Half day', () => {
+    assert.equal(
+      resolveDayStatus(facts({ punch: { loginAt: '10:25', logoutAt: '19:00' } })),
+      'Half day',
+    );
+    assert.equal(
+      resolveDayStatus(facts({ punch: { loginAt: '10:40', logoutAt: '19:00' } })),
+      'Half day',
     );
   });
 
@@ -242,8 +257,16 @@ describe('what a day was — precedence', () => {
 
 describe('a whole day resolved', () => {
   it('carries the hours and the lateness alongside the status', () => {
-    const d = attendanceOf(facts({ punch: { loginAt: '10:25', logoutAt: '19:10' } }));
+    const d = attendanceOf(facts({ punch: { loginAt: '10:20', logoutAt: '19:10' } }));
     assert.equal(d.status, 'Late');
+    assert.equal(d.lateByMinutes, 20);
+    assert.equal(d.activeHours, 8.83);
+    assert.equal(d.loginAt, '10:20');
+  });
+
+  it('resolves a 25+ min late punch as Half day with lateness and hours preserved', () => {
+    const d = attendanceOf(facts({ punch: { loginAt: '10:25', logoutAt: '19:10' } }));
+    assert.equal(d.status, 'Half day');
     assert.equal(d.lateByMinutes, 25);
     assert.equal(d.activeHours, 8.75);
     assert.equal(d.loginAt, '10:25');
@@ -462,7 +485,23 @@ describe('shifts that cross midnight', () => {
     assert.equal(d.activeHours, 7.92);
   });
 
-  it('marks a night worker late when they miss the grace window', () => {
+  it('marks a night worker late when they miss the grace window (under 25 min)', () => {
+    const d = attendanceOf({
+      date: '2026-09-07',
+      today: '2026-09-08',
+      weeklyOff: ['Sun'],
+      holidayName: null,
+      leave: null,
+      punch: { loginAt: '23:20', logoutAt: '07:00' },
+      shiftStart: '23:00',
+      lateGraceMinutes: 15,
+    });
+    assert.equal(d.status, 'Late');
+    assert.equal(d.lateByMinutes, 20);
+    assert.equal(d.activeHours, 7.67);
+  });
+
+  it('marks a night worker half day when they are 25+ min late', () => {
     const d = attendanceOf({
       date: '2026-09-07',
       today: '2026-09-08',
@@ -473,7 +512,7 @@ describe('shifts that cross midnight', () => {
       shiftStart: '23:00',
       lateGraceMinutes: 15,
     });
-    assert.equal(d.status, 'Late');
+    assert.equal(d.status, 'Half day');
     assert.equal(d.lateByMinutes, 90);
     assert.equal(d.activeHours, 6.5);
   });

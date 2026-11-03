@@ -93,6 +93,7 @@ export interface DayFacts {
   slots?: SlotMask | null;
   shiftStart: string;
   lateGraceMinutes: number;
+  lateHalfDayMinutes?: number;
 }
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
@@ -267,6 +268,17 @@ export function minutesLate(loginAt: string, shiftStart: string): number {
  */
 export const isLate = (lateByMinutes: number, lateGraceMinutes: number): boolean =>
   lateByMinutes > lateGraceMinutes;
+
+/**
+ * A check-in 25 minutes or more past shift start is treated as Half day.
+ * It triggers a 0.5 day leave deduction (or 0.5 day LOP if leave balance is exhausted).
+ */
+export const LATE_HALF_DAY_MINUTES = 25;
+
+export const isHalfDayLate = (
+  lateByMinutes: number,
+  cutoffMinutes = LATE_HALF_DAY_MINUTES,
+): boolean => lateByMinutes >= cutoffMinutes;
 
 // -------------------------------------------------------------- active hours
 
@@ -504,6 +516,9 @@ export function resolveDayStatus(facts: DayFacts): AttendanceStatus {
 
   if (facts.punch) {
     const late = minutesLate(facts.punch.loginAt, facts.shiftStart);
+    if (isHalfDayLate(late, facts.lateHalfDayMinutes ?? LATE_HALF_DAY_MINUTES)) {
+      return 'Half day';
+    }
     return isLate(late, facts.lateGraceMinutes) ? 'Late' : 'On time';
   }
 

@@ -6,6 +6,8 @@ import {
   crossesMidnight,
   dayBars,
   isLate,
+  isHalfDayLate,
+  isWeeklyOff,
   isMarkedOff,
   isMarkedWorking,
   EMPTY_SLOTS,
@@ -46,7 +48,8 @@ import {
 } from './attendance.model';
 import { IOrgRepository } from '../org/org.repository.interface';
 import { IAuthService } from '../auth/auth.service.interface';
-import { ILeaveService } from '../leave/leave.service.interface';
+import { DayLeaveChoice, ILeaveService } from '../leave/leave.service.interface';
+import { LeaveType } from '../leave/leave.domain';
 import { RosterMember } from '../org/org.model';
 import { AttendanceStatus, dayNameOf } from './attendance.domain';
 import { ApiError } from '../../utils/api-error';
@@ -250,20 +253,6 @@ export class AttendanceService implements IAttendanceService {
       throw ApiError.badRequest('Those check-in and check-out times do not make a valid working span.');
     }
 
-    // Leave first: editing an approved leave clears that day's punch, so the
-    // punch the admin typed is written after it, not before. Present and
-    // Weekly off both carry no leave, which cancels a single-day leave on the
-    // date and gives its days back to the balance.
-    const isLop = dto.status.startsWith('Unpaid') || dto.status.startsWith('LOP');
-    const leaveType = dto.status === 'Present' || isOff ? null : isLop ? 'Unpaid' : 'Earned';
-    const leaveMessage = await this.leaveService.setDayLeave(
-      viewerId,
-      subjectId,
-      date,
-      leaveType ? { leaveType, isHalfDay: isHalf, halfDaySession: isHalf ? dto.halfDaySession : null } : null,
-      note,
-    );
-
     const [schedule, policy, before] = await Promise.all([
       this.requireSchedule(subjectId, now.date),
       this.policyService.getForDate(now.date),
@@ -272,14 +261,77 @@ export class AttendanceService implements IAttendanceService {
 
     let status: AttendanceStatus;
     let lateBy = 0;
-    if (dto.status === 'Present') {
-      lateBy = minutesLate(punch!.loginAt, schedule.shiftStart);
-      status = isLate(lateBy, policy.lateGraceMinutes) ? 'Late' : 'On time';
-    } else if (isOff) {
-      // Read back by isMarkedOff(): a paid day off, never a loss of pay.
+    let leaveType: LeaveType | null = null;
+    let leaveChoice: DayLeaveChoice | null = null;
+
+    if (isOff) {
       status = 'Weekly off';
+      leaveChoice = null;
+    } else if (isFullLeave) {
+      status = 'Leave';
+      const isLop = dto.status.startsWith('Unpaid') || dto.status.startsWith('LOP');
+      leaveType = isLop ? 'Unpaid' : 'Earned';
+      leaveChoice = { leaveType, isHalfDay: false, halfDaySession: null };
+    } else if (punch) {
+      lateBy = minutesLate(punch.loginAt, schedule.shiftStart);
+
+      // Check if this is an explicit afternoon / second-half leave
+      if (isHalf && dto.halfDaySession === 'second') {
+        status = 'Half day';
+        const isLop = dto.status.startsWith('Unpaid') || dto.status.startsWith('LOP');
+        leaveType = isLop ? 'Unpaid' : 'Earned';
+        leaveChoice = { leaveType, isHalfDay: true, halfDaySession: 'second' };
+      } else {
+        // Adjust strictly according to check-in time:
+        if (isHalfDayLate(lateBy)) {
+          status = 'Half day';
+          const isLop = dto.status.startsWith('Unpaid') || dto.status.startsWith('LOP');
+          if (isLop) {
+            leaveType = 'Unpaid';
+          } else if (dto.status === 'Half earned leave') {
+            leaveType = 'Earned';
+          } else {
+            // Check employee leave balance
+            let hasBalance = false;
+            if (this.leaveService) {
+              try {
+                const leaveData = await this.leaveService.getMyLeave(subjectId);
+                hasBalance = (leaveData.ledger?.available ?? 0) >= 0.5;
+              } catch {
+                hasBalance = false;
+              }
+            }
+            leaveType = hasBalance ? 'Earned' : 'Unpaid';
+          }
+          leaveChoice = { leaveType, isHalfDay: true, halfDaySession: 'first' };
+        } else if (isLate(lateBy, policy.lateGraceMinutes)) {
+          // Between grace and 25 min: Late, cancel any single-day leave
+          status = 'Late';
+          leaveType = null;
+          leaveChoice = null;
+        } else {
+          // On time: cancel any single-day leave and restore balance
+          status = 'On time';
+          leaveType = null;
+          leaveChoice = null;
+        }
+      }
     } else {
       status = isHalf ? 'Half day' : 'Leave';
+      const isLop = dto.status.startsWith('Unpaid') || dto.status.startsWith('LOP');
+      leaveType = isLop ? 'Unpaid' : 'Earned';
+      leaveChoice = { leaveType, isHalfDay: isHalf, halfDaySession: dto.halfDaySession };
+    }
+
+    let leaveMessage: string | null = null;
+    if (this.leaveService) {
+      leaveMessage = await this.leaveService.setDayLeave(
+        viewerId,
+        subjectId,
+        date,
+        leaveChoice,
+        note,
+      );
     }
 
     const after = await this.attendanceRepository.saveManualDay({
@@ -300,11 +352,11 @@ export class AttendanceService implements IAttendanceService {
       'attendance.day_edited',
       after?.id ?? null,
       before,
-      { ...dto, savedStatus: status },
+      { ...dto, savedStatus: status, adjustedLeaveType: leaveType },
     );
 
     return {
-      message: [`${dto.status} saved for ${date}.`, leaveMessage].filter(Boolean).join(' '),
+      message: [`${status} saved for ${date}.`, leaveMessage].filter(Boolean).join(' '),
     };
   }
 
@@ -459,7 +511,40 @@ export class AttendanceService implements IAttendanceService {
     const { facts } = await this.factsFor(employeeId, shiftDate, schedule, now.date);
 
     const lateByMinutes = minutesLate(now.time, schedule.shiftStart);
-    const status = resolveDayStatus({ ...facts, punch: { loginAt: now.time, logoutAt: null } });
+    let status = resolveDayStatus({ ...facts, punch: { loginAt: now.time, logoutAt: null } });
+    let leaveType: LeaveType | null = null;
+
+    // A working shift without approved leave or declared holiday
+    const isWorkingShift = !facts.leave && !facts.holidayName && !isWeeklyOff(shiftDate, schedule.weeklyOff);
+    if (isWorkingShift && isHalfDayLate(lateByMinutes)) {
+      status = 'Half day';
+
+      let hasBalance = false;
+      if (this.leaveService) {
+        try {
+          const leaveData = await this.leaveService.getMyLeave(employeeId);
+          hasBalance = (leaveData.ledger?.available ?? 0) >= 0.5;
+        } catch {
+          hasBalance = false;
+        }
+      }
+
+      leaveType = hasBalance ? 'Earned' : 'Unpaid';
+
+      if (this.leaveService) {
+        try {
+          await this.leaveService.setDayLeave(
+            employeeId,
+            employeeId,
+            shiftDate,
+            { leaveType, isHalfDay: true, halfDaySession: 'first' },
+            `Late check-in by ${lateByMinutes}m (${hasBalance ? '0.5 Earned leave deducted' : '0.5 Unpaid LOP'})`,
+          );
+        } catch (err) {
+          console.error('[Attendance] Failed to record late half-day leave:', err);
+        }
+      }
+    }
 
     const record = await this.attendanceRepository.checkIn({
       employeeId,
@@ -467,6 +552,7 @@ export class AttendanceService implements IAttendanceService {
       loginAt: now.time,
       status,
       lateByMinutes,
+      leaveType,
     });
 
     if (!record) {
@@ -485,6 +571,7 @@ export class AttendanceService implements IAttendanceService {
       loginAt: record.loginAt,
       status: record.status,
       lateByMinutes: record.lateByMinutes,
+      leaveType,
       location,
     });
   }
