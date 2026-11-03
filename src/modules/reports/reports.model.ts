@@ -4,6 +4,7 @@ export type ReportType =
   | 'attsummary'
   | 'late'
   | 'nologin'
+  | 'lop'
   | 'active'
   | 'salary'
   | 'income_tax'
@@ -70,6 +71,7 @@ export interface ReportFilterDto {
    * wrong file has been sent on.
    */
   search?: string;
+  lopCategory?: 'all' | 'half_day' | 'full_day';
 }
 
 export interface ReportCatalogItem {

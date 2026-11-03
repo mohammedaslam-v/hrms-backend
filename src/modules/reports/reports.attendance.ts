@@ -62,6 +62,10 @@ export interface AttendanceDay {
   status: ReportDayStatus;
   /** True when the hours came from observed slots rather than a punch. */
   fromActivity: boolean;
+  leaveType?: string | null;
+  editNote?: string | null;
+  source?: string;
+  editedBy?: number | null;
 }
 
 /** Every day in [from, to] inclusive, as ISO dates. */
@@ -200,6 +204,10 @@ export async function loadAttendanceDays(
             : 0,
         status,
         fromActivity: mask != null && countSlots(mask) > 0,
+        leaveType: record?.leaveType ?? (leave ? leave.leaveType : null),
+        editNote: record?.editNote ?? null,
+        source: record?.source ?? 'app',
+        editedBy: record?.editedBy ?? null,
       });
     }
 

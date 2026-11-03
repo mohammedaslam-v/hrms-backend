@@ -49,7 +49,7 @@ const PAYROLL_REPORT_TYPES: ReadonlySet<ReportType> = new Set([
   'appraisals',
 ]);
 /** Attendance-side reports that only admins may open. */
-const ADMIN_ONLY_REPORT_TYPES: ReadonlySet<ReportType> = new Set(['activity_log']);
+const ADMIN_ONLY_REPORT_TYPES: ReadonlySet<ReportType> = new Set(['activity_log', 'lop']);
 
 /** The Active time tab's longest range: about two months stays readable. */
 const ACTIVE_TIME_MAX_DAYS = 62;
@@ -342,6 +342,13 @@ export class ReportsService implements IReportsService {
         description: 'Per employee per day: check-in and check-out, recorded calls and meetings, and admin-panel time.',
         filterType: 'period',
       },
+      {
+        type: 'lop',
+        title: 'Loss of pay (LOP) report',
+        category: 'Attendance',
+        description: 'Details of Half-Day LOP (late check-in >= 25m) and Full-Day LOP (missed checkout, absent, or manual).',
+        filterType: 'period',
+      },
 
       // Payroll
       {
@@ -475,6 +482,8 @@ export class ReportsService implements IReportsService {
         return this.buildLateLogins(filter);
       case 'nologin':
         return this.buildNoLogin(filter);
+      case 'lop':
+        return this.buildLopReport(filter);
       case 'active':
         return this.buildActiveHours(filter);
       case 'salary':
@@ -918,6 +927,264 @@ export class ReportsService implements IReportsService {
       note: 'Working days with no system activity at all — excludes approved leave, weekly offs and holidays.',
       columns,
       rows,
+    };
+  }
+
+  // Loss of pay (LOP) report
+  private async buildLopReport(filter: ReportFilterDto): Promise<ReportResult> {
+    const range = resolveRange(filter);
+    const allEmployees = await this.repository.findActiveEmployees(filter.department);
+    const employees = this.filterEmployees(allEmployees, filter);
+
+    const columns: ReportColumn[] = [
+      { key: 'date', label: 'Date', width: '110px' },
+      { key: 'day', label: 'Day', width: '70px' },
+      { key: 'code', label: 'Code', width: '100px' },
+      { key: 'employee', label: 'Employee', width: '190px' },
+      { key: 'department', label: 'Department', width: '150px' },
+      { key: 'manager', label: 'Manager', width: '160px' },
+      { key: 'lopCategory', label: 'Category', width: '140px' },
+      { key: 'lopDays', label: 'Deduction', width: '90px', isNumeric: true },
+      { key: 'checkIn', label: 'Check-in', width: '90px' },
+      { key: 'checkOut', label: 'Check-out', width: '90px' },
+      { key: 'lateBy', label: 'Late by (min)', width: '100px', isNumeric: true },
+      { key: 'reason', label: 'Reason / Trigger', width: '280px' },
+    ];
+
+    if (employees.length === 0) {
+      return {
+        type: 'lop',
+        meta: {
+          companyName: COMPANY_HEADER.name,
+          companyAddress: COMPANY_HEADER.address,
+          reportTitle: 'Loss of pay (LOP) report',
+          periodLabel: range.label,
+          generatedAt: new Date().toISOString(),
+          totalRecords: 0,
+        },
+        columns,
+        rows: [],
+      };
+    }
+
+    const facts = await this.attendanceFor(employees, range.from, range.to);
+
+    const empIds = employees.map((e) => e.id);
+    let approvedLeaves: StoredLeaveRequest[] = [];
+    if (this.leaveRepository && empIds.length > 0) {
+      try {
+        approvedLeaves = await this.leaveRepository.findRequestsForEmployees(
+          empIds,
+          range.from,
+          range.to,
+          10000,
+        );
+      } catch {
+        approvedLeaves = [];
+      }
+    }
+
+    const approvedUnpaidMap = new Map<string, StoredLeaveRequest>();
+    for (const req of approvedLeaves) {
+      if (req.status === 'Approved' && req.leaveType === 'Unpaid') {
+        const reqDays = datesBetween(
+          req.fromDate < range.from ? range.from : req.fromDate,
+          req.toDate > range.to ? range.to : req.toDate,
+        );
+        for (const dStr of reqDays) {
+          approvedUnpaidMap.set(`${req.employeeId}|${dStr}`, req);
+        }
+      }
+    }
+
+    interface LopItem {
+      date: string;
+      day: string;
+      code: string;
+      employee: string;
+      department: string;
+      manager: string;
+      lopCategory: 'Half-Day LOP' | 'Full-Day LOP' | 'Half-Day Leave';
+      lopDays: number;
+      checkIn: string;
+      checkOut: string;
+      lateBy: number | string;
+      reason: string;
+      _sort: string;
+    }
+
+    const itemsMap = new Map<string, LopItem>();
+
+    for (const e of employees) {
+      const days = facts.get(e.id);
+      if (!days) continue;
+
+      for (const d of days.values()) {
+        const key = `${e.id}|${d.date}`;
+        const leaveReq = approvedUnpaidMap.get(key);
+
+        // 1. Auto-closed: Missed check-out (takes priority over generic LOP)
+        const isMissedCheckout =
+          d.editNote?.includes('Missed check-out') ||
+          (d.status === 'Leave' && d.leaveType === 'Unpaid' && d.loginAt && !d.logoutAt && d.activeHours === 0);
+
+        if (isMissedCheckout) {
+          itemsMap.set(key, {
+            date: formatDisplayDate(d.date),
+            day: d.dayName,
+            code: e.employee_code,
+            employee: e.full_name,
+            department: e.department || 'General',
+            manager: e.manager_name || '—',
+            lopCategory: 'Full-Day LOP',
+            lopDays: 1.0,
+            checkIn: timeLabel(d.loginAt),
+            checkOut: '—',
+            lateBy: d.lateByMinutes > 0 ? d.lateByMinutes : '—',
+            reason: 'Auto-closed: Missed check-out (LOP)',
+            _sort: d.date,
+          });
+          continue;
+        }
+
+        // 2. Late check-in >= 25 min (Half-Day LOP or Half-Day Leave)
+        if (d.lateByMinutes >= 25 && d.loginAt) {
+          const isLop = d.leaveType === 'Unpaid';
+          itemsMap.set(key, {
+            date: formatDisplayDate(d.date),
+            day: d.dayName,
+            code: e.employee_code,
+            employee: e.full_name,
+            department: e.department || 'General',
+            manager: e.manager_name || '—',
+            lopCategory: isLop ? 'Half-Day LOP' : 'Half-Day Leave',
+            lopDays: 0.5,
+            checkIn: timeLabel(d.loginAt),
+            checkOut: timeLabel(d.logoutAt),
+            lateBy: d.lateByMinutes,
+            reason:
+              d.editNote ||
+              (isLop
+                ? `Late check-in by ${d.lateByMinutes}m (no leave balance)`
+                : `Late check-in by ${d.lateByMinutes}m (0.5 Earned leave deducted)`),
+            _sort: d.date,
+          });
+          continue;
+        }
+
+        // 3. No login activity (Absent on past working day)
+        if (d.status === 'No login') {
+          itemsMap.set(key, {
+            date: formatDisplayDate(d.date),
+            day: d.dayName,
+            code: e.employee_code,
+            employee: e.full_name,
+            department: e.department || 'General',
+            manager: e.manager_name || '—',
+            lopCategory: 'Full-Day LOP',
+            lopDays: 1.0,
+            checkIn: '—',
+            checkOut: '—',
+            lateBy: '—',
+            reason: 'No login activity (Absent)',
+            _sort: d.date,
+          });
+          continue;
+        }
+
+        // 4. Admin marked or stored Unpaid leave (LOP)
+        if (d.leaveType === 'Unpaid') {
+          const isHalf = d.status === 'Half day';
+          const defaultReason = isHalf ? 'Marked by admin: Half-Day LOP' : 'Marked by admin: Full-Day LOP';
+          const reason =
+            d.editNote
+              ? d.editNote.startsWith('Marked') || d.editNote.startsWith('Auto')
+                ? d.editNote
+                : `Marked by admin: ${d.editNote}`
+              : leaveReq
+              ? leaveReq.reason || leaveReq.decisionNote || defaultReason
+              : defaultReason;
+
+          itemsMap.set(key, {
+            date: formatDisplayDate(d.date),
+            day: d.dayName,
+            code: e.employee_code,
+            employee: e.full_name,
+            department: e.department || 'General',
+            manager: e.manager_name || '—',
+            lopCategory: isHalf ? 'Half-Day LOP' : 'Full-Day LOP',
+            lopDays: isHalf ? 0.5 : 1.0,
+            checkIn: timeLabel(d.loginAt),
+            checkOut: timeLabel(d.logoutAt),
+            lateBy: d.lateByMinutes > 0 ? d.lateByMinutes : '—',
+            reason,
+            _sort: d.date,
+          });
+          continue;
+        }
+
+        // 5. Approved Unpaid leave request not already matched
+        if (leaveReq) {
+          const isHalf = leaveReq.isHalfDay;
+          itemsMap.set(key, {
+            date: formatDisplayDate(d.date),
+            day: d.dayName,
+            code: e.employee_code,
+            employee: e.full_name,
+            department: e.department || 'General',
+            manager: e.manager_name || '—',
+            lopCategory: isHalf ? 'Half-Day LOP' : 'Full-Day LOP',
+            lopDays: isHalf ? 0.5 : 1.0,
+            checkIn: timeLabel(d.loginAt),
+            checkOut: timeLabel(d.logoutAt),
+            lateBy: d.lateByMinutes > 0 ? d.lateByMinutes : '—',
+            reason: leaveReq.reason || leaveReq.decisionNote || (isHalf ? 'Approved Unpaid Leave (Half Day)' : 'Approved Unpaid Leave (Full Day)'),
+            _sort: d.date,
+          });
+        }
+      }
+    }
+
+    let allItems = Array.from(itemsMap.values());
+
+    // Filter by lopCategory if specified
+    if (filter.lopCategory === 'half_day') {
+      allItems = allItems.filter((i) => i.lopCategory === 'Half-Day LOP' || i.lopCategory === 'Half-Day Leave');
+    } else if (filter.lopCategory === 'full_day') {
+      allItems = allItems.filter((i) => i.lopCategory === 'Full-Day LOP');
+    }
+
+    const rows = allItems
+      .sort((a, b) => (a._sort < b._sort ? 1 : a._sort > b._sort ? -1 : a.employee.localeCompare(b.employee)))
+      .map(({ _sort, ...row }) => row);
+
+    const totalLopDays = Number(rows.reduce((sum, r) => sum + r.lopDays, 0).toFixed(1));
+    const fullDayCount = rows.filter((r) => r.lopCategory === 'Full-Day LOP').length;
+    const halfDayCount = rows.filter((r) => r.lopCategory === 'Half-Day LOP').length;
+    const halfDayLeaveCount = rows.filter((r) => r.lopCategory === 'Half-Day Leave').length;
+
+    const note = `Loss of pay (LOP) report covering Half-Day LOP (${halfDayCount}), Full-Day LOP (${fullDayCount})${
+      halfDayLeaveCount > 0 ? `, and Half-Day Leave (${halfDayLeaveCount})` : ''
+    }. Total LOP deduction: ${totalLopDays} day${totalLopDays === 1 ? '' : 's'}.`;
+
+    return {
+      type: 'lop',
+      meta: {
+        companyName: COMPANY_HEADER.name,
+        companyAddress: COMPANY_HEADER.address,
+        reportTitle: 'Loss of pay (LOP) report',
+        periodLabel: range.label,
+        generatedAt: new Date().toISOString(),
+        totalRecords: rows.length,
+        note,
+      },
+      note,
+      columns,
+      rows,
+      totals: {
+        date: 'Total',
+        lopDays: totalLopDays,
+      },
     };
   }
 
