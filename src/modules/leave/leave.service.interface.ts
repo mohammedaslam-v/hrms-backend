@@ -4,6 +4,7 @@ import {
   ApprovalsView,
   DecideLeaveDto,
   DecisionResult,
+  DeleteLeaveResult,
   EditApprovedLeaveDto,
   EditApprovedResult,
   LeavePreview,
@@ -82,6 +83,15 @@ export interface ILeaveService {
    * Excludes extension beyond original approved duration.
    */
   editApproved(adminId: number, dto: EditApprovedLeaveDto): Promise<EditApprovedResult>;
+
+  /**
+   * Admin-only: remove a leave request of any status for good, with a reason.
+   * The full row goes to the audit log first. Deleting an APPROVED request
+   * also returns its days to the balance, drops the loss of pay it caused and
+   * undoes what it wrote to attendance — all of which follow from the row
+   * being gone, because balance and day status are derived on read.
+   */
+  deleteRequest(adminId: number, requestId: number, note: string): Promise<DeleteLeaveResult>;
 
   /**
    * Admin-only: what ONE day's leave should be, set from the attendance

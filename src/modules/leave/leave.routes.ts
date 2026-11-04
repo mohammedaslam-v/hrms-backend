@@ -23,6 +23,8 @@ export const createLeaveRouter = (controller: LeaveController): Router => {
   router.get('/approvals', controller.getApprovals);
   router.post('/approvals/:id/decide', controller.decide);
   router.put('/approvals/:id/edit', controller.editApproved);
+  // Admin tier, enforced in the service: the row is gone for good afterwards.
+  router.delete('/approvals/:id', controller.deleteRequest);
 
   // Employee-specific endpoints (for manager/admin access)
   router.get('/:id', controller.getForEmployee);

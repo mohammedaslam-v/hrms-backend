@@ -30,6 +30,7 @@ import {
   ApprovalsView,
   DecideLeaveDto,
   DecisionResult,
+  DeleteLeaveResult,
   EditApprovedLeaveDto,
   EditApprovedResult,
   HolidayRecord,
@@ -822,6 +823,72 @@ export class LeaveService implements ILeaveService {
       message,
       updatedRequest: updatedRequest!,
     };
+  }
+
+  async deleteRequest(adminId: number, requestId: number, note: string): Promise<DeleteLeaveResult> {
+    const viewer = this.authService ? await this.authService.getCurrentEmployee(adminId) : null;
+    const isAdmin = viewer?.tiers.includes('admin') ?? false;
+    if (!isAdmin) {
+      throw ApiError.forbidden('Only administrators can delete leave requests.');
+    }
+
+    const trimmedNote = (note || '').trim();
+    if (trimmedNote.length < 3) {
+      throw ApiError.badRequest('A reason for deleting this leave is required.');
+    }
+
+    const request = await this.leaveRepository.findById(requestId);
+    if (!request) {
+      throw ApiError.notFound('That leave request could not be found.');
+    }
+
+    const wasApproved = request.status === 'Approved';
+
+    // The attendance side first: it needs the request's dates, and if it fails
+    // the request is still there to try again. Only an approved leave ever
+    // reached attendance — pending, rejected and cancelled ones never did.
+    const restored = wasApproved
+      ? await this.leaveRepository.restoreAttendanceAfterLeaveDeleted(
+          request.employeeId,
+          request.fromDate,
+          request.toDate,
+          request.ref,
+          adminId,
+        )
+      : { removed: 0, detached: 0 };
+
+    // The whole row goes to the audit log — after the delete it exists nowhere else.
+    await this.leaveRepository.recordAudit(
+      adminId,
+      'leave.deleted',
+      request.id,
+      request,
+      {
+        deleted: true,
+        deletedBy: viewer?.fullName ?? 'Admin',
+        note: trimmedNote,
+        attendanceRowsRemoved: restored.removed,
+        attendanceRowsDetached: restored.detached,
+      },
+    );
+
+    await this.leaveRepository.deleteRequest(request.id);
+
+    let message = `${request.ref} deleted.`;
+    if (wasApproved) {
+      const paidDays = Math.max(0, round1(request.days - request.unpaidDays));
+      if (paidDays > 0) {
+        message += ` ${paidDays} day(s) returned to the balance.`;
+      }
+      if (request.unpaidDays > 0) {
+        message += ` ${request.unpaidDays} day(s) of loss of pay removed.`;
+      }
+      if (restored.removed > 0 || restored.detached > 0) {
+        message += ` Attendance on ${restored.removed + restored.detached} day(s) restored.`;
+      }
+    }
+
+    return { view: await this.getApprovals(adminId), message };
   }
 
   async setDayLeave(

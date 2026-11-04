@@ -212,6 +212,11 @@ export interface EditApprovedResult {
   updatedRequest: LeaveRequestRecord;
 }
 
+export interface DeleteLeaveResult {
+  view: ApprovalsView;
+  message: string;
+}
+
 export interface DecideLeaveDto {
   requestId: number;
   decision: 'Approved' | 'Rejected';

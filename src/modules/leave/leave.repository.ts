@@ -427,6 +427,87 @@ export class LeaveRepository implements ILeaveRepository {
     );
   }
 
+  async deleteRequest(requestId: number): Promise<void> {
+    await this.pool.execute(`DELETE FROM hrms_leave_requests WHERE id = ?`, [requestId]);
+  }
+
+  async restoreAttendanceAfterLeaveDeleted(
+    employeeId: number,
+    fromDate: string,
+    toDate: string,
+    ref: string,
+    adminId: number,
+  ): Promise<{ removed: number; detached: number }> {
+    // Two kinds of row carry an approved leave into attendance:
+    //
+    //  1. a manual marker with no punch — written by the attendance calendar
+    //     edit, or by clearAttendanceForLeaveDates() when a leave was laid over
+    //     a punched day. With the leave gone the marker says nothing true, and
+    //     left behind it would turn the person's weekly off into a working day
+    //     (isMarkedWorking), so it is removed. The day then derives from
+    //     weekly off / holiday / absence as if the leave had never been.
+    //
+    //  2. a punched half day that was labelled with the leave's type. The
+    //     punch is real and stays; only the leave label comes off. Status is
+    //     derived on read, so nothing else needs rewriting.
+    //
+    // A punched 'Leave' row is never touched: that shape is the attendance
+    // module's own auto-closed missed check-out, not something a request wrote.
+    const [markers] = await this.pool.query<RowDataPacket[]>(
+      `SELECT * FROM hrms_attendance
+        WHERE employee_id = ?
+          AND att_date BETWEEN ? AND ?
+          AND source = 'manual'
+          AND status IN ('Leave', 'Half day')
+          AND login_at IS NULL`,
+      [employeeId, fromDate, toDate],
+    );
+
+    for (const row of markers) {
+      await this.pool.execute(`DELETE FROM hrms_attendance WHERE id = ?`, [row.id]);
+      await recordAudit(this.pool, {
+        actorEmployeeId: adminId,
+        action: 'attendance.removed_for_deleted_leave',
+        entityType: 'hrms_attendance',
+        entityId: row.id,
+        before: row,
+        after: { deleted: true, leaveRef: ref },
+      });
+    }
+
+    const [punched] = await this.pool.query<RowDataPacket[]>(
+      `SELECT * FROM hrms_attendance
+        WHERE employee_id = ?
+          AND att_date BETWEEN ? AND ?
+          AND status = 'Half day'
+          AND login_at IS NOT NULL
+          AND leave_type IS NOT NULL`,
+      [employeeId, fromDate, toDate],
+    );
+
+    const marker = `[Leave ${ref} deleted]`;
+    for (const row of punched) {
+      await this.pool.execute(
+        `UPDATE hrms_attendance
+            SET leave_type = NULL,
+                edited_by = ?,
+                edit_note = LEFT(CONCAT(COALESCE(edit_note, ''), ' ', ?), 255)
+          WHERE id = ?`,
+        [adminId, marker, row.id],
+      );
+      await recordAudit(this.pool, {
+        actorEmployeeId: adminId,
+        action: 'attendance.leave_detached',
+        entityType: 'hrms_attendance',
+        entityId: row.id,
+        before: row,
+        after: { leave_type: null, leaveRef: ref },
+      });
+    }
+
+    return { removed: markers.length, detached: punched.length };
+  }
+
   // ---------------------------------------------------------------- approvals
 
   async findPendingForEmployees(employeeIds?: number[]): Promise<StoredLeaveRequest[]> {

@@ -107,6 +107,26 @@ export interface ILeaveRepository {
   cancelApproved(requestId: number, note: string): Promise<void>;
 
   /**
+   * Removes the request row for good. The caller writes the audit snapshot
+   * first — once this runs, the row exists nowhere else.
+   */
+  deleteRequest(requestId: number): Promise<void>;
+
+  /**
+   * Undoes what an approved leave wrote to `hrms_attendance` on its dates, so
+   * each day derives again from punches, weekly off and holidays alone.
+   * Returns how many marker rows were removed and how many punched rows had
+   * their leave type detached.
+   */
+  restoreAttendanceAfterLeaveDeleted(
+    employeeId: number,
+    fromDate: string,
+    toDate: string,
+    ref: string,
+    adminId: number,
+  ): Promise<{ removed: number; detached: number }>;
+
+  /**
    * Records the decision, including how many of the days the balance could not
    * cover. Those become loss of pay; the rest still draw from the balance.
    */
