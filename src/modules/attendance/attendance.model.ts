@@ -189,6 +189,7 @@ export interface TodayBoardRow {
   shiftEnd: string;
   loginAt: string | null;
   logoutAt: string | null;
+  recheckInAt?: string | null;
   activeHours: number;
   lateByMinutes: number;
   status: AttendanceStatus;
@@ -213,6 +214,7 @@ export interface AttendanceRangeRow {
   shiftEnd: string;
   loginAt: string | null;
   logoutAt: string | null;
+  recheckInAt?: string | null;
   activeHours: number;
   lateByMinutes: number;
   status: AttendanceStatus;

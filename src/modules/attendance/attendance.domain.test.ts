@@ -272,6 +272,20 @@ describe('a whole day resolved', () => {
     assert.equal(d.loginAt, '10:25');
   });
 
+  it('preserves recheckInAt and original on-time status when present', () => {
+    const d = attendanceOf(
+      facts({
+        punch: { loginAt: '07:50', logoutAt: '17:34' },
+        shiftStart: '08:00',
+        recheckInAt: '17:19',
+      }),
+    );
+    assert.equal(d.status, 'On time');
+    assert.equal(d.lateByMinutes, 0);
+    assert.equal(d.activeHours, 9.73);
+    assert.equal(d.recheckInAt, '17:19');
+  });
+
   it('still counts hours worked on a weekly off', () => {
     // The day reads as the off day it was, but a Sunday shift is not invisible.
     const d = attendanceOf(

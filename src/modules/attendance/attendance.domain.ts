@@ -94,6 +94,7 @@ export interface DayFacts {
   shiftStart: string;
   lateGraceMinutes: number;
   lateHalfDayMinutes?: number;
+  recheckInAt?: string | null;
 }
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
@@ -572,6 +573,8 @@ export interface DayAttendance {
    * earned leave from loss of pay. Null on every other day.
    */
   leaveType: LeaveType | null;
+  /** Re-check-in time as 'HH:MM' when the employee checked back in after checking out. */
+  recheckInAt?: string | null;
 }
 
 /** How one day's hours were arrived at. */
@@ -581,6 +584,7 @@ export type DaySource = 'punch' | 'activity';
 export function attendanceOf(facts: DayFacts): DayAttendance {
   const status = resolveDayStatus(facts);
   const leaveType = status === 'Leave' || status === 'Half day' ? (facts.leave?.type ?? null) : null;
+  const recheckInAt = facts.recheckInAt ?? null;
 
   // Observed. First and last seen stand in for the punches, so every screen
   // downstream keeps one shape; hours come from the slots, and lateness is
@@ -598,6 +602,7 @@ export function attendanceOf(facts: DayFacts): DayAttendance {
       segments: segmentsOf(facts.slots, slotOf(facts.shiftStart)),
       source: 'activity',
       leaveType,
+      recheckInAt,
     };
   }
 
@@ -615,6 +620,7 @@ export function attendanceOf(facts: DayFacts): DayAttendance {
     segments: facts.punch ? [{ from: facts.punch.loginAt, to: facts.punch.logoutAt }] : [],
     source: 'punch',
     leaveType,
+    recheckInAt,
   };
 }
 
@@ -637,6 +643,7 @@ export interface WeekBar {
   source: DaySource;
   /** Earned or unpaid, on a leave or half day — the calendar's EL / LOP. */
   leaveType: LeaveType | null;
+  recheckInAt?: string | null;
 }
 
 /**
@@ -669,5 +676,6 @@ export function dayBars(days: DayAttendance[], today: string): WeekBar[] {
     segments: day.segments,
     source: day.source,
     leaveType: day.leaveType,
+    recheckInAt: day.recheckInAt,
   }));
 }

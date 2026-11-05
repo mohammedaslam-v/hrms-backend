@@ -510,13 +510,24 @@ export class AttendanceService implements IAttendanceService {
     const shiftDate = shiftDateOf(now.date, now.time, schedule.shiftStart, schedule.shiftEnd);
     const { facts } = await this.factsFor(employeeId, shiftDate, schedule, now.date);
 
-    const lateByMinutes = minutesLate(now.time, schedule.shiftStart);
-    let status = resolveDayStatus({ ...facts, punch: { loginAt: now.time, logoutAt: null } });
-    let leaveType: LeaveType | null = null;
+    // Check if an existing punch already exists for today (re-check-in after earlier checkout)
+    const existingRecord = await this.attendanceRepository.findByDate(employeeId, shiftDate);
+    const isRecheckIn = Boolean(existingRecord?.loginAt);
 
-    // A working shift without approved leave or declared holiday
+    const lateByMinutes = isRecheckIn
+      ? (existingRecord?.lateByMinutes ?? 0)
+      : minutesLate(now.time, schedule.shiftStart);
+
+    let status = isRecheckIn
+      ? (existingRecord?.status ?? 'On time')
+      : resolveDayStatus({ ...facts, punch: { loginAt: now.time, logoutAt: null } });
+
+    let leaveType: LeaveType | null = isRecheckIn ? (existingRecord?.leaveType ?? null) : null;
+
+    // A working shift without approved leave or declared holiday.
+    // Late half-day penalty applies ONLY on first check-in of the day, NEVER on a re-check-in.
     const isWorkingShift = !facts.leave && !facts.holidayName && !isWeeklyOff(shiftDate, schedule.weeklyOff);
-    if (isWorkingShift && isHalfDayLate(lateByMinutes)) {
+    if (!isRecheckIn && isWorkingShift && isHalfDayLate(lateByMinutes)) {
       status = 'Half day';
 
       let hasBalance = false;
@@ -712,6 +723,11 @@ export class AttendanceService implements IAttendanceService {
         record?.source === 'manual',
       );
 
+      const recheckInAt =
+        record?.editNote && record.editNote.startsWith('recheckin:')
+          ? record.editNote.replace('recheckin:', '').slice(0, 5)
+          : null;
+
       return attendanceOf({
         date,
         today: now.date,
@@ -727,6 +743,7 @@ export class AttendanceService implements IAttendanceService {
         slots: readAsObserved ? mask : undefined,
         shiftStart: schedule.shiftStart,
         lateGraceMinutes: policy.lateGraceMinutes,
+        recheckInAt,
       });
     });
   }
@@ -1056,6 +1073,11 @@ export class AttendanceService implements IAttendanceService {
       else if (day.status === 'Leave' || day.status === 'Half day') leaveCount++;
       else if (day.status === 'Weekly off' || day.status === 'Holiday') off++;
 
+      const recheckInAt =
+        punch?.editNote && punch.editNote.startsWith('recheckin:')
+          ? punch.editNote.replace('recheckin:', '').slice(0, 5)
+          : null;
+
       rows.push({
         employeeId: member.id,
         code: member.employeeCode,
@@ -1068,6 +1090,7 @@ export class AttendanceService implements IAttendanceService {
         shiftEnd: member.shiftEnd,
         loginAt: day.loginAt,
         logoutAt: day.logoutAt,
+        recheckInAt,
         activeHours: day.activeHours,
         lateByMinutes: day.lateByMinutes,
         status: day.status,
@@ -1184,6 +1207,11 @@ export class AttendanceService implements IAttendanceService {
           }
         }
 
+        const recheckInAt =
+          realPunch?.editNote && realPunch.editNote.startsWith('recheckin:')
+            ? realPunch.editNote.replace('recheckin:', '').slice(0, 5)
+            : null;
+
         rows.push({
           date: d,
           dayName: dayNameOf(d),
@@ -1195,6 +1223,7 @@ export class AttendanceService implements IAttendanceService {
           shiftEnd: member.shiftEnd,
           loginAt: day.loginAt,
           logoutAt: day.logoutAt,
+          recheckInAt,
           activeHours: day.activeHours,
           lateByMinutes: day.lateByMinutes,
           status: day.status,
