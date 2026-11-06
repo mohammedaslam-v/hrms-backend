@@ -101,6 +101,27 @@ export class ReportsController {
    * whom is the whole point of this endpoint.
    */
   getActiveTime = async (req: Request, res: Response): Promise<void> => {
+    await this.scopedRange(req, res, "Could not load active time.", (viewerId, options) =>
+      this.reportsService.getActiveTime(viewerId, options),
+    );
+  };
+
+  /** GET /reports/activities?from&to[&employeeIds=1,2][&department=] — same rules as active-time. */
+  getActivities = async (req: Request, res: Response): Promise<void> => {
+    await this.scopedRange(req, res, "Could not load activities.", (viewerId, options) =>
+      this.reportsService.getActivities(viewerId, options),
+    );
+  };
+
+  private async scopedRange(
+    req: Request,
+    res: Response,
+    failure: string,
+    load: (
+      viewerId: number,
+      options: { from: string; to: string; employeeIds: number[]; department?: string },
+    ) => Promise<unknown>,
+  ): Promise<void> {
     try {
       const viewerId = (req as AuthenticatedRequest).employeeId;
       if (!viewerId) {
@@ -120,11 +141,11 @@ export class ReportsController {
         .filter((n) => Number.isInteger(n) && n > 0);
       const department = req.query.department ? String(req.query.department) : undefined;
 
-      const data = await this.reportsService.getActiveTime(viewerId, { from, to, employeeIds, department });
+      const data = await load(viewerId, { from, to, employeeIds, department });
       res.json({ success: true, data });
     } catch (err: any) {
       const status = err.statusCode || 500;
-      res.status(status).json({ success: false, message: err.message || "Could not load active time." });
+      res.status(status).json({ success: false, message: err.message || failure });
     }
-  };
+  }
 }

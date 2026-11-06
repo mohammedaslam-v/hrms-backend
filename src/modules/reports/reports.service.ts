@@ -1,6 +1,8 @@
 import { ILeaveRepository, StoredLeaveRequest } from '../leave/leave.repository.interface';
 import {
   computeLedger,
+  isSpecialSeniorApprover,
+  isTwoLevelDepartment,
   monthKeyOf,
   workingDaysBetween,
 } from '../leave/leave.domain';
@@ -34,6 +36,8 @@ import {
 import { ApiError } from '../../utils/api-error';
 import { IOrgRepository } from '../org/org.repository.interface';
 import { buildActiveTimeRows, type ActiveTimeView } from './reports.active-time';
+import { buildActivityRows, type ActivitiesView } from './reports.activities';
+import type { RosterMember } from '../org/org.model';
 
 const PAYROLL_REPORT_TYPES: ReadonlySet<ReportType> = new Set([
   'salary',
@@ -227,6 +231,87 @@ export class ReportsService implements IReportsService {
         .map((m) => ({ id: m.id, code: m.employeeCode, name: m.fullName, department: m.department }))
         .sort((a, b) => a.name.localeCompare(b.name)),
       rows: buildActiveTimeRows(members, dates, attendance, panel, now.date, now.time),
+    };
+  }
+
+  /**
+   * The Activities tab: per person per day, panel time and the activities they
+   * recorded. Who a manager sees follows the leave approval chain:
+   *
+   *   admin                   — everyone;
+   *   manager                 — their direct reports, plus the reports of those
+   *                             reports who are in Sales or Operations (the
+   *                             people whose leave they approve at level 2);
+   *   senior approver (Rhea)  — the above, plus everyone in Sales or Operations.
+   *
+   * Ids outside that scope are dropped, not trusted.
+   */
+  async getActivities(
+    viewerId: number,
+    options: { from: string; to: string; employeeIds?: number[]; department?: string },
+  ): Promise<ActivitiesView> {
+    if (!this.authService || !this.orgRepository || !this.attendanceRepository || !this.workActivityRepository) {
+      throw new ApiError(503, 'Activities are not available right now.');
+    }
+    const viewer = await this.authService.getCurrentEmployee(viewerId);
+    const isAdmin = viewer.tiers.includes('admin');
+    if (!isAdmin && !viewer.tiers.includes('manager')) {
+      throw ApiError.forbidden('Activities are for managers and admins.');
+    }
+
+    const { from, to } = options;
+    const dates = datesBetween(from, to, ACTIVE_TIME_MAX_DAYS + 1);
+    if (dates.length === 0) throw ApiError.badRequest('The end date must not be before the start date.');
+    if (dates.length > ACTIVE_TIME_MAX_DAYS) {
+      throw ApiError.badRequest(`Choose at most ${ACTIVE_TIME_MAX_DAYS} days at a time.`);
+    }
+
+    let roster: RosterMember[];
+    if (isAdmin) {
+      roster = await this.orgRepository.findRoster({ rootId: null, includeLeavers: true });
+    } else {
+      const tree = await this.orgRepository.findRoster({ rootId: viewerId, includeLeavers: true, maxDepth: 2 });
+      roster = tree.filter(
+        (m) => m.id !== viewerId && (m.managerId === viewerId || isTwoLevelDepartment(m.department)),
+      );
+      if (isSpecialSeniorApprover(viewerId, viewer.workEmail)) {
+        const seen = new Set(roster.map((m) => m.id));
+        const everyone = await this.orgRepository.findRoster({ rootId: null, includeLeavers: true });
+        for (const m of everyone) {
+          if (m.id !== viewerId && !seen.has(m.id) && isTwoLevelDepartment(m.department)) roster.push(m);
+        }
+      }
+    }
+    const scope = roster.filter(
+      (m) => (!m.dateOfLeaving || m.dateOfLeaving >= from) && (!m.dateOfJoining || m.dateOfJoining <= to),
+    );
+
+    let members = scope;
+    if (options.department) members = members.filter((m) => m.department === options.department);
+    if (options.employeeIds && options.employeeIds.length > 0) {
+      const wanted = new Set(options.employeeIds);
+      members = members.filter((m) => wanted.has(m.id));
+    }
+
+    const ids = members.map((m) => m.id);
+    const [attendance, panel, activities] = await Promise.all([
+      this.attendanceFor(members, from, to),
+      this.presenceService
+        ? this.presenceService.adminPanelForReport(ids, from, to)
+        : Promise.resolve(new Map()),
+      ids.length > 0
+        ? this.workActivityRepository.findRangeForMany(ids, from, to)
+        : Promise.resolve(new Map()),
+    ]);
+
+    return {
+      from,
+      to,
+      today: istNow().date,
+      people: scope
+        .map((m) => ({ id: m.id, code: m.employeeCode, name: m.fullName, department: m.department }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+      rows: buildActivityRows(members, dates, activities, panel, attendance),
     };
   }
 

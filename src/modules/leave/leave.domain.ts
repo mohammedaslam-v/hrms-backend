@@ -112,19 +112,26 @@ export function isSpecialSeniorApprover(employeeId: number, email?: string | nul
   return false;
 }
 
+/**
+ * Sales and Operations: the departments whose leave goes up two levels, and
+ * whose people their manager's manager also sees on the Activities tab.
+ */
+export function isTwoLevelDepartment(department?: string | null): boolean {
+  const dept = (department ?? '').trim().toLowerCase();
+  return (
+    TWO_LEVEL_DEPARTMENTS.has(dept) ||
+    dept === 'sales' ||
+    dept === 'operations' ||
+    (dept.includes('sales') && dept.includes('operat'))
+  );
+}
+
 export function isTwoLevelLeave(request: {
   department?: string | null;
   managerId?: number | null;
   grandManagerId?: number | null;
 }): boolean {
-  const dept = (request.department ?? '').trim().toLowerCase();
-  const isMatch =
-    TWO_LEVEL_DEPARTMENTS.has(dept) ||
-    dept === 'sales' ||
-    dept === 'operations' ||
-    (dept.includes('sales') && dept.includes('operat'));
-
-  if (!isMatch) return false;
+  if (!isTwoLevelDepartment(request.department)) return false;
   return Boolean(request.managerId);
 }
 
