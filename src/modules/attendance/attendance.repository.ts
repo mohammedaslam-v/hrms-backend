@@ -401,7 +401,9 @@ export class AttendanceRepository implements IAttendanceRepository {
           AND login_at  IS NOT NULL
           AND logout_at IS NULL
           AND status NOT IN ('Leave', 'Holiday')
-          AND (leave_type IS NULL OR leave_type != 'Unpaid')
+          -- No leave_type filter: a late check-in with no balance is 'Half day'
+          -- + Unpaid and is still a running punch that must be closable. A day
+          -- auto-closed as LOP is status 'Leave', already excluded above.
           AND att_date >= DATE_SUB(CURDATE(), INTERVAL 2 DAY)
         ORDER BY att_date DESC
         LIMIT 1`,

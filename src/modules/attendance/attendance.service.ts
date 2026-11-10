@@ -10,6 +10,7 @@ import {
   isWeeklyOff,
   isMarkedOff,
   isMarkedWorking,
+  isOffDay,
   EMPTY_SLOTS,
   readDayAsObserved,
   minutesOf,
@@ -436,7 +437,10 @@ export class AttendanceService implements IAttendanceService {
       lateByMinutes: day.lateByMinutes,
       shiftStart: schedule.shiftStart,
       shiftEnd: schedule.shiftEnd,
-      canCheckIn: !stored?.loginAt || Boolean(stored?.logoutAt),
+      canCheckIn:
+        !(facts.leave && !facts.leave.isHalfDay) &&
+        !(!stored?.loginAt && isOffDay(shiftDate, schedule.weeklyOff, stored)) &&
+        (!stored?.loginAt || Boolean(stored?.logoutAt)),
       canCheckOut: Boolean(stored?.loginAt && !stored.logoutAt),
       geofence: this.fenceFor(schedule),
     };
@@ -520,8 +524,27 @@ export class AttendanceService implements IAttendanceService {
     const shiftDate = shiftDateOf(now.date, now.time, schedule.shiftStart, schedule.shiftEnd);
     const { facts } = await this.factsFor(employeeId, shiftDate, schedule, now.date);
 
+    // HR's rule (10 Nov 2026): no punching on a day of approved full-day leave —
+    // HR removes or edits the leave first. A half-day leave still works the other half.
+    if (facts.leave && !facts.leave.isHalfDay) {
+      throw ApiError.badRequest(
+        'You are on approved leave for this day, so check-in is not allowed. Please ask HR to remove the leave first.',
+      );
+    }
+
     // Check if an existing punch already exists for today (re-check-in after earlier checkout)
     const existingRecord = await this.attendanceRepository.findByDate(employeeId, shiftDate);
+
+    // Same rule for a weekly off — unless an admin made that off day a working
+    // day by hand (a manual non-'Weekly off' row, e.g. Sales 10–15 Nov 2026).
+    // A day already checked into is working: its row turns source 'app' on the
+    // first check-in, and a re-check-in after a break must not be refused.
+    if (!existingRecord?.loginAt && isOffDay(shiftDate, schedule.weeklyOff, existingRecord)) {
+      throw ApiError.badRequest(
+        'This is your weekly off, so check-in is not allowed. Please ask HR to mark it as a working day first.',
+      );
+    }
+
     const isRecheckIn = Boolean(existingRecord?.loginAt);
 
     const lateByMinutes = isRecheckIn

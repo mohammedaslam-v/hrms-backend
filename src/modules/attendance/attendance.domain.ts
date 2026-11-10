@@ -547,6 +547,17 @@ export const isMarkedWorking = (
   record: { source: string; status: string } | null | undefined,
 ): boolean => record?.source === 'manual' && record.status !== 'Weekly off';
 
+/**
+ * Whether a date is an off day for punching — the same rule resolveDayStatus
+ * uses: an admin's 'Weekly off' row makes it one, an admin's working row on a
+ * usual off day unmakes it, otherwise the person's weekly off decides.
+ */
+export const isOffDay = (
+  date: string,
+  weeklyOff: string[],
+  record: { source: string; status: string } | null | undefined,
+): boolean => isMarkedOff(record) || (!isMarkedWorking(record) && isWeeklyOff(date, weeklyOff));
+
 export interface DayAttendance {
   date: string;
   status: AttendanceStatus;

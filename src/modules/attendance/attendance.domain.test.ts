@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import {
   activeHours,
   attendanceOf,
+  isOffDay,
   crossesMidnight,
   dayNameOf,
   eachDate,
@@ -571,5 +572,19 @@ describe('punch expiration and checkout grace window (LOP)', () => {
     assert.equal(isPunchExpired('2026-10-12', '23:00', '08:00', '2026-10-13', '12:01'), true);
     // When next night arrives at 23:00
     assert.equal(isPunchExpired('2026-10-12', '23:00', '08:00', '2026-10-13', '23:00'), true);
+  });
+});
+
+describe('isOffDay — no punching on a weekly off', () => {
+  // 15 Nov 2026 is a Sunday, 16 Nov a Monday.
+  it('a usual off day is off, a working day is not', () => {
+    assert.equal(isOffDay('2026-11-15', ['Sun'], null), true);
+    assert.equal(isOffDay('2026-11-16', ['Sun'], null), false);
+  });
+  it("an admin's working row on a usual off day makes it a working day", () => {
+    assert.equal(isOffDay('2026-11-15', ['Sun'], { source: 'manual', status: 'Absent' }), false);
+  });
+  it("an admin's 'Weekly off' row makes any day off", () => {
+    assert.equal(isOffDay('2026-11-16', ['Sun'], { source: 'manual', status: 'Weekly off' }), true);
   });
 });
