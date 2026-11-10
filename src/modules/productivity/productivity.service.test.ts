@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { ProductivityService } from './productivity.service';
 
-// Sales, day shift 10–19, usual off Sunday. 10 Nov 2026 is a Tuesday.
+// Sales, day shift 10–19, usual off Sunday. 16 Nov 2026 is a Monday.
 const employee = (id: number) => ({
   id,
   adminId: id + 100,
@@ -65,20 +65,20 @@ function harness(opts: {
         new Map(
           Object.entries(opts.activityMinutes ?? {}).map(([id, m]) => [
             Number(id),
-            [{ date: '2026-11-10', startTime: '10:00', endTime: `${String(10 + Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}` }],
+            [{ date: '2026-11-16', startTime: '10:00', endTime: `${String(10 + Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}` }],
           ]),
         ),
     } as never,
     {
       adminPanelForReport: async () =>
-        new Map(Object.entries(opts.panelSeconds).map(([id, s]) => [Number(id), new Map([['2026-11-10', { activeSeconds: s }]])])),
+        new Map(Object.entries(opts.panelSeconds).map(([id, s]) => [Number(id), new Map([['2026-11-16', { activeSeconds: s }]])])),
     } as never,
   );
   return { service, writes };
 }
 
 test('before shift end + 4 hours nothing is decided', async () => {
-  const { service, writes } = harness({ now: { date: '2026-11-10', time: '22:59:00' }, panelSeconds: {} });
+  const { service, writes } = harness({ now: { date: '2026-11-16', time: '22:59:00' }, panelSeconds: {} });
   const s = await service.settleDue();
   assert.equal(s.decided, 0);
   assert.deepEqual(writes, []);
@@ -86,7 +86,7 @@ test('before shift end + 4 hours nothing is decided', async () => {
 
 test('met without a check-in is marked present; short days become EL or LOP by balance', async () => {
   const { service, writes } = harness({
-    now: { date: '2026-11-10', time: '23:00:00' },
+    now: { date: '2026-11-16', time: '23:00:00' },
     panelSeconds: { 1: 6 * 3600, 2: 4 * 3600, 3: 4 * 3600 },
     activityMinutes: { 1: 150, 2: 180, 3: 180 }, // 8h 30m, 7h, 7h
     unpaidIfEarned: { 3: true },
@@ -94,39 +94,39 @@ test('met without a check-in is marked present; short days become EL or LOP by b
   const s = await service.settleDue();
   assert.deepEqual(s, { checked: 3, decided: 3, met: 1, earned: 1, unpaid: 1, failed: 0 });
   assert.deepEqual(writes, [
-    'claim 1|2026-11-10 met',
-    'day 1|2026-11-10 On time 10:00',
-    'claim 2|2026-11-10 earned',
-    'leave 2|2026-11-10 Earned',
-    'day 2|2026-11-10 Leave -',
-    'claim 3|2026-11-10 unpaid',
-    'leave 3|2026-11-10 Unpaid',
-    'day 3|2026-11-10 Leave -',
+    'claim 1|2026-11-16 met',
+    'day 1|2026-11-16 On time 10:00',
+    'claim 2|2026-11-16 earned',
+    'leave 2|2026-11-16 Earned',
+    'day 2|2026-11-16 Leave -',
+    'claim 3|2026-11-16 unpaid',
+    'leave 3|2026-11-16 Unpaid',
+    'day 3|2026-11-16 Leave -',
   ]);
 });
 
 test('a check-in left open on a met day is closed at the shift end, a full punch is left alone', async () => {
   const { service, writes } = harness({
-    now: { date: '2026-11-10', time: '23:30:00' },
+    now: { date: '2026-11-16', time: '23:30:00' },
     panelSeconds: { 1: 9 * 3600, 2: 9 * 3600, 3: 9 * 3600 },
     records: [
-      { id: 71, employeeId: 1, date: '2026-11-10', source: 'app', status: 'On time', loginAt: '10:02', logoutAt: null },
-      { id: 72, employeeId: 2, date: '2026-11-10', source: 'app', status: 'On time', loginAt: '10:00', logoutAt: '19:05' },
+      { id: 71, employeeId: 1, date: '2026-11-16', source: 'app', status: 'On time', loginAt: '10:02', logoutAt: null },
+      { id: 72, employeeId: 2, date: '2026-11-16', source: 'app', status: 'On time', loginAt: '10:00', logoutAt: '19:05' },
     ],
   });
   await service.settleDue();
   assert.deepEqual(
     writes.filter((w) => !w.startsWith('claim')),
-    ['checkout 71 19:00', 'day 3|2026-11-10 On time 10:00'],
+    ['checkout 71 19:00', 'day 3|2026-11-16 On time 10:00'],
   );
 });
 
 test('a day already decided is never decided again', async () => {
   const { service, writes } = harness({
-    now: { date: '2026-11-11', time: '09:00:00' },
+    now: { date: '2026-11-17', time: '09:00:00' },
     panelSeconds: { 1: 0, 2: 0, 3: 0 },
-    decided: ['1|2026-11-10', '2|2026-11-10', '3|2026-11-10'],
+    decided: ['1|2026-11-16', '2|2026-11-16', '3|2026-11-16'],
   });
   await service.settleDue();
-  assert.ok(!writes.some((w) => w.includes('2026-11-10')));
+  assert.ok(!writes.some((w) => w.includes('2026-11-16')));
 });
