@@ -39,6 +39,8 @@ export interface WorkSchedule {
   shiftEnd: string;
   weeklyOff: string[];
   dateOfLeaving: string | null;
+  /** `hrms_employees.department`. Decides whether the productivity rule applies. */
+  department?: string | null;
   /**
    * `admins.role` — CSR, SSM, Admin and so on. Null for the one employee with
    * no `admins` row. Read against ACTIVITY_MEASURED_ROLES in attendance.config

@@ -1,5 +1,9 @@
 import { ICompanyPolicyRepository } from "./modules/company-policy/company-policy.repository.interface";
 import { env } from './config/env';
+import { ProductivityRepository } from './modules/productivity/productivity.repository';
+import { ProductivityService } from './modules/productivity/productivity.service';
+import { IProductivityService } from './modules/productivity/productivity.service.interface';
+import { ProductivityController } from './modules/productivity/productivity.controller';
 import { WorkActivityController } from './modules/work-activity/work-activity.controller';
 import { IWorkActivityRepository } from './modules/work-activity/work-activity.repository.interface';
 import { WorkActivityRepository } from './modules/work-activity/work-activity.repository';
@@ -303,6 +307,17 @@ export const createContainer = () => {
   );
   const workActivityController = new WorkActivityController(workActivityService);
 
+  // Sales: a working day decided by productive time (panels + activities).
+  const productivityService: IProductivityService = new ProductivityService(
+    new ProductivityRepository(pool),
+    attendanceRepository,
+    leaveRepository,
+    leaveService,
+    workActivityRepository,
+    presenceService,
+  );
+  const productivityController = new ProductivityController(productivityService, authService);
+
   const reportsRepository: IReportsRepository = new ReportsRepository(pool);
   // attendanceRepository and policyService are what make the attendance
   // reports read real punches and observed slots instead of printing a fixed
@@ -362,6 +377,8 @@ export const createContainer = () => {
     workActivityController,
     internalAttendanceController,
     internalPresenceController,
+    productivityController,
+    productivityService,
     companyPolicyService,
     reportsService,
     payoutService,

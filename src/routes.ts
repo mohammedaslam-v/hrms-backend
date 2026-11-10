@@ -23,6 +23,7 @@ import { createWorkActivityRouter } from './modules/work-activity/work-activity.
 import { createInternalAttendanceRouter } from './modules/internal/internal-attendance.routes';
 import { createInternalPresenceRouter } from './modules/internal/internal-presence.routes';
 import { createPresenceTrackerRouter } from './modules/presence/presence.tracker.routes';
+import { createProductivityRouter } from './modules/productivity/productivity.routes';
 
 export const createApiRouter = (container: Container): Router => {
   const router = Router();
@@ -50,6 +51,7 @@ export const createApiRouter = (container: Container): Router => {
   router.use('/work-activities', createWorkActivityRouter(container.workActivityController));
   router.use('/internal/attendance', createInternalAttendanceRouter(container.internalAttendanceController));
   router.use('/internal/presence', createInternalPresenceRouter(container.internalPresenceController));
+  router.use('/productivity', createProductivityRouter(container.productivityController));
 
   return router;
 };

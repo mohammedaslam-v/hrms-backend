@@ -52,6 +52,7 @@ import { DayLeaveChoice, ILeaveService } from '../leave/leave.service.interface'
 import { LeaveType } from '../leave/leave.domain';
 import { RosterMember } from '../org/org.model';
 import { AttendanceStatus, dayNameOf } from './attendance.domain';
+import { isProductivityRuled } from '../productivity/productivity.domain';
 import { ApiError } from '../../utils/api-error';
 import {
   judgeFix,
@@ -176,18 +177,27 @@ export class AttendanceService implements IAttendanceService {
     const isSelf = viewerId === subjectId;
     if (!isSelf) await this.accessService.require(viewerId, subjectId);
 
-    const [now, days, viewer] = await Promise.all([
+    const [now, days, viewer, stored] = await Promise.all([
       this.attendanceRepository.now(),
       this.getDays(subjectId, from, to),
       isSelf ? Promise.resolve(null) : this.authService.getCurrentEmployee(viewerId),
+      this.attendanceRepository.findRange(subjectId, from, to),
     ]);
+
+    // Why a day was set by hand — an admin's edit, an auto-closed check-out, or
+    // the productivity rule. Shown when the day is opened.
+    const notes = new Map(
+      stored
+        .filter((r) => r.source === 'manual' && r.editNote && !r.editNote.startsWith('recheckin:'))
+        .map((r) => [r.date, r.editNote as string]),
+    );
 
     return {
       from,
       to,
       today: now.date,
       canEdit: Boolean(viewer?.tiers.includes('admin')),
-      days: dayBars(days, now.date),
+      days: dayBars(days, now.date).map((bar) => ({ ...bar, note: notes.get(bar.date) ?? null })),
     };
   }
 
@@ -374,7 +384,7 @@ export class AttendanceService implements IAttendanceService {
       open &&
       isPunchExpired(open.date, schedule.shiftStart, schedule.shiftEnd, now.date, now.time, CHECKOUT_GRACE_MINUTES)
     ) {
-      await this.autoCloseAsLop(open);
+      await this.closeExpired(open, schedule);
       open = null;
     }
 
@@ -497,7 +507,7 @@ export class AttendanceService implements IAttendanceService {
       if (
         isPunchExpired(open.date, schedule.shiftStart, schedule.shiftEnd, now.date, now.time, CHECKOUT_GRACE_MINUTES)
       ) {
-        await this.autoCloseAsLop(open);
+        await this.closeExpired(open, schedule);
       } else {
         throw ApiError.badRequest(
           `You are still checked in from ${open.loginAt} on ${open.date}. Check out first.`,
@@ -605,9 +615,11 @@ export class AttendanceService implements IAttendanceService {
         schedule &&
         isPunchExpired(before.date, schedule.shiftStart, schedule.shiftEnd, now.date, now.time, CHECKOUT_GRACE_MINUTES)
       ) {
-        await this.autoCloseAsLop(before);
+        const ruled = await this.closeExpired(before, schedule);
         throw ApiError.badRequest(
-          'The check-out window for your previous shift has expired (marked as LOP). Please check in for today.',
+          ruled
+            ? 'The check-out window for your previous shift has expired. It was closed at your shift end; the day is decided by your productive time. Please check in for today.'
+            : 'The check-out window for your previous shift has expired (marked as LOP). Please check in for today.',
         );
       }
     }
@@ -797,6 +809,26 @@ export class AttendanceService implements IAttendanceService {
    * the unclosed day is marked as Unpaid Leave (LOP) with zero active hours so that
    * subsequent shifts start fresh without blocking today's check-in.
    */
+  /**
+   * A check-in left open past shift end + 4 hours. For a day the productivity
+   * rule decides (Sales, from 10 Nov 2026) it is closed at the shift's end and
+   * left to that rule — missing the check-out is not itself loss of pay there.
+   * Everyone else keeps the old rule: closed as LOP. Returns whether the
+   * productivity rule has it.
+   */
+  private async closeExpired(open: AttendanceRecord, schedule: WorkSchedule): Promise<boolean> {
+    if (!isProductivityRuled(schedule.department, open.date) || !open.loginAt) {
+      await this.autoCloseAsLop(open);
+      return false;
+    }
+    await this.attendanceRepository.checkOut({
+      id: open.id,
+      logoutAt: schedule.shiftEnd,
+      activeHours: activeHours({ loginAt: open.loginAt, logoutAt: schedule.shiftEnd }),
+    });
+    return true;
+  }
+
   private async autoCloseAsLop(open: AttendanceRecord): Promise<void> {
     await this.attendanceRepository.saveManualDay({
       employeeId: open.employeeId,

@@ -23,6 +23,8 @@ interface ScheduleRow extends RowDataPacket {
   shift_end: string;
   weekly_off: string | null;
   date_of_leaving: string | null;
+  /** Selected by findSchedule only. */
+  department?: string | null;
   portal_role: string | null;
   work_mode: string | null;
   // DECIMAL(9,6). mysql2 returns DECIMAL as a string so no digit is lost.
@@ -120,7 +122,7 @@ export class AttendanceRepository implements IAttendanceRepository {
 
   async findSchedule(employeeId: number): Promise<WorkSchedule | null> {
     const [rows] = await this.pool.execute<ScheduleRow[]>(
-      `SELECT e.shift_start, e.shift_end, e.weekly_off, e.date_of_leaving,
+      `SELECT e.shift_start, e.shift_end, e.weekly_off, e.date_of_leaving, e.department,
               COALESCE(a.role, e.designation) AS portal_role, e.work_mode, e.home_lat, e.home_lng, e.home_location_enabled,
               -- Only while an admin has it switched on; off means "not a place".
               IF(e.second_location_enabled = 1, e.second_lat, NULL) AS second_lat,
@@ -138,6 +140,7 @@ export class AttendanceRepository implements IAttendanceRepository {
       // MariaDB returns a SET column as a comma-separated string.
       weeklyOff: row.weekly_off ? row.weekly_off.split(',').filter(Boolean) : [],
       dateOfLeaving: row.date_of_leaving,
+      department: row.department ?? null,
       portalRole: row.portal_role,
       workMode: row.work_mode,
       homeLat: coordinate(row.home_lat),

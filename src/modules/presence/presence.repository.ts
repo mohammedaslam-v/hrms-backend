@@ -20,7 +20,29 @@ const IST_NOW = '(UTC_TIMESTAMP() + INTERVAL 330 MINUTE)';
  * the API and the database do not share a timezone, and the admin panel stamps
  * `last_seen_at` with the database's NOW().
  */
+/**
+ * Panel seconds per India hour, for night shifts — a daily total cannot tell
+ * one night from the next. Identical to the admin backend's statement.
+ *
+ * A new hour starts with the gap since the day row's last ping, so the hours of
+ * a day add up to its daily total; after that each ping adds the gap since the
+ * hour's own last ping. Gaps over two minutes are idle and add nothing.
+ */
+export const PRESENCE_HOUR_UPSERT = `
+  INSERT INTO admin_panel_presence_hour (admin_id, hour_start, last_seen_at, active_seconds)
+  SELECT ?, DATE_FORMAT(${IST_NOW}, '%Y-%m-%d %H:00:00'), ${IST_NOW},
+         COALESCE((SELECT IF(TIMESTAMPDIFF(SECOND, d.last_seen_at, ${IST_NOW}) BETWEEN 0 AND ${COUNTED_GAP_SECONDS},
+                             TIMESTAMPDIFF(SECOND, d.last_seen_at, ${IST_NOW}), 0)
+                     FROM admin_panel_presence_day d
+                    WHERE d.admin_id = ? AND d.day = DATE(${IST_NOW})), 0)
+  ON DUPLICATE KEY UPDATE
+    active_seconds = active_seconds + IF(TIMESTAMPDIFF(SECOND, last_seen_at, ${IST_NOW}) BETWEEN 0 AND ${COUNTED_GAP_SECONDS},
+                                         TIMESTAMPDIFF(SECOND, last_seen_at, ${IST_NOW}), 0),
+    last_seen_at = ${IST_NOW}`;
+
 export class PresenceRepository implements IPresenceRepository {
+  private hourFailureLogged = false;
+
   constructor(private readonly pool: Pool) {}
 
   /** Which panel a row's last ping came from. Null = the admin panel's own heartbeat. */
@@ -76,6 +98,16 @@ export class PresenceRepository implements IPresenceRepository {
          hits = hits + 1`,
       [adminId, path, panel, title],
     );
+    // Before the day row moves on: the hour row takes the same gap the day row
+    // is about to add (see the admin backend's touchHour). Never fails a ping.
+    try {
+      await this.pool.query(PRESENCE_HOUR_UPSERT, [adminId, adminId]);
+    } catch (error) {
+      if (!this.hourFailureLogged) {
+        this.hourFailureLogged = true;
+        console.error('Presence hour log failed (ping unaffected):', error);
+      }
+    }
     await this.pool.query(
       `INSERT INTO admin_panel_presence_day
          (admin_id, day, first_seen_at, last_seen_at, active_seconds, sessions)

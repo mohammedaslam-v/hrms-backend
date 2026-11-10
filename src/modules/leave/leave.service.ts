@@ -897,6 +897,7 @@ export class LeaveService implements ILeaveService {
     date: string,
     choice: DayLeaveChoice | null,
     note: string,
+    decisionNote?: string,
   ): Promise<string | null> {
     const existing = await this.leaveRepository.findOverlapping(employeeId, date, date);
 
@@ -989,7 +990,7 @@ export class LeaveService implements ILeaveService {
       created.id,
       'Approved',
       adminId,
-      `Marked by admin from the attendance calendar: ${note}`,
+      decisionNote ?? `Marked by admin from the attendance calendar: ${note}`,
       unpaid,
     );
     await this.leaveRepository.recordAudit(

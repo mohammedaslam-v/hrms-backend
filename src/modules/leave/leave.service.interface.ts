@@ -109,6 +109,8 @@ export interface ILeaveService {
     date: string,
     choice: DayLeaveChoice | null,
     note: string,
+    /** The approval note on a new request. Defaults to "Marked by admin …". */
+    decisionNote?: string,
   ): Promise<string | null>;
 }
 

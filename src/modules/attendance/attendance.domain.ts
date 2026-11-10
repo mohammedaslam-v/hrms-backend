@@ -644,6 +644,8 @@ export interface WeekBar {
   /** Earned or unpaid, on a leave or half day — the calendar's EL / LOP. */
   leaveType: LeaveType | null;
   recheckInAt?: string | null;
+  /** Why the day was set by hand (calendar only): admin edit, auto-close, productivity rule. */
+  note?: string | null;
 }
 
 /**
