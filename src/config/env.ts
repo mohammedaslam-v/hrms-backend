@@ -99,9 +99,9 @@ export const env = {
     // Hidden margin for GPS drift, added to both radii but never shown, so the
     // check allows 500 + 300 = 800 m.
     graceM: Number.parseFloat(process.env.GEOFENCE_GRACE_M ?? '300'),
-    // A reading vaguer than ±this is "not precise enough". 150 lets ordinary
-    // indoor phone and laptop readings through; IP-only guesses (±1 km+) still fail.
-    maxAccuracyM: Number.parseFloat(process.env.OFFICE_MAX_ACCURACY_M ?? '150'),
+    // A reading vaguer than ±this is "not precise enough". 200 lets ordinary
+    // indoor phone and laptop Wi-Fi readings through; IP-only guesses (±1 km+) still fail.
+    maxAccuracyM: Number.parseFloat(process.env.OFFICE_MAX_ACCURACY_M ?? '200'),
   },
 } as const;
 
