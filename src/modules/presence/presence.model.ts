@@ -69,6 +69,13 @@ export interface AdminPanelDay {
   sessions: number;
 }
 
+/** One `admin_panel_presence_hour` row. Times are India time, 'YYYY-MM-DD HH:MM'. */
+export interface PanelHour {
+  hourStart: string;
+  lastSeenAt: string;
+  activeSeconds: number;
+}
+
 /** Where the person is on the admin panel now, or when they were last there. */
 export interface AdminPanelNow {
   status: PresenceStatus;

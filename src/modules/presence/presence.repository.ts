@@ -1,6 +1,7 @@
 import { Pool, RowDataPacket } from 'mysql2/promise';
 import {
   AdminPanelDay,
+  PanelHour,
   LatestPresenceForAdmin,
   LatestPresenceRow,
   PresenceRow,
@@ -212,6 +213,32 @@ export class PresenceRepository implements IPresenceRepository {
         lastSeen: String(r.last_seen),
         activeSeconds: Number(r.active_seconds) || 0,
         sessions: Number(r.sessions) || 0,
+      });
+      byAdmin.set(id, list);
+    }
+    return byAdmin;
+  }
+
+  async findHoursForMany(adminIds: number[], from: string, to: string): Promise<Map<number, PanelHour[]>> {
+    const byAdmin = new Map<number, PanelHour[]>();
+    if (adminIds.length === 0) return byAdmin;
+    const [rows] = await this.pool.query<RowDataPacket[]>(
+      `SELECT admin_id,
+              DATE_FORMAT(hour_start, '%Y-%m-%d %H:%i')   AS hour_start,
+              DATE_FORMAT(last_seen_at, '%Y-%m-%d %H:%i') AS last_seen_at,
+              active_seconds
+         FROM admin_panel_presence_hour
+        WHERE admin_id IN (${adminIds.map(() => '?').join(', ')})
+          AND hour_start >= ? AND hour_start < ?`,
+      [...adminIds, from, to],
+    );
+    for (const r of rows) {
+      const id = Number(r.admin_id);
+      const list = byAdmin.get(id) ?? [];
+      list.push({
+        hourStart: String(r.hour_start),
+        lastSeenAt: String(r.last_seen_at),
+        activeSeconds: Number(r.active_seconds) || 0,
       });
       byAdmin.set(id, list);
     }

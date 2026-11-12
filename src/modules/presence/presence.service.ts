@@ -1,6 +1,6 @@
 import { IAccessService } from '../access/access.service.interface';
 import { IAttendanceRepository } from '../attendance/attendance.repository.interface';
-import { addDays } from '../attendance/attendance.domain';
+import { addDays, crossesMidnight, eachDate } from '../attendance/attendance.domain';
 import { IAuthService } from '../auth/auth.service.interface';
 import { IOrgRepository } from '../org/org.repository.interface';
 import { ApiError } from '../../utils/api-error';
@@ -15,6 +15,7 @@ import {
 } from './presence.domain';
 import { AdminPanelActivity, AdminPanelDay, PresenceBoard, PresenceCount, PresenceSummary } from './presence.model';
 import { BoardMember, buildBoard } from './presence.board';
+import { HOURLY_PANEL_FROM, nightShiftDays } from './presence.night';
 import { IPresenceRepository } from './presence.repository.interface';
 import { IPresenceService } from './presence.service.interface';
 
@@ -240,7 +241,8 @@ export class PresenceService implements IPresenceService {
       this.repository.findDays(adminId, from, to),
       this.repository.findLatest(adminId),
     ]);
-    return { linked: true, days, now: latest ? nowFrom(latest) : null };
+    const byAdmin = await this.withNightShifts(new Map([[subjectId, adminId]]), from, to, new Map([[adminId, days]]));
+    return { linked: true, days: byAdmin.get(adminId) ?? [], now: latest ? nowFrom(latest) : null };
   }
 
   async adminPanelForReport(
@@ -249,10 +251,52 @@ export class PresenceService implements IPresenceService {
     to: string,
   ): Promise<Map<number, Map<string, AdminPanelDay>>> {
     const adminOf = await this.repository.findAdminIdMap(employeeIds);
-    const days = await this.repository.findDaysForMany([...new Set(adminOf.values())], from, to);
+    const days = await this.withNightShifts(
+      adminOf,
+      from,
+      to,
+      await this.repository.findDaysForMany([...new Set(adminOf.values())], from, to),
+    );
     const result = new Map<number, Map<string, AdminPanelDay>>();
     for (const [employeeId, adminId] of adminOf) {
       result.set(employeeId, new Map((days.get(adminId) ?? []).map((d) => [d.date, d])));
+    }
+    return result;
+  }
+
+  /**
+   * For people whose shift crosses midnight, each shift date's panel time is
+   * rebuilt from the hourly table (see presence.night.ts). Day shifts and dates
+   * before HOURLY_PANEL_FROM keep the calendar-day rows.
+   */
+  private async withNightShifts(
+    adminOf: Map<number, number>,
+    from: string,
+    to: string,
+    days: Map<number, AdminPanelDay[]>,
+  ): Promise<Map<number, AdminPanelDay[]>> {
+    if (to < HOURLY_PANEL_FROM || adminOf.size === 0) return days;
+    const schedules = await this.attendanceRepository.findSchedulesFor([...adminOf.keys()]);
+    const night = [...adminOf].filter(([employeeId]) => {
+      const s = schedules.get(employeeId);
+      return s ? crossesMidnight(s.shiftStart, s.shiftEnd) : false;
+    });
+    if (night.length === 0) return days;
+
+    // A night window runs from the start date into the next morning.
+    const hours = await this.repository.findHoursForMany(
+      [...new Set(night.map(([, adminId]) => adminId))],
+      `${addDays(from, -1)} 00:00`,
+      `${addDays(to, 2)} 00:00`,
+    );
+    const dates = eachDate(from, to);
+    const result = new Map(days);
+    for (const [employeeId, adminId] of night) {
+      const s = schedules.get(employeeId)!;
+      result.set(
+        adminId,
+        nightShiftDays(dates, s.shiftStart, s.shiftEnd, days.get(adminId) ?? [], hours.get(adminId) ?? []),
+      );
     }
     return result;
   }
