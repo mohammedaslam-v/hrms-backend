@@ -351,6 +351,10 @@ export class AttendanceService implements IAttendanceService {
         date,
         leaveChoice,
         note,
+        undefined,
+        // Edit day may put leave on a weekly off: the admin is saying it was a
+        // working day, and the manual row saved below keeps it one.
+        { allowOffDay: true },
       );
     }
 

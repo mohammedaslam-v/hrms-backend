@@ -111,6 +111,12 @@ export interface ILeaveService {
     note: string,
     /** The approval note on a new request. Defaults to "Marked by admin …". */
     decisionNote?: string,
+    /**
+     * An admin's Edit day: leave may be recorded on the person's weekly off —
+     * choosing it says the day was a working day (the saved manual row then
+     * marks it working for every later read).
+     */
+    options?: { allowOffDay?: boolean },
   ): Promise<string | null>;
 }
 

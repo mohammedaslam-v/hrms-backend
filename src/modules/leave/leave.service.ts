@@ -901,6 +901,7 @@ export class LeaveService implements ILeaveService {
     choice: DayLeaveChoice | null,
     note: string,
     decisionNote?: string,
+    options?: { allowOffDay?: boolean },
   ): Promise<string | null> {
     const existing = await this.leaveRepository.findOverlapping(employeeId, date, date);
 
@@ -964,6 +965,8 @@ export class LeaveService implements ILeaveService {
     if (date < resolved.context.dateOfJoining) {
       throw ApiError.badRequest('That date is before the employee joined.');
     }
+    // An admin choosing leave for a weekly off is declaring it a working day.
+    if (options?.allowOffDay) resolved.workingDates.add(date);
     const preview = this.buildPreview(resolved, date, date, choice.leaveType, choice.isHalfDay);
     if (preview.days <= 0) {
       throw ApiError.badRequest('That day is a weekly off, so there is no leave to record.');
