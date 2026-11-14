@@ -7,6 +7,7 @@ import {
   slotsForShiftDay,
   type DayAttendance,
   type SlotMask,
+  punchOf,
 } from '../attendance/attendance.domain';
 import type {
   AttendanceRecord,
@@ -174,7 +175,7 @@ export class DashboardService implements IDashboardService {
       : EMPTY_SLOTS;
 
     const stored = punches.get(employeeId);
-    const punch = stored?.loginAt ? { loginAt: stored.loginAt, logoutAt: stored.logoutAt } : null;
+    const punch = punchOf(stored);
     const readAsObserved = readDayAsObserved(observed, mask, Boolean(punch));
     const dayContext = context.get(employeeId);
 

@@ -56,7 +56,33 @@ export type AttendanceStatus =
 export interface Punch {
   loginAt: string;
   logoutAt: string | null;
+  /**
+   * How late the check-in was against the shift in force THAT day, as stored
+   * on the row. Set, it is used as is, so changing someone's shift later never
+   * re-judges their past days. Absent, lateness is measured against the
+   * current shift (a punch being made now, or a row with no stored figure).
+   */
+  lateByMinutes?: number;
 }
+
+/** A stored row as a punch, carrying the lateness it was recorded with. */
+export function punchOf(
+  record: { loginAt: string | null; logoutAt: string | null; lateByMinutes?: number | null; source?: string } | null | undefined,
+): Punch | null {
+  if (!record?.loginAt) return null;
+  // Only rows written by a check-in or an admin's edit carry a lateness that
+  // was measured; anything else is re-measured as before.
+  const measured = record.source === 'app' || record.source === 'manual';
+  return {
+    loginAt: record.loginAt,
+    logoutAt: record.logoutAt,
+    ...(measured && record.lateByMinutes != null ? { lateByMinutes: record.lateByMinutes } : {}),
+  };
+}
+
+/** The punch's lateness: as recorded if it was, else against `shiftStart`. */
+export const lateOf = (punch: Punch, shiftStart: string): number =>
+  punch.lateByMinutes ?? minutesLate(punch.loginAt, shiftStart);
 
 export interface DayFacts {
   date: string;
@@ -516,7 +542,7 @@ export function resolveDayStatus(facts: DayFacts): AttendanceStatus {
   }
 
   if (facts.punch) {
-    const late = minutesLate(facts.punch.loginAt, facts.shiftStart);
+    const late = lateOf(facts.punch, facts.shiftStart);
     if (isHalfDayLate(late, facts.lateHalfDayMinutes ?? LATE_HALF_DAY_MINUTES)) {
       return 'Half day';
     }
@@ -625,7 +651,7 @@ export function attendanceOf(facts: DayFacts): DayAttendance {
     // Hours and lateness come from the punch whatever the status says, so a
     // Saturday shift or a half day worked around leave is never invisible.
     activeHours: facts.punch ? activeHours(facts.punch) : 0,
-    lateByMinutes: facts.punch ? minutesLate(facts.punch.loginAt, facts.shiftStart) : 0,
+    lateByMinutes: facts.punch ? lateOf(facts.punch, facts.shiftStart) : 0,
     // A declared day is one stretch by definition. `to` stays null while the
     // person is still checked in, which the card reads as "and counting".
     segments: facts.punch ? [{ from: facts.punch.loginAt, to: facts.punch.logoutAt }] : [],

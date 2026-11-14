@@ -25,7 +25,7 @@ import { addDays } from '../../shared/dates';
  */
 
 /** The first shift day the rule decides. */
-export const PRODUCTIVITY_FROM = '2026-11-16';
+export const PRODUCTIVITY_FROM = '2026-11-15';
 
 /** 90% of 9 hours. */
 export const REQUIRED_MINUTES = Math.round(9 * 60 * 0.9);

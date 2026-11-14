@@ -8,10 +8,11 @@ import {
   isMarkedOff,
   isMarkedWorking,
   isWeeklyOff,
-  minutesLate,
   resolveDayStatus,
   type AttendanceStatus,
   type SlotMask,
+  punchOf,
+  lateOf,
 } from '../attendance/attendance.domain';
 
 /**
@@ -136,10 +137,7 @@ export async function loadAttendanceDays(
       // writes rows for Leave and Weekly off with login_at NULL. Only a row
       // with a login time counts as somebody having turned up.
       const record = punchBy.get(`${employeeId}|${date}`) ?? null;
-      const punch =
-        record && record.loginAt
-          ? { loginAt: record.loginAt, logoutAt: record.logoutAt }
-          : null;
+      const punch = punchOf(record);
       // Slots only when slots were actually recorded.
       //
       // resolveDayStatus treats a non-null mask as the authority and ignores
@@ -200,7 +198,7 @@ export async function loadAttendanceDays(
         activeHours: hours,
         lateByMinutes:
           punch && !isWeeklyOff(date, weeklyOff)
-            ? Math.max(0, minutesLate(punch.loginAt, shiftStart))
+            ? Math.max(0, lateOf(punch, shiftStart))
             : 0,
         status,
         fromActivity: mask != null && countSlots(mask) > 0,

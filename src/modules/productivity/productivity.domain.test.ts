@@ -17,10 +17,11 @@ test('90% of 9 hours is 8h 06m', () => {
   assert.equal(isMet({ panelMinutes: 306, activityMinutes: 180 }), true); // 8h 06m
 });
 
-test('Sales only, from 16 Nov 2026 — Presales stays out', () => {
+test('Sales only, from 15 Nov 2026 — Presales stays out', () => {
+  assert.equal(isProductivityRuled('Sales', '2026-11-15'), true);
   assert.equal(isProductivityRuled('Sales', '2026-11-16'), true);
   assert.equal(isProductivityRuled(' sales ', '2026-12-01'), true);
-  assert.equal(isProductivityRuled('Sales', '2026-11-15'), false);
+  assert.equal(isProductivityRuled('Sales', '2026-11-14'), false);
   assert.equal(isProductivityRuled('Sales', '2026-11-10'), false);
   assert.equal(isProductivityRuled('Presales', '2026-11-16'), false);
   assert.equal(isProductivityRuled('Tech', '2026-11-16'), false);

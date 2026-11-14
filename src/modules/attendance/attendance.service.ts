@@ -26,6 +26,7 @@ import {
   type DayFacts,
   type SlotMask,
   type WeekBar,
+  punchOf,
 } from './attendance.domain';
 import { IAttendanceRepository } from './attendance.repository.interface';
 import { IAttendanceService } from './attendance.service.interface';
@@ -415,7 +416,7 @@ export class AttendanceService implements IAttendanceService {
       ...facts,
       markedOff: isMarkedOff(stored),
       markedWorking: isMarkedWorking(stored),
-      punch: stored?.loginAt ? { loginAt: stored.loginAt, logoutAt: stored.logoutAt } : null,
+      punch: punchOf(stored),
     });
 
     const recheckInAt =
@@ -746,7 +747,7 @@ export class AttendanceService implements IAttendanceService {
     return eachDate(from, to).map((date) => {
       const record = byDate.get(date);
       const day = context.get(date);
-      const punch = record?.loginAt ? { loginAt: record.loginAt, logoutAt: record.logoutAt } : null;
+      const punch = punchOf(record);
       const mask = slots.get(date) ?? EMPTY_SLOTS;
 
       // A day is read by the method that actually recorded it — see the rule

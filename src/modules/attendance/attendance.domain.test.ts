@@ -4,6 +4,7 @@ import {
   activeHours,
   attendanceOf,
   isOffDay,
+  punchOf,
   crossesMidnight,
   dayNameOf,
   eachDate,
@@ -586,5 +587,27 @@ describe('isOffDay — no punching on a weekly off', () => {
   });
   it("an admin's 'Weekly off' row makes any day off", () => {
     assert.equal(isOffDay('2026-11-16', ['Sun'], { source: 'manual', status: 'Weekly off' }), true);
+  });
+});
+
+describe('a shift change does not re-judge past days', () => {
+  // Checked in at 10:02 when the shift started at 10:00 (2 min late). The shift
+  // was later moved to 09:30: measured again, that would be 32 min — Half day.
+  const facts = {
+    date: '2026-11-10',
+    today: '2026-11-14',
+    weeklyOff: ['Sun'],
+    holidayName: null,
+    leave: null,
+    shiftStart: '09:30',
+    lateGraceMinutes: 15,
+  };
+  it('uses the lateness stored at check-in', () => {
+    const punch = punchOf({ loginAt: '10:02', logoutAt: '19:05', lateByMinutes: 2, source: 'app' });
+    assert.equal(resolveDayStatus({ ...facts, punch }), 'On time');
+  });
+  it('re-measures only a row with no measured lateness', () => {
+    const punch = punchOf({ loginAt: '10:02', logoutAt: '19:05', lateByMinutes: 0, source: 'import' });
+    assert.equal(resolveDayStatus({ ...facts, punch }), 'Half day');
   });
 });
