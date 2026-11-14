@@ -22,7 +22,8 @@ export type ReportType =
   | 'recent_resignees'
   | 'leave'
   | 'goals'
-  | 'basic';
+  | 'basic'
+  | 'shift_roster';
 
 export interface ReportColumn {
   key: string;

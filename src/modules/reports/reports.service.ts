@@ -53,7 +53,7 @@ const PAYROLL_REPORT_TYPES: ReadonlySet<ReportType> = new Set([
   'appraisals',
 ]);
 /** Attendance-side reports that only admins may open. */
-const ADMIN_ONLY_REPORT_TYPES: ReadonlySet<ReportType> = new Set(['activity_log', 'lop']);
+const ADMIN_ONLY_REPORT_TYPES: ReadonlySet<ReportType> = new Set(['activity_log', 'lop', 'shift_roster']);
 
 /** The Active time tab's longest range: about two months stays readable. */
 const ACTIVE_TIME_MAX_DAYS = 62;
@@ -536,6 +536,13 @@ export class ReportsService implements IReportsService {
         description: 'Full profile master record including statutory IDs, shift, bank, CTC, and status.',
         filterType: 'none',
       },
+      {
+        type: 'shift_roster',
+        title: 'Shift timings and weekly offs',
+        category: 'People',
+        description: 'Every active employee with their shift start, shift end and weekly off days, as set today.',
+        filterType: 'none',
+      },
     ];
   }
 
@@ -602,6 +609,8 @@ export class ReportsService implements IReportsService {
         return this.buildGoals(filter);
       case 'basic':
         return this.buildBasicInfo(filter);
+      case 'shift_roster':
+        return this.buildShiftRoster(filter);
       default:
         return this.buildAllEmployees(filter);
     }
@@ -1887,6 +1896,64 @@ export class ReportsService implements IReportsService {
   }
 
   // 1. All Active Employees Report
+  /**
+   * Shift timings and weekly offs — admins only. One row per active employee
+   * with the shift and weekly off on their profile today.
+   */
+  private async buildShiftRoster(filter: ReportFilterDto): Promise<ReportResult> {
+    const allEmployees = await this.repository.findActiveEmployees(filter.department);
+    const employees = this.filterEmployees(allEmployees, filter)
+      // Test logins are not people.
+      .filter((e) => !String(e.employee_code ?? '').toUpperCase().startsWith('TEST-'))
+      .sort((a, b) => String(a.full_name).localeCompare(String(b.full_name)));
+
+    const columns: ReportColumn[] = [
+      { key: 'code', label: 'Emp ID', width: '100px' },
+      { key: 'employee', label: 'Name', width: '220px' },
+      { key: 'department', label: 'Department', width: '160px' },
+      { key: 'designation', label: 'Designation', width: '200px' },
+      { key: 'workMode', label: 'Work mode', width: '100px' },
+      { key: 'shiftStart', label: 'Shift start', width: '100px' },
+      { key: 'shiftEnd', label: 'Shift end', width: '100px' },
+      { key: 'weeklyOff', label: 'Weekly off', width: '160px' },
+    ];
+
+    const hhmm = (t: string | null | undefined) => (t ? String(t).slice(0, 5) : '—');
+    const DAY_ORDER = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    const offDays = (raw: string | null | undefined) => {
+      const days = String(raw ?? '').split(',').map((d) => d.trim()).filter(Boolean);
+      days.sort((a, b) => DAY_ORDER.indexOf(a) - DAY_ORDER.indexOf(b));
+      return days.length > 0 ? days.join(', ') : '—';
+    };
+
+    const rows = employees.map((e) => {
+      const department = String(e.department ?? '').trim();
+      return {
+        code: e.employee_code,
+        employee: e.full_name,
+        department: department && department !== '0' ? department : '—',
+        designation: e.designation || '—',
+        workMode: e.work_mode || '—',
+        shiftStart: hhmm(e.shift_start),
+        shiftEnd: hhmm(e.shift_end),
+        weeklyOff: offDays(e.weekly_off),
+      };
+    });
+
+    return {
+      type: 'shift_roster',
+      meta: {
+        companyName: COMPANY_HEADER.name,
+        companyAddress: COMPANY_HEADER.address,
+        reportTitle: 'Shift timings and weekly offs',
+        generatedAt: new Date().toISOString(),
+        totalRecords: rows.length,
+      },
+      columns,
+      rows,
+    };
+  }
+
   private async buildAllEmployees(filter: ReportFilterDto): Promise<ReportResult> {
     const allEmployees = await this.repository.findActiveEmployees(filter.department);
     const employees = this.filterEmployees(allEmployees, filter);

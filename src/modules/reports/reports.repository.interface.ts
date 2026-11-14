@@ -33,6 +33,8 @@ export interface RawEmployeeRow {
   status?: string | null;
   opening_leave?: number | string | null;
   weekly_off?: string | null;
+  shift_start?: string | null;
+  shift_end?: string | null;
 }
 
 export interface RawLoanRow {

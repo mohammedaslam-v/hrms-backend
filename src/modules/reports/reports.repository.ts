@@ -69,7 +69,9 @@ export class ReportsRepository implements IReportsRepository {
       e.resignation_date,
       e.resignation_reason,
       e.opening_leave,
-      e.weekly_off
+      e.weekly_off,
+      e.shift_start,
+      e.shift_end
     `;
   }
 
