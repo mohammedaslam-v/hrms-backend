@@ -284,6 +284,14 @@ export class AttendanceService implements IAttendanceService {
       const isLop = dto.status.startsWith('Unpaid') || dto.status.startsWith('LOP');
       leaveType = isLop ? 'Unpaid' : 'Earned';
       leaveChoice = { leaveType, isHalfDay: false, halfDaySession: null };
+    } else if (punch && !isHalf && isWeeklyOff(date, schedule.weeklyOff)) {
+      // Worked on a usual weekly off: present, with no lateness and no leave —
+      // there is no shift to be late for and no leave to record (the same rule
+      // the live check-in uses for its late half-day penalty).
+      status = 'On time';
+      lateBy = 0;
+      leaveType = null;
+      leaveChoice = null;
     } else if (punch) {
       lateBy = minutesLate(punch.loginAt, schedule.shiftStart);
 
