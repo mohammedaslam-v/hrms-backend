@@ -28,6 +28,13 @@ export interface ILeaveRepository {
 
   findLeaveContext(employeeId: number): Promise<LeaveContext | null>;
 
+  /**
+   * Dates an admin set by hand to anything but 'Weekly off' (the attendance
+   * rule isMarkedWorking). On a usual weekly off such a row makes it a
+   * working day, so leave can be recorded on it.
+   */
+  findMarkedWorkingDates(employeeId: number, from: string, to: string): Promise<Set<string>>;
+
   /** Requests overlapping the leave year, in date order. */
   findRequestsInYear(
     employeeId: number,

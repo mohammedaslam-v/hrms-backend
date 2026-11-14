@@ -1625,7 +1625,12 @@ export class ReportsService implements IReportsService {
           const spanStart = req.fromDate < range.from ? range.from : req.fromDate;
           const spanEnd = req.toDate > range.to ? range.to : req.toDate;
           const working = workingDaysBetween(spanStart, spanEnd, weeklyOff, holidaySet);
-          const days = req.isHalfDay ? working * 0.5 : working;
+          // A one-day leave on a weekly off made a working day by hand: its
+          // stored days count (the ledger does the same).
+          const days =
+            working === 0 && req.fromDate === req.toDate && req.days > 0
+              ? req.days
+              : req.isHalfDay ? working * 0.5 : working;
           if (days <= 0) continue;
 
           const unpaid = req.leaveType === 'Unpaid';

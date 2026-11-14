@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import {
   ApprovalProgress,
   computeLedger,
+  daysByMonth,
   formatDecisionNote,
   formatMonthRange,
   isSpecialSeniorApprover,
@@ -451,5 +452,20 @@ describe('loss of pay — confirmed policy', () => {
       const matches = note2.match(/<!--approvals:/g);
       assert.equal(matches?.length, 1);
     });
+  });
+});
+
+describe('leave on a weekly off made a working day by hand', () => {
+  // 10 Nov 2026 is a Tuesday; this person's usual off is Tuesday.
+  it('counts the day when an admin marked it working', () => {
+    assert.equal(workingDaysBetween('2026-11-10', '2026-11-10', ['Tue'], new Set()), 0);
+    assert.equal(workingDaysBetween('2026-11-10', '2026-11-10', ['Tue'], new Set(), new Set(['2026-11-10'])), 1);
+  });
+  it('the ledger deducts its stored days instead of dropping them', () => {
+    const request = {
+      id: 1, ref: 'LV-1', leaveType: 'Earned', fromDate: '2026-11-10', toDate: '2026-11-10',
+      days: 1, unpaidDays: 0, status: 'Approved',
+    } as LeaveRequestRecord;
+    assert.deepEqual([...daysByMonth(request, ['Tue'], new Set())], [['2026-11', 1]]);
   });
 });

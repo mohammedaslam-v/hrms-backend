@@ -49,6 +49,8 @@ interface Resolved {
   year: LeaveYearConfig;
   holidays: HolidayRecord[];
   holidaySet: Set<string>;
+  /** Usual weekly offs made working days by hand — see findMarkedWorkingDates. */
+  workingDates: Set<string>;
   requests: StoredLeaveRequest[];
   ledger: LeaveLedger;
   /** Kept so a proposed request can be projected through the same simulation. */
@@ -192,9 +194,9 @@ export class LeaveService implements ILeaveService {
             toDate,
           );
       if (clash) {
-        const { context, holidaySet, ledger } = resolved;
+        const { context, holidaySet, workingDates, ledger } = resolved;
         const calendarDays = eachDay(fromDate, toDate).length;
-        const workingDays = workingDaysBetween(fromDate, toDate, context.weeklyOff, holidaySet);
+        const workingDays = workingDaysBetween(fromDate, toDate, context.weeklyOff, holidaySet, workingDates);
         const days = isHalfDay ? Math.round(workingDays * 0.5 * 10) / 10 : workingDays;
         const skippedDays = calendarDays - workingDays;
         return {
@@ -713,6 +715,7 @@ export class LeaveService implements ILeaveService {
         dto.toDate,
         resolved.context.weeklyOff,
         resolved.holidaySet,
+        resolved.workingDates,
       );
     }
 
@@ -1053,10 +1056,11 @@ export class LeaveService implements ILeaveService {
       );
     }
 
-    const [holidays, requests, adjustments] = await Promise.all([
+    const [holidays, requests, adjustments, workingDates] = await Promise.all([
       this.leaveRepository.findHolidays(year.startDate, year.endDate),
       this.leaveRepository.findRequestsInYear(employeeId, year.startDate, year.endDate),
       this.leaveRepository.sumAdjustments(employeeId, year.leaveYear),
+      this.leaveRepository.findMarkedWorkingDates(employeeId, year.startDate, year.endDate),
     ]);
 
     const ledgerInput = {
@@ -1080,6 +1084,7 @@ export class LeaveService implements ILeaveService {
       year,
       holidays,
       holidaySet: new Set(holidays.map((h) => h.date)),
+      workingDates,
       requests,
       ledger,
       ledgerInput,
@@ -1093,7 +1098,7 @@ export class LeaveService implements ILeaveService {
     leaveType: LeaveType,
     isHalfDay: boolean,
   ): LeavePreview {
-    const { context, holidaySet, ledger } = resolved;
+    const { context, holidaySet, workingDates, ledger } = resolved;
 
     if (!fromDate || !toDate || toDate < fromDate) {
       return {
@@ -1109,7 +1114,7 @@ export class LeaveService implements ILeaveService {
     }
 
     const calendarDays = eachDay(fromDate, toDate).length;
-    const workingDays = workingDaysBetween(fromDate, toDate, context.weeklyOff, holidaySet);
+    const workingDays = workingDaysBetween(fromDate, toDate, context.weeklyOff, holidaySet, workingDates);
     // Half day applies to EVERY working day in the range, not to the request as
     // a whole: five working days at half a day each is 2.5 days, not 0.5.
     const days = isHalfDay ? Math.round(workingDays * 0.5 * 10) / 10 : workingDays;
@@ -1217,7 +1222,7 @@ export class LeaveService implements ILeaveService {
       for (const day of eachDay(request.fromDate, request.toDate)) {
         const month = monthKeyOf(day);
         if (!monthly.has(month)) continue;
-        if (context.weeklyOff.includes(dayName(day))) continue;
+        if (context.weeklyOff.includes(dayName(day)) && !resolved.workingDates.has(day)) continue;
         if (resolved.holidaySet.has(day)) continue;
         monthly.set(month, (monthly.get(month) ?? 0) + 1);
       }

@@ -127,6 +127,17 @@ export class LeaveRepository implements ILeaveRepository {
     return rows.map((r) => ({ date: r.holiday_date, name: r.name }));
   }
 
+  async findMarkedWorkingDates(employeeId: number, from: string, to: string): Promise<Set<string>> {
+    const [rows] = await this.pool.query<RowDataPacket[]>(
+      `SELECT DATE_FORMAT(att_date, '%Y-%m-%d') AS d
+         FROM hrms_attendance
+        WHERE employee_id = ? AND att_date BETWEEN ? AND ?
+          AND source = 'manual' AND status <> 'Weekly off'`,
+      [employeeId, from, to],
+    );
+    return new Set(rows.map((r) => String(r.d)));
+  }
+
   async findLeaveContext(employeeId: number): Promise<LeaveContext | null> {
     const [rows] = await this.pool.execute<ContextRow[]>(
       `SELECT id, opening_leave, date_of_joining, date_of_leaving, weekly_off

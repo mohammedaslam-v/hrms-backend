@@ -239,10 +239,17 @@ export function workingDaysBetween(
   to: string,
   weeklyOff: string[],
   holidays: ReadonlySet<string>,
+  /**
+   * Usual weekly offs made working days by hand (an admin's manual attendance
+   * row, e.g. Sales 10–15 Nov 2026). They count, so leave can be taken on them.
+   */
+  workingDates: ReadonlySet<string> = new Set(),
 ): number {
   if (to < from) return 0;
   const off = new Set(weeklyOff);
-  return eachDay(from, to).filter((d) => !off.has(dayNameOf(d)) && !holidays.has(d)).length;
+  return eachDay(from, to).filter(
+    (d) => !holidays.has(d) && (!off.has(dayNameOf(d)) || workingDates.has(d)),
+  ).length;
 }
 
 // ---------------------------------------------------------------- the ledger
@@ -268,7 +275,16 @@ export function daysByMonth(
   }
 
   const counted = [...out.values()].reduce((sum, n) => sum + n, 0);
-  if (counted === 0) return out;
+  if (counted === 0) {
+    // Days were stored, yet every date reads as an off day: leave taken on a
+    // weekly off that was made a working day by hand. The stored days still
+    // count, in the month(s) the request falls in, rather than vanishing.
+    if (request.days > 0) {
+      const months = [...new Set(eachDay(request.fromDate, request.toDate).map(monthKeyOf))];
+      for (const month of months) out.set(month, round1(request.days / months.length));
+    }
+    return out;
+  }
 
   // Scale so a half-day request contributes 0.5, not 1.
   const scale = request.days / counted;
