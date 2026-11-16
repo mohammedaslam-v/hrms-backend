@@ -185,6 +185,8 @@ export interface ApprovalsView {
     isTwoLevel?: boolean;
     directApproval?: ApprovalStep | null;
     seniorApproval?: ApprovalStep | null;
+    directManagerName?: string | null;
+    managerName?: string | null;
     decisionNote?: string | null;
   })[];
   policy: {

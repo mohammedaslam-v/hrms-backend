@@ -461,6 +461,8 @@ export class LeaveService implements ILeaveService {
           isTwoLevel,
           directApproval: progress?.l1 ?? null,
           seniorApproval: progress?.l2 ?? null,
+          directManagerName: r.directManagerName ?? null,
+          managerName: r.directManagerName ?? null,
           decisionNote: r.decisionNote ?? null,
         };
       }),
