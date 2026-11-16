@@ -150,6 +150,9 @@ export interface ILeaveRepository {
 
   findOnLeaveToday(today: string): Promise<OnLeaveEmployee[]>;
 
+  /** All reporting managers and department leads in the company. */
+  findAllManagers(): Promise<string[]>;
+
   recordAudit(
     actorEmployeeId: number,
     action: string,

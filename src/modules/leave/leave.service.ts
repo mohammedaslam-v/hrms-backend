@@ -435,6 +435,7 @@ export class LeaveService implements ILeaveService {
       year.endDate,
     );
     const nameOf = new Map(team.map((t) => [t.id, t.fullName]));
+    const allManagers = await this.leaveRepository.findAllManagers();
 
     return {
       pending,
@@ -474,6 +475,7 @@ export class LeaveService implements ILeaveService {
       },
       teamSize: team.length,
       isAdmin,
+      allManagers,
     };
   }
 

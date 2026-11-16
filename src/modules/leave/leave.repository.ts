@@ -645,6 +645,41 @@ export class LeaveRepository implements ILeaveRepository {
     }));
   }
 
+  async findAllManagers(): Promise<string[]> {
+    try {
+      const [rows] = await this.pool.query<RowDataPacket[]>(
+        `SELECT DISTINCT full_name AS manager_name
+           FROM hrms_employees
+          WHERE (date_of_leaving IS NULL OR date_of_leaving >= CURDATE())
+            AND (
+              id IN (SELECT DISTINCT manager_id FROM hrms_employees WHERE manager_id IS NOT NULL)
+              OR designation LIKE '%Manager%'
+              OR designation LIKE '%Lead%'
+              OR designation LIKE '%Head%'
+              OR designation LIKE '%Director%'
+              OR designation LIKE '%VP%'
+              OR designation LIKE '%Chief%'
+              OR designation LIKE '%Founder%'
+            )
+          ORDER BY full_name`,
+      );
+      return rows
+        .map((r) => (r.manager_name ? String(r.manager_name).trim() : ''))
+        .filter(Boolean);
+    } catch {
+      const [rows] = await this.pool.query<RowDataPacket[]>(
+        `SELECT DISTINCT m.full_name AS manager_name
+           FROM hrms_employees e
+           JOIN hrms_employees m ON m.id = e.manager_id
+          WHERE m.full_name IS NOT NULL AND TRIM(m.full_name) != ''
+          ORDER BY m.full_name`,
+      );
+      return rows
+        .map((r) => (r.manager_name ? String(r.manager_name).trim() : ''))
+        .filter(Boolean);
+    }
+  }
+
   async recordAudit(
     actorEmployeeId: number,
     action: string,

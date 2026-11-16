@@ -197,6 +197,7 @@ export interface ApprovalsView {
   };
   teamSize: number;
   isAdmin?: boolean;
+  allManagers?: string[];
 }
 
 export interface EditApprovedLeaveDto {
