@@ -389,6 +389,7 @@ export class LeaveService implements ILeaveService {
         directApproval,
         seniorApproval,
         directManagerName: request.directManagerName ?? null,
+        managerName: request.directManagerName ?? null,
         grandManagerName: request.grandManagerName ?? null,
         hasViewerApproved,
         awaitingApproval,
