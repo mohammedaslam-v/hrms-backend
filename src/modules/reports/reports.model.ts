@@ -23,7 +23,8 @@ export type ReportType =
   | 'leave'
   | 'goals'
   | 'basic'
-  | 'shift_roster';
+  | 'shift_roster'
+  | 'productivity_lop';
 
 export interface ReportColumn {
   key: string;

@@ -4,6 +4,7 @@ import {
   RawEmployeeRow,
   RawLoanRow,
   RawCompensationRevision,
+  RawProductivityShortDay,
 } from './reports.repository.interface';
 
 export class ReportsRepository implements IReportsRepository {
@@ -104,6 +105,19 @@ export class ReportsRepository implements IReportsRepository {
 
     const [rows] = await this.pool.query<RowDataPacket[]>(sql, params);
     return rows as RawEmployeeRow[];
+  }
+
+  async findProductivityShortDays(from: string, to: string): Promise<RawProductivityShortDay[]> {
+    const [rows] = await this.pool.query<RowDataPacket[]>(
+      `SELECT employee_id, DATE_FORMAT(work_date, '%Y-%m-%d') AS work_date,
+              panel_minutes, activity_minutes, outcome
+         FROM hrms_productivity_days
+        WHERE work_date BETWEEN ? AND ?
+          AND outcome IN ('earned', 'unpaid')
+        ORDER BY work_date ASC, employee_id ASC`,
+      [from, to],
+    );
+    return rows as RawProductivityShortDay[];
   }
 
   async findAllEmployees(): Promise<RawEmployeeRow[]> {

@@ -53,7 +53,12 @@ const PAYROLL_REPORT_TYPES: ReadonlySet<ReportType> = new Set([
   'appraisals',
 ]);
 /** Attendance-side reports that only admins may open. */
-const ADMIN_ONLY_REPORT_TYPES: ReadonlySet<ReportType> = new Set(['activity_log', 'lop', 'shift_roster']);
+const ADMIN_ONLY_REPORT_TYPES: ReadonlySet<ReportType> = new Set([
+  'activity_log',
+  'lop',
+  'shift_roster',
+  'productivity_lop',
+]);
 
 /** The Active time tab's longest range: about two months stays readable. */
 const ACTIVE_TIME_MAX_DAYS = 62;
@@ -543,6 +548,13 @@ export class ReportsService implements IReportsService {
         description: 'Every active employee with their shift start, shift end and weekly off days, as set today.',
         filterType: 'none',
       },
+      {
+        type: 'productivity_lop',
+        title: 'Productivity auto LOP marked',
+        category: 'Attendance',
+        description: 'Sales days the productivity rule marked as LOP: panel + activity time below 8h 06m.',
+        filterType: 'period',
+      },
     ];
   }
 
@@ -611,6 +623,8 @@ export class ReportsService implements IReportsService {
         return this.buildBasicInfo(filter);
       case 'shift_roster':
         return this.buildShiftRoster(filter);
+      case 'productivity_lop':
+        return this.buildProductivityLop(filter);
       default:
         return this.buildAllEmployees(filter);
     }
@@ -1954,6 +1968,68 @@ export class ReportsService implements IReportsService {
     };
   }
 
+  /**
+   * Productivity auto LOP — admins only. One row per day the Sales
+   * productivity rule decided short, read from `hrms_productivity_days`.
+   * Leavers stay in: a day decided before someone left is still on the books.
+   */
+  private async buildProductivityLop(filter: ReportFilterDto): Promise<ReportResult> {
+    const range = resolveRange(filter);
+    const [days, allEmployees] = await Promise.all([
+      this.repository.findProductivityShortDays(range.from, range.to),
+      this.repository.findAllEmployees(),
+    ]);
+    const byId = new Map(this.filterEmployees(allEmployees, filter).map((e) => [Number(e.id), e]));
+
+    const columns: ReportColumn[] = [
+      { key: 'date', label: 'Date', width: '110px' },
+      { key: 'code', label: 'Emp Code', width: '100px' },
+      { key: 'employee', label: 'Name', width: '200px' },
+      { key: 'manager', label: 'Reporting Manager', width: '180px' },
+      { key: 'workMode', label: 'Work mode', width: '100px' },
+      { key: 'department', label: 'Department', width: '140px' },
+      { key: 'activeHours', label: 'Active hrs', width: '100px' },
+      { key: 'status', label: 'Status', width: '160px' },
+    ];
+
+    const hm = (minutes: number) => {
+      const m = Math.max(0, Math.round(Number(minutes) || 0));
+      return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m`;
+    };
+
+    const rows = days.flatMap((d) => {
+      const e = byId.get(Number(d.employee_id));
+      if (!e) return [];
+      const department = String(e.department ?? '').trim();
+      return [
+        {
+          date: d.work_date,
+          code: e.employee_code,
+          employee: e.full_name,
+          manager: e.manager_name || '—',
+          workMode: e.work_mode || '—',
+          department: department && department !== '0' ? department : '—',
+          activeHours: hm(Number(d.panel_minutes) + Number(d.activity_minutes)),
+          status: d.outcome === 'unpaid' ? 'Auto LOP applied' : 'Auto EL applied',
+        },
+      ];
+    });
+
+    return {
+      type: 'productivity_lop',
+      meta: {
+        companyName: COMPANY_HEADER.name,
+        companyAddress: COMPANY_HEADER.address,
+        reportTitle: 'Productivity auto LOP marked',
+        periodLabel: range.label,
+        generatedAt: new Date().toISOString(),
+        totalRecords: rows.length,
+      },
+      columns,
+      rows,
+    };
+  }
+
   private async buildAllEmployees(filter: ReportFilterDto): Promise<ReportResult> {
     const allEmployees = await this.repository.findActiveEmployees(filter.department);
     const employees = this.filterEmployees(allEmployees, filter);
@@ -2682,9 +2758,7 @@ export class ReportsService implements IReportsService {
 
     const lines: string[] = [];
 
-    // Header metadata block matching company letterhead format
-    lines.push(`"${report.meta.companyName}"`);
-    lines.push(`"${report.meta.companyAddress}"`);
+    // Title block. No company name or address: HR asked for them off every download.
     lines.push(`"${report.meta.reportTitle}"`);
     if (report.meta.reportSubtitle) {
       lines.push(`"${report.meta.reportSubtitle}"`);
