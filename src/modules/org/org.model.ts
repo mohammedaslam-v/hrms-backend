@@ -28,6 +28,8 @@ export interface RosterMember extends TeamMember {
   dateOfJoining: string;
   /** Null while they are still with the company. */
   dateOfLeaving: string | null;
+  /** Employee, Probation or Contractor — the directory's Type filter. */
+  employmentType?: 'Employee' | 'Probation' | 'Contractor' | null;
 }
 
 /** Whose roster to build, and whether people who have left are included. */
