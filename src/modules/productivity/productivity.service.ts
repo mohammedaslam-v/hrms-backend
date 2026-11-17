@@ -175,10 +175,9 @@ export class ProductivityService implements IProductivityService {
   }
 
   /**
-   * Met, or which leave. Earned when the month's balance covers a full day —
-   * the leave preview projects it through the same ledger as any request —
-   * otherwise unpaid. `asLeave` false is the one case the ledger cannot take:
-   * a usual off day made a working day by hand, which it still counts as off.
+   * Met, or loss of pay. A short day is always LOP, whatever the leave balance
+   * (HR's ruling, 16 Nov 2026 — before it, a balance meant EL). `asLeave`
+   * false is the one case the ledger cannot take: a day it counts as off.
    */
   private async outcomeFor(
     e: RuledEmployee,
@@ -186,9 +185,8 @@ export class ProductivityService implements IProductivityService {
     figures: ProductivityFigures,
   ): Promise<{ outcome: ProductivityOutcome; asLeave: boolean }> {
     if (isMet(figures)) return { outcome: 'met', asLeave: false };
-    const preview = await this.leaveService.preview(e.id, date, date, 'Earned', false);
-    if (preview.days <= 0) return { outcome: 'unpaid', asLeave: false };
-    return { outcome: preview.unpaidDays > 0 ? 'unpaid' : 'earned', asLeave: true };
+    const preview = await this.leaveService.preview(e.id, date, date, 'Unpaid', false);
+    return { outcome: 'unpaid', asLeave: preview.days > 0 };
   }
 
   private async apply(

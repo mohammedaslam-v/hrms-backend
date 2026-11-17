@@ -149,7 +149,8 @@ export function reasonFor(f: ProductivityFigures, outcome: ProductivityOutcome):
   const figures = `${hm(productiveMinutes(f))} productive (panels ${hm(f.panelMinutes)} + activities ${hm(f.activityMinutes)})`;
   const need = hm(REQUIRED_MINUTES);
   if (outcome === 'met') return `Productivity met: ${figures}, at least ${need} needed. Attendance marked automatically.`;
-  const as = outcome === 'earned' ? 'earned leave (EL)' : 'loss of pay (LOP) — no leave balance';
+  // 'earned' only appears on days decided before 16 Nov 2026; every short day is LOP now.
+  const as = outcome === 'earned' ? 'earned leave (EL)' : 'loss of pay (LOP)';
   return `Productivity below 90%: ${figures}, ${need} needed. Marked as ${as}.`;
 }
 

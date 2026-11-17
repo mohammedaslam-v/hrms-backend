@@ -84,7 +84,7 @@ test('before shift end + 4 hours nothing is decided', async () => {
   assert.deepEqual(writes, []);
 });
 
-test('met without a check-in is marked present; short days become EL or LOP by balance', async () => {
+test('met without a check-in is marked present; a short day is LOP even with a balance', async () => {
   const { service, writes } = harness({
     now: { date: '2026-11-16', time: '23:00:00' },
     panelSeconds: { 1: 6 * 3600, 2: 4 * 3600, 3: 4 * 3600 },
@@ -92,12 +92,12 @@ test('met without a check-in is marked present; short days become EL or LOP by b
     unpaidIfEarned: { 3: true },
   });
   const s = await service.settleDue();
-  assert.deepEqual(s, { checked: 3, decided: 3, met: 1, earned: 1, unpaid: 1, failed: 0 });
+  assert.deepEqual(s, { checked: 3, decided: 3, met: 1, earned: 0, unpaid: 2, failed: 0 });
   assert.deepEqual(writes, [
     'claim 1|2026-11-16 met',
     'day 1|2026-11-16 On time 10:00',
-    'claim 2|2026-11-16 earned',
-    'leave 2|2026-11-16 Earned',
+    'claim 2|2026-11-16 unpaid',
+    'leave 2|2026-11-16 Unpaid',
     'day 2|2026-11-16 Leave -',
     'claim 3|2026-11-16 unpaid',
     'leave 3|2026-11-16 Unpaid',

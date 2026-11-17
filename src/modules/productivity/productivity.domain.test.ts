@@ -96,5 +96,8 @@ test('the reason names the figures and the result', () => {
     reasonFor({ panelMinutes: 240, activityMinutes: 180 }, 'earned'),
     'Productivity below 90%: 7h 00m productive (panels 4h 00m + activities 3h 00m), 8h 06m needed. Marked as earned leave (EL).',
   );
-  assert.match(reasonFor({ panelMinutes: 240, activityMinutes: 0 }, 'unpaid'), /loss of pay \(LOP\) — no leave balance/);
+  assert.equal(
+    reasonFor({ panelMinutes: 240, activityMinutes: 0 }, 'unpaid'),
+    'Productivity below 90%: 4h 00m productive (panels 4h 00m + activities 0m), 8h 06m needed. Marked as loss of pay (LOP).',
+  );
 });

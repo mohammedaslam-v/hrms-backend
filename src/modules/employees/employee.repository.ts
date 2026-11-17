@@ -1,4 +1,4 @@
-import { Pool, ResultSetHeader, RowDataPacket } from 'mysql2/promise';
+import { Pool, PoolConnection, ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 import bcrypt from 'bcryptjs';
 import { IEmployeeRepository } from './employee.repository.interface';
 import {
@@ -22,6 +22,52 @@ import type { SalaryComponents } from '../salary/salary.domain';
  * createEmployeeTransaction.
  */
 const PLACEHOLDER_PHONE = '0000000000';
+
+/**
+ * Departments whose people take leads. Only their agent rows are created with
+ * `sales_active = 1`: the CSR, presales and cold-calling assignment lists offer
+ * every agent with sales_active = 1, so anyone else must start at 0.
+ */
+const LEAD_TAKING_DEPARTMENTS = new Set(['sales', 'presales']);
+
+const isLeadTaking = (department: string | null | undefined): boolean =>
+  LEAD_TAKING_DEPARTMENTS.has(String(department ?? '').trim().toLowerCase());
+
+/**
+ * One `customerserviceagents` row — the record the old portal hangs an agent
+ * on, and which `admins.customerserviceagent_id` points at. sales_team and
+ * subteam are left empty: they name a senior manager, not a department, and
+ * are set in the admin panel.
+ */
+async function insertAgent(
+  connection: PoolConnection,
+  agent: {
+    name: string;
+    mobile: string;
+    email: string | null;
+    personalEmail: string | null;
+    dateOfBirth: string | null;
+    dateOfJoining: string | null;
+    salesActive: boolean;
+  },
+): Promise<number> {
+  const [result] = await connection.execute<ResultSetHeader>(
+    `INSERT INTO customerserviceagents (
+       name, mobile, status, email, personal_email, country, sales_active,
+       date_of_birth, date_of_joining, created_at, updated_at
+     ) VALUES (?, ?, 'Active', ?, ?, 'IN', ?, ?, ?, NOW(), NOW())`,
+    [
+      agent.name,
+      agent.mobile,
+      agent.email,
+      agent.personalEmail,
+      agent.salesActive ? 1 : 0,
+      agent.dateOfBirth,
+      agent.dateOfJoining,
+    ],
+  );
+  return result.insertId;
+}
 
 /**
  * Strips formatting, spaces, and leading zeros from a phone number for matching.
@@ -177,7 +223,7 @@ export class EmployeeRepository implements IEmployeeRepository {
       const incomingEmail = dto.workEmail.trim().toLowerCase();
       // Check both email and personal_email so portal accounts under official or personal addresses are matched
       const [byEmail] = await connection.query<RowDataPacket[]>(
-        `SELECT id, name, email, personal_email, mobile FROM admins
+        `SELECT id, name, email, personal_email, mobile, customerserviceagent_id FROM admins
           WHERE (email = ? OR personal_email = ?) AND deleted_at IS NULL LIMIT 1 FOR UPDATE`,
         [incomingEmail, incomingEmail],
       );
@@ -189,7 +235,7 @@ export class EmployeeRepository implements IEmployeeRepository {
       let byPhoneRow: RowDataPacket | null = null;
       if (cleanPhone) {
         const [byPhone] = await connection.query<RowDataPacket[]>(
-          `SELECT id, name, email, personal_email, mobile FROM admins
+          `SELECT id, name, email, personal_email, mobile, customerserviceagent_id FROM admins
             WHERE deleted_at IS NULL
               AND LENGTH(REGEXP_REPLACE(mobile, '[^0-9]', '')) >= 7
               AND (
@@ -297,17 +343,45 @@ export class EmployeeRepository implements IEmployeeRepository {
            WHERE a.id = ?`,
           [adminId],
         );
+        // An existing login with no agent record gets one, so every HRMS
+        // employee has the agent id the old portal hangs its data on.
+        if (!existingAdmin?.customerserviceagent_id) {
+          const agentId = await insertAgent(connection, {
+            name: String(existingAdmin?.name ?? dto.fullName),
+            mobile: String(existingAdmin?.mobile || dto.phone || PLACEHOLDER_PHONE),
+            email: existingAdmin?.email ?? null,
+            personalEmail: existingAdmin?.personal_email ?? null,
+            dateOfBirth: dto.dateOfBirth || null,
+            dateOfJoining: dto.dateOfJoining || null,
+            salesActive: isLeadTaking(dto.department),
+          });
+          await connection.execute(
+            `UPDATE admins SET customerserviceagent_id = ?, updated_at = NOW() WHERE id = ?`,
+            [agentId, adminId],
+          );
+        }
       } else {
         tempPassword = 'Bambinos@2026';
         const passwordHash = await bcrypt.hash(tempPassword, 10);
         const isBambinosEmail = /@bambinos\.live$/i.test(incomingEmail);
         const personalEmail = isBambinosEmail ? null : incomingEmail;
 
+        // The agent row first: admins.customerserviceagent_id points at it.
+        const agentId = await insertAgent(connection, {
+          name: dto.fullName,
+          mobile: dto.phone || PLACEHOLDER_PHONE,
+          email: dto.workEmail,
+          personalEmail,
+          dateOfBirth: dto.dateOfBirth || null,
+          dateOfJoining: dto.dateOfJoining || null,
+          salesActive: isLeadTaking(dto.department),
+        });
+
         const [adminResult] = await connection.execute<ResultSetHeader>(
           `INSERT INTO admins (
             name, email, personal_email, mobile, password, date_of_birth, pan, role,
-            paid_booking_access, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, NOW(), NOW())`,
+            customerserviceagent_id, paid_booking_access, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NOW(), NOW())`,
           [
             dto.fullName,
             dto.workEmail,
@@ -317,6 +391,7 @@ export class EmployeeRepository implements IEmployeeRepository {
             dto.dateOfBirth || null,
             dto.pan ? dto.pan.toUpperCase() : null,
             dto.hrmsRole === 'admin' ? 'Admin' : 'CSR',
+            agentId,
           ],
         );
         adminId = adminResult.insertId;
