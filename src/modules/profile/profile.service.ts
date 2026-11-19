@@ -94,6 +94,7 @@ const toCompensationView = (
   esopVestedPct: record.esopVestedPct,
   esopVestedUnits: vestedUnits(record),
   revisionNote: record.revisionNote,
+  isPlaceholder: record.isPlaceholder ?? false,
 });
 
 const DOCUMENT_LABELS: Record<DocumentKey, string> = {
@@ -744,11 +745,35 @@ async updateEmploymentType(
     subjectId: number,
     dto: UpdateCompensationDto,
   ): Promise<CompensationView> {
-    const viewerRecord = await this.profileRepository.findProfile(viewerId);
+    // Only an admin acting on somebody else. This used to also accept any
+    // viewer with an `admin_id` — which is nearly every employee, since they
+    // all sign in through `admins` — so anyone could post their own salary.
+    // Your own page resolves to 'self', never 'admin', so an admin cannot set
+    // their own pay either; another admin does it.
     const access = await this.accessService.require(viewerId, subjectId);
-    const isAdmin = access === "admin" || (viewerRecord && viewerRecord.adminId !== null);
-    if (!isAdmin) {
-      throw ApiError.forbidden("Only administrators can update employee compensation.");
+    if (access !== "admin") {
+      throw ApiError.forbidden("Only an administrator can change another employee's compensation.");
+    }
+
+    // Checked here because an encrypted figure is not checked by the column
+    // type any more: a NaN would be sealed in and break every read after it.
+    const ctc = Number(dto.ctc);
+    if (!Number.isFinite(ctc) || ctc <= 0) {
+      throw ApiError.badRequest("CTC must be a positive amount.");
+    }
+    for (const [label, value] of [
+      ["Variable pay", dto.variablePay],
+      ["Bonus", dto.bonus],
+      ["ESOP units", dto.esopUnits],
+      ["ESOP vested %", dto.esopVestedPct],
+    ] as const) {
+      const n = Number(value || 0);
+      if (!Number.isFinite(n) || n < 0) {
+        throw ApiError.badRequest(`${label} must be zero or more.`);
+      }
+    }
+    if (Number(dto.esopVestedPct || 0) > 100) {
+      throw ApiError.badRequest("ESOP vested % cannot be more than 100.");
     }
 
     const today = new Date().toISOString().slice(0, 10);

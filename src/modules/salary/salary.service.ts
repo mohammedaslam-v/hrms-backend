@@ -437,6 +437,7 @@ export class SalaryService implements ISalaryService {
     history.reverse();
 
     return {
+      isPlaceholderPay: comp?.isPlaceholder ?? false,
       slip,
       annualStructure,
       history,

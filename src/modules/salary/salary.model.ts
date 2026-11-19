@@ -123,4 +123,9 @@ export interface MySalaryView {
   history: PayslipHistoryItem[];
   loan: EmployeeLoanView | null;
   company: CompanyConfig;
+  /**
+   * The pay this slip is built from is a dummy figure, not the employee's
+   * real salary. Payouts refuse to send money on it.
+   */
+  isPlaceholderPay: boolean;
 }

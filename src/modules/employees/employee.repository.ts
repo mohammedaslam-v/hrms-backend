@@ -13,6 +13,8 @@ import {
 } from './employee.model';
 import { ApiError } from '../../utils/api-error';
 import type { SalaryComponents } from '../salary/salary.domain';
+import { sealFigures } from '../compensation/compensation.domain';
+import { IFieldCipher } from '../../shared/field-cipher';
 
 /**
  * Written to `admins.mobile` when nobody supplied a phone number.
@@ -155,7 +157,11 @@ const mapEmployeeRow = (row: EmployeeRow): Employee => ({
 });
 
 export class EmployeeRepository implements IEmployeeRepository {
-  constructor(private readonly pool: Pool) {}
+  constructor(
+    private readonly pool: Pool,
+    // Salary figures go into hrms_employee_compensation encrypted.
+    private readonly cipher: IFieldCipher,
+  ) {}
 
   async getMeta(): Promise<EmployeeMetaDto> {
     const [deptRows] = await this.pool.query<RowDataPacket[]>(
@@ -450,29 +456,29 @@ export class EmployeeRepository implements IEmployeeRepository {
       );
       const employeeId = empResult.insertId;
 
-      // 6. Insert initial compensation record
+      // 6. Insert initial compensation record — figures encrypted, the plain
+      // columns left empty.
       await connection.execute(
         `INSERT INTO hrms_employee_compensation (
-          employee_id, effective_from, ctc, variable_pay, bonus, esop_units,
-          esop_vested_pct, revision_note, created_by, created_at,
-          basic_monthly, hra_monthly, special_monthly, employer_pf_monthly,
-          gratuity_monthly, employee_pf_monthly, professional_tax_monthly
-        ) VALUES (?, ?, ?, ?, ?, ?, 0.00, 'Initial joining offer', ?, NOW(), ?, ?, ?, ?, ?, ?, ?)`,
+          employee_id, effective_from, payload_enc, is_placeholder, created_by, created_at
+        ) VALUES (?, ?, ?, 0, ?, NOW())`,
         [
           employeeId,
           dto.dateOfJoining,
-          dto.ctc,
-          dto.variablePay || 0,
-          dto.bonus || 0,
-          dto.esopUnits || 0,
+          sealFigures(
+            employeeId,
+            {
+              ctc: dto.ctc,
+              variablePay: dto.variablePay || 0,
+              bonus: dto.bonus || 0,
+              esopUnits: dto.esopUnits || 0,
+              esopVestedPct: 0,
+              revisionNote: 'Initial joining offer',
+              components: components ?? null,
+            },
+            this.cipher,
+          ),
           creatorId,
-          components?.basicM ?? null,
-          components?.hraM ?? null,
-          components?.specialM ?? null,
-          components?.employerPfM ?? null,
-          components?.gratuityM ?? null,
-          components?.employeePfM ?? null,
-          components?.professionalTaxM ?? null,
         ],
       );
 

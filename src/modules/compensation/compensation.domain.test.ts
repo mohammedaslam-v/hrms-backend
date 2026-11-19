@@ -1,7 +1,78 @@
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import { describe, it } from 'node:test';
-import { compensationOn, vestedUnits } from './compensation.domain';
-import type { CompensationRecord } from './compensation.model';
+import {
+  compensationOn,
+  figuresFromJson,
+  readFigures,
+  sealFigures,
+  vestedUnits,
+} from './compensation.domain';
+import type { CompensationFigures, CompensationRecord } from './compensation.model';
+import { FieldCipher } from '../../shared/field-cipher';
+
+describe('stored compensation', () => {
+  const cipher = new FieldCipher({ v1: crypto.randomBytes(32) }, 'v1');
+  const figures: CompensationFigures = {
+    ctc: 1_150_000,
+    variablePay: 120_000,
+    bonus: 50_000,
+    esopUnits: 400,
+    esopVestedPct: 25,
+    revisionNote: 'FY26-27 revision',
+    components: {
+      basicM: 40_000,
+      hraM: 20_000,
+      specialM: 25_000,
+      employerPfM: 1_800,
+      gratuityM: 1_924,
+      employeePfM: 1_800,
+      professionalTaxM: null,
+    },
+  };
+
+  it('reads back every figure it sealed, breakup included', () => {
+    const row = { employee_id: 336, payload_enc: sealFigures(336, figures, cipher) };
+    assert.deepEqual(readFigures(row, cipher), figures);
+  });
+
+  it('will not read one employee’s figures on another’s row', () => {
+    const row = { employee_id: 337, payload_enc: sealFigures(336, figures, cipher) };
+    assert.throws(() => readFigures(row, cipher));
+  });
+
+  it('still reads a row written before encryption', () => {
+    const legacy = {
+      employee_id: 336,
+      payload_enc: null,
+      ctc: 900000,
+      variable_pay: 0,
+      bonus: 0,
+      esop_units: 0,
+      esop_vested_pct: '0.00',
+      revision_note: 'On joining',
+      basic_monthly: null,
+    };
+    assert.deepEqual(readFigures(legacy, cipher), {
+      ctc: 900_000,
+      variablePay: 0,
+      bonus: 0,
+      esopUnits: 0,
+      esopVestedPct: 0,
+      revisionNote: 'On joining',
+      components: null,
+    });
+  });
+
+  it('refuses a payload whose salary is not a number, rather than paying zero', () => {
+    assert.throws(() => figuresFromJson('{"ctc":null}'), /ctc/);
+    assert.throws(() => figuresFromJson('{"ctc":"abc"}'), /ctc/);
+  });
+
+  it('refuses a row with no salary in either form', () => {
+    assert.throws(() => readFigures({ employee_id: 1, payload_enc: null, ctc: null }, cipher));
+  });
+});
 
 const revision = (over: Partial<CompensationRecord> = {}): CompensationRecord => ({
   id: 1,

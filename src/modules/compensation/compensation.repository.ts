@@ -1,69 +1,55 @@
 import { Pool, ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 import { ICompensationRepository } from './compensation.repository.interface';
-import { CompensationRecord } from './compensation.model';
-import { SalaryComponents } from '../salary/salary.domain';
+import { CompensationFigures, CompensationRecord } from './compensation.model';
+import {
+  CLEAR_PLAIN_COMPENSATION_SQL,
+  readFigures,
+  sealFigures,
+  StoredCompensationColumns,
+} from './compensation.domain';
+import { IFieldCipher } from '../../shared/field-cipher';
+import { recordAudit } from '../../shared/audit';
 
-interface CompensationRow extends RowDataPacket {
+interface CompensationRow extends RowDataPacket, StoredCompensationColumns {
   id: number;
   employee_id: number;
   effective_from: string;
-  ctc: number;
-  variable_pay: number;
-  bonus: number;
-  esop_units: number;
-  esop_vested_pct: string;
-  revision_note: string | null;
+  is_placeholder: number;
   created_at: string;
-  basic_monthly: string | null;
-  hra_monthly: string | null;
-  special_monthly: string | null;
-  employer_pf_monthly: string | null;
-  gratuity_monthly: string | null;
-  employee_pf_monthly: string | null;
-  professional_tax_monthly: string | null;
 }
 
-const COLUMNS = `id, employee_id, effective_from, ctc, variable_pay, bonus,
-  esop_units, esop_vested_pct, revision_note, created_at,
+/**
+ * The plain columns are still selected because rows written before encryption
+ * only have those. Rows written since have them cleared and carry payload_enc;
+ * readFigures() picks whichever the row has.
+ */
+const COLUMNS = `id, employee_id, effective_from, payload_enc, is_placeholder, created_at,
+  ctc, variable_pay, bonus, esop_units, esop_vested_pct, revision_note,
   basic_monthly, hra_monthly, special_monthly, employer_pf_monthly,
   gratuity_monthly, employee_pf_monthly, professional_tax_monthly`;
 
 /**
- * Saved components, or null when the row predates them or HR kept the
- * formula. Keyed on Basic: the form always saves the full set together.
+ * Salary figures are encrypted in `payload_enc` (see shared/field-cipher.ts).
+ * Only this repository, the Add employee insert and the reports repository
+ * touch the table, and all three go through readFigures()/sealFigures(), so
+ * nothing above the repository layer knows the figures were ever encrypted.
  */
-const componentsOf = (row: CompensationRow): SalaryComponents | null =>
-  row.basic_monthly == null
-    ? null
-    : {
-        basicM: Number(row.basic_monthly),
-        hraM: Number(row.hra_monthly ?? 0),
-        specialM: Number(row.special_monthly ?? 0),
-        employerPfM: Number(row.employer_pf_monthly ?? 0),
-        gratuityM: Number(row.gratuity_monthly ?? 0),
-        employeePfM: Number(row.employee_pf_monthly ?? 0),
-        professionalTaxM:
-          row.professional_tax_monthly == null ? null : Number(row.professional_tax_monthly),
-      };
-
-const mapRecord = (row: CompensationRow): CompensationRecord => ({
-  id: row.id,
-  employeeId: row.employee_id,
-  effectiveFrom: row.effective_from,
-  // BIGINT columns arrive as numbers: whole rupees, well inside the safe range.
-  ctc: Number(row.ctc),
-  variablePay: Number(row.variable_pay),
-  bonus: Number(row.bonus),
-  esopUnits: Number(row.esop_units),
-  // DECIMAL arrives as a string from the driver.
-  esopVestedPct: Number(row.esop_vested_pct),
-  revisionNote: row.revision_note,
-  createdAt: row.created_at,
-  components: componentsOf(row),
-});
-
 export class CompensationRepository implements ICompensationRepository {
-  constructor(private readonly pool: Pool) {}
+  constructor(
+    private readonly pool: Pool,
+    private readonly cipher: IFieldCipher,
+  ) {}
+
+  private mapRecord(row: CompensationRow): CompensationRecord {
+    return {
+      id: row.id,
+      employeeId: row.employee_id,
+      effectiveFrom: row.effective_from,
+      ...readFigures(row, this.cipher),
+      isPlaceholder: Boolean(row.is_placeholder),
+      createdAt: row.created_at,
+    };
+  }
 
   async findHistoryForMany(employeeIds: number[]): Promise<Map<number, CompensationRecord[]>> {
     const byEmployee = new Map<number, CompensationRecord[]>();
@@ -79,7 +65,7 @@ export class CompensationRepository implements ICompensationRepository {
     );
 
     for (const row of rows) {
-      const record = mapRecord(row);
+      const record = this.mapRecord(row);
       const list = byEmployee.get(record.employeeId);
       if (list) list.push(record);
       else byEmployee.set(record.employeeId, [record]);
@@ -95,47 +81,76 @@ export class CompensationRepository implements ICompensationRepository {
         ORDER BY effective_from DESC`,
       [employeeId],
     );
-    return rows.map(mapRecord);
+    return rows.map((row) => this.mapRecord(row));
   }
+
   async addRevision(
     record: Omit<CompensationRecord, 'id' | 'createdAt'>,
     createdBy: number,
   ): Promise<CompensationRecord> {
-    const [result] = await this.pool.execute<ResultSetHeader>(
-      `INSERT INTO hrms_employee_compensation
-         (employee_id, effective_from, ctc, variable_pay, bonus, esop_units, esop_vested_pct, revision_note, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE
-         ctc = VALUES(ctc),
-         variable_pay = VALUES(variable_pay),
-         bonus = VALUES(bonus),
-         esop_units = VALUES(esop_units),
-         esop_vested_pct = VALUES(esop_vested_pct),
-         revision_note = VALUES(revision_note),
-         created_by = VALUES(created_by)`,
-      [
-        record.employeeId,
-        record.effectiveFrom,
-        record.ctc,
-        record.variablePay ?? 0,
-        record.bonus ?? 0,
-        record.esopUnits ?? 0,
-        record.esopVestedPct ?? 0,
-        record.revisionNote ?? null,
-        createdBy,
-      ],
-    );
+    // The edit form does not send the monthly breakup. Saving over an existing
+    // revision keeps the breakup that row already had — the behaviour before
+    // encryption, when the update simply left those columns alone.
+    let components = record.components;
+    if (components === undefined) {
+      const [existing] = await this.pool.execute<CompensationRow[]>(
+        `SELECT ${COLUMNS}
+           FROM hrms_employee_compensation
+          WHERE employee_id = ? AND effective_from = ?`,
+        [record.employeeId, record.effectiveFrom],
+      );
+      components = existing[0] ? readFigures(existing[0], this.cipher).components : null;
+    }
 
-    return {
-      id: result.insertId,
-      employeeId: record.employeeId,
-      effectiveFrom: record.effectiveFrom,
+    const figures: CompensationFigures = {
       ctc: record.ctc,
       variablePay: record.variablePay ?? 0,
       bonus: record.bonus ?? 0,
       esopUnits: record.esopUnits ?? 0,
       esopVestedPct: record.esopVestedPct ?? 0,
       revisionNote: record.revisionNote ?? null,
+      components,
+    };
+    const isPlaceholder = record.isPlaceholder ?? false;
+
+    // `id = LAST_INSERT_ID(id)` makes insertId the existing row's id when the
+    // date already had a revision, so the audit line names the right row.
+    const [result] = await this.pool.execute<ResultSetHeader>(
+      `INSERT INTO hrms_employee_compensation
+         (employee_id, effective_from, payload_enc, is_placeholder, created_by)
+       VALUES (?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         id = LAST_INSERT_ID(id),
+         payload_enc = VALUES(payload_enc),
+         is_placeholder = VALUES(is_placeholder),
+         created_by = VALUES(created_by),
+         ${CLEAR_PLAIN_COMPENSATION_SQL}`,
+      [
+        record.employeeId,
+        record.effectiveFrom,
+        sealFigures(record.employeeId, figures, this.cipher),
+        isPlaceholder ? 1 : 0,
+        createdBy,
+      ],
+    );
+
+    // Who changed whose pay, and when — never the amounts, or the audit log
+    // would become a second, unencrypted copy of every salary.
+    await recordAudit(this.pool, {
+      actorEmployeeId: createdBy,
+      action: 'compensation.revised',
+      entityType: 'hrms_employee_compensation',
+      entityId: result.insertId || null,
+      before: null,
+      after: { employeeId: record.employeeId, effectiveFrom: record.effectiveFrom, isPlaceholder },
+    });
+
+    return {
+      id: result.insertId,
+      employeeId: record.employeeId,
+      effectiveFrom: record.effectiveFrom,
+      ...figures,
+      isPlaceholder,
       createdAt: new Date().toISOString(),
     };
   }

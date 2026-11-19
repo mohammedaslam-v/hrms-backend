@@ -255,6 +255,8 @@ export interface CompensationView {
   esopVestedPct: number;
   esopVestedUnits: number;
   revisionNote: string | null;
+  /** A dummy figure awaiting the real one from HR. */
+  isPlaceholder: boolean;
 }
 
 export interface ProfileView {

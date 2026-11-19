@@ -78,6 +78,14 @@ export const env = {
     .filter(Boolean),
   corsOrigin: required('CORS_ORIGIN', 'http://localhost:5173'),
   /**
+   * The key salary figures are encrypted with: 32 random bytes, base64.
+   * Required, with no fallback — without it no salary can be read or saved, so
+   * the server refuses to start rather than fail on the first payslip.
+   * Each environment has its own key; losing the live one loses every salary,
+   * so a copy is kept outside the server. Never commit it.
+   */
+  compensationEncKey: required('COMPENSATION_ENC_KEY'),
+  /**
    * Shared secret for server-to-server calls (admin-backend punching the signed-in
    * admin's own attendance from the admin panel header). Sent in `x-internal-key`.
    * Empty means the internal routes are switched off — they fail closed.

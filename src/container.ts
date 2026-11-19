@@ -122,6 +122,7 @@ import { LoanController } from './modules/loans/loan.controller';
 import { InternalAttendanceRepository } from './modules/internal/internal-attendance.repository';
 import { InternalAttendanceController } from './modules/internal/internal-attendance.controller';
 import { InternalPresenceController } from './modules/internal/internal-presence.controller';
+import { FieldCipher, IFieldCipher } from './shared/field-cipher';
 
 
 export const createContainer = () => {
@@ -155,7 +156,13 @@ export const createContainer = () => {
 
   // Compensation. Read by My page today and by the Salary page later, so it is
   // its own service rather than a query hidden inside the profile.
-  const compensationRepository: ICompensationRepository = new CompensationRepository(pool);
+  // Salary figures are stored encrypted. One cipher, handed to every repository
+  // that reads or writes hrms_employee_compensation.
+  const fieldCipher: IFieldCipher = new FieldCipher(
+    { v1: FieldCipher.keyFromBase64('COMPENSATION_ENC_KEY', env.compensationEncKey) },
+    'v1',
+  );
+  const compensationRepository: ICompensationRepository = new CompensationRepository(pool, fieldCipher);
   const compensationService: ICompensationService = new CompensationService(compensationRepository, clock);
 
   // Goals read the financial year's dates and the risk tolerance from policy.
@@ -252,7 +259,7 @@ export const createContainer = () => {
   );
   const salaryController = new SalaryController(salaryService);
 
-  const employeeRepository: IEmployeeRepository = new EmployeeRepository(pool);
+  const employeeRepository: IEmployeeRepository = new EmployeeRepository(pool, fieldCipher);
   const employeeService: IEmployeeService = new EmployeeService(employeeRepository, authService);
   const employeeController = new EmployeeController(employeeService);
 
@@ -318,7 +325,7 @@ export const createContainer = () => {
   );
   const productivityController = new ProductivityController(productivityService, authService);
 
-  const reportsRepository: IReportsRepository = new ReportsRepository(pool);
+  const reportsRepository: IReportsRepository = new ReportsRepository(pool, fieldCipher);
   // attendanceRepository and policyService are what make the attendance
   // reports read real punches and observed slots instead of printing a fixed
   // 10:04 for every person on every day.

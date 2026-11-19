@@ -197,6 +197,14 @@ export class PayoutService implements IPayoutService {
         `Could not generate salary slip for ${meta.fullName} for ${month}`
       );
     }
+    // Dummy pay was loaded so every compensation card has something to edit.
+    // It must never reach a bank account: the bulk push reports this as a
+    // failed row and carries on with everyone else.
+    if (salaryView.isPlaceholderPay) {
+      throw ApiError.badRequest(
+        `${meta.fullName}'s salary is still a placeholder. Enter the real compensation on their page before paying.`
+      );
+    }
     const netPay = salaryView.slip.netPay;
     if (netPay <= 0) {
       throw ApiError.badRequest(
