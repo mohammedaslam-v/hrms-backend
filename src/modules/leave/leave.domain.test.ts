@@ -6,6 +6,7 @@ import {
   daysByMonth,
   formatDecisionNote,
   formatMonthRange,
+  isAdminOnlyLeave,
   isSpecialSeniorApprover,
   isTwoLevelLeave,
   leaveYearMonths,
@@ -359,6 +360,16 @@ describe('loss of pay — confirmed policy', () => {
   });
 
   describe('two-level approval workflow domain logic', () => {
+    it('takes Rhea (id 5) out of the two levels — HR decides her leave alone', () => {
+      assert.equal(isAdminOnlyLeave(5), true);
+      assert.equal(isAdminOnlyLeave(6), false);
+      assert.equal(isAdminOnlyLeave(null), false);
+      // Sales with a manager would normally be two-level; not for her.
+      assert.equal(isTwoLevelLeave({ employeeId: 5, department: 'Sales', managerId: 95 }), false);
+      // Everyone else in Sales is unchanged.
+      assert.equal(isTwoLevelLeave({ employeeId: 6, department: 'Sales', managerId: 95 }), true);
+    });
+
     it('identifies 2-level requests for sales and operations departments', () => {
       // Sales employee with direct and grand manager
       assert.equal(isTwoLevelLeave({ department: 'Sales', managerId: 10, grandManagerId: 5 }), true);

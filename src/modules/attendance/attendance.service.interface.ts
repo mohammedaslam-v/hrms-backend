@@ -9,9 +9,26 @@ import {
   TodayView,
 } from './attendance.model';
 
+/** What the browser sends with a break button. */
+export interface BreakPunch {
+  fix: DeviceFix | null;
+  /** The random id the browser keeps for itself. Null when it sent none. */
+  deviceId: string | null;
+  userAgent: string | null;
+}
+
 export interface IAttendanceService {
   /** The Today card for the signed-in person. Writes nothing. */
-  getToday(employeeId: number): Promise<TodayView>;
+  getToday(employeeId: number, deviceId?: string | null): Promise<TodayView>;
+
+  /**
+   * Starts a break: checked in, inside the shift, time left of the hour, and —
+   * when fenced — inside an allowed place. Remembers the device it started on.
+   */
+  startBreak(employeeId: number, punch: BreakPunch): Promise<TodayView>;
+
+  /** Ends the running break — only from the device, and place, it started on. */
+  endBreak(employeeId: number, punch: BreakPunch): Promise<TodayView>;
 
   /**
    * Records the arrival, stamped with the database clock.

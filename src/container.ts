@@ -67,6 +67,7 @@ import { IProjectsService } from './modules/projects/projects.service.interface'
 import { IPolicyService } from './modules/policy/policy.service.interface';
 import { IProfileService } from './modules/profile/profile.service.interface';
 import { IOtpService } from './modules/auth/otp.service.interface';
+import { BreakRepository } from './modules/attendance/break.repository';
 import { AttendanceRepository } from './modules/attendance/attendance.repository';
 import { AccessService } from './modules/access/access.service';
 import { AuthRepository } from './modules/auth/auth.repository';
@@ -218,6 +219,7 @@ export const createContainer = () => {
           maxAccuracyM: env.geofence.maxAccuracyM,
         }
       : null,
+    new BreakRepository(pool),
   );
   const attendanceController = new AttendanceController(attendanceService);
 

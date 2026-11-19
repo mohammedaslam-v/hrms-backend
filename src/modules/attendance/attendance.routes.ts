@@ -20,6 +20,8 @@ export const createAttendanceRouter = (controller: AttendanceController): Router
   router.get('/me/calendar', controller.getCalendar);
   router.post('/me/check-in', controller.checkIn);
   router.post('/me/check-out', controller.checkOut);
+  router.post('/me/break/start', controller.startBreak);
+  router.post('/me/break/end', controller.endBreak);
 
   // Declared AFTER the /me routes so the literal wins — otherwise ':employeeId'
   // would swallow 'me' and every self request would fail on a bad id.

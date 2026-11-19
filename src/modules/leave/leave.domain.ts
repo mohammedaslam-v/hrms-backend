@@ -113,6 +113,19 @@ export function isSpecialSeniorApprover(employeeId: number, email?: string | nul
 }
 
 /**
+ * People whose OWN leave skips the two-level flow and is decided by HR/admins
+ * only — not by their reporting manager. Kept by id, like the list above.
+ *
+ * Rhea Diwan (id: 5) — Head of Sales. She is the senior Level 2 approver for
+ * Sales and Operations, so routing her own leave through those same levels
+ * made no sense.
+ */
+export const ADMIN_ONLY_LEAVE_EMPLOYEE_IDS: readonly number[] = [5];
+
+export const isAdminOnlyLeave = (employeeId?: number | null): boolean =>
+  employeeId !== null && employeeId !== undefined && ADMIN_ONLY_LEAVE_EMPLOYEE_IDS.includes(employeeId);
+
+/**
  * Sales and Operations: the departments whose leave goes up two levels, and
  * whose people their manager's manager also sees on the Activities tab.
  */
@@ -127,10 +140,13 @@ export function isTwoLevelDepartment(department?: string | null): boolean {
 }
 
 export function isTwoLevelLeave(request: {
+  employeeId?: number | null;
   department?: string | null;
   managerId?: number | null;
   grandManagerId?: number | null;
 }): boolean {
+  // Admin-only people are decided in one step by HR, whatever their department.
+  if (isAdminOnlyLeave(request.employeeId)) return false;
   if (!isTwoLevelDepartment(request.department)) return false;
   return Boolean(request.managerId);
 }

@@ -167,6 +167,26 @@ export interface TodayView {
    * punch from anywhere.
    */
   geofence: GeofencePolicy | null;
+  /** The shift's break hour. Null until checked in for the shift. */
+  break?: BreakView | null;
+}
+
+/** Today's breaks, as the card shows them. Rules: break.domain.ts. */
+export interface BreakView {
+  allowanceMinutes: number;
+  /** Used this shift, a running break counted up to serverTime. */
+  usedMinutes: number;
+  /** 'HH:MM' while on a break, else null. */
+  runningSince: string | null;
+  /** 'HH:MM' the running break stops by itself. */
+  endsBy: string | null;
+  /** "Chrome on Windows" — where the running break must be ended. */
+  startedOn: string | null;
+  /** The running break was started on the device asking. */
+  onThisDevice: boolean;
+  canStart: boolean;
+  /** Why not, when canStart is false and no break is running. */
+  startBlockedReason: string | null;
 }
 
 
