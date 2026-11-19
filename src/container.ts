@@ -212,7 +212,7 @@ export const createContainer = () => {
     leaveService,
     env.geofence.enabled
       ? {
-          office: { lat: env.geofence.lat, lng: env.geofence.lng, radiusM: env.geofence.radiusM },
+          office: { lat: env.geofence.lat, lng: env.geofence.lng, radiusM: env.geofence.radiusM, graceM: env.geofence.officeGraceM },
           homeRadiusM: env.geofence.homeRadiusM,
           graceM: env.geofence.graceM,
           maxAccuracyM: env.geofence.maxAccuracyM,

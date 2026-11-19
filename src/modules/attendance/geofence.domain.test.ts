@@ -225,6 +225,14 @@ describe('hidden grace margin', () => {
     assert.match(message, /within 100 m of/);
     assert.doesNotMatch(message, /200 m/);
   });
+
+  it('lets the office have its own, smaller margin while home keeps the shared one', () => {
+    // Office 100 + 30 = 130 m; home 100 + 100 = 200 m.
+    const own = policyFor('WFO', HOME, { ...CONFIG, office: { ...CONFIG.office, graceM: 30 }, graceM: 100 })!;
+    assert.equal(judgeFix({ ...north(OFFICE, 125), accuracyM: 10 }, own).allowed, true);
+    assert.equal(judgeFix({ ...north(OFFICE, 140), accuracyM: 10 }, own).allowed, false);
+    assert.equal(judgeFix({ ...north(HOME, 190), accuracyM: 10 }, own).allowed, true);
+  });
 });
 
 describe('parseDeviceFix', () => {
