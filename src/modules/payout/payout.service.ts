@@ -184,15 +184,25 @@ export class PayoutService implements IPayoutService {
       };
     }
 
-    // 1. Calculate net salary
+    // 1. Calculate net salary. `month` arrives as YYYY-MM-01 (it is also the
+    // payout's reference_id); the salary engine takes YYYY-MM and falls back to
+    // the CURRENT month for anything else — which would pay the wrong slip.
     const salaryView = await this.salaryService.getMySalary(
       adminId,
       employeeId,
-      month
+      month.slice(0, 7)
     );
     if (!salaryView.slip) {
       throw ApiError.badRequest(
         `Could not generate salary slip for ${meta.fullName} for ${month}`
+      );
+    }
+    // Dummy pay was loaded so every compensation card has something to edit.
+    // It must never reach a bank account: the bulk push reports this as a
+    // failed row and carries on with everyone else.
+    if (salaryView.isPlaceholderPay) {
+      throw ApiError.badRequest(
+        `${meta.fullName}'s salary is still a placeholder. Enter the real compensation on their page before paying.`
       );
     }
     const netPay = salaryView.slip.netPay;
@@ -234,6 +244,14 @@ export class PayoutService implements IPayoutService {
       failureDescription: null,
       failureSource: null,
       idempotencyKey,
+    });
+
+    // Saved before any money moves: the next month's arrears or recovery is
+    // measured against exactly what this slip deducted and paid back.
+    await this.payoutRepository.saveSalarySnapshot(record.id, {
+      lopDays: salaryView.slip.lopDays,
+      lopRate: salaryView.slip.lopRate,
+      arrearsAmount: salaryView.slip.earnings.arrears,
     });
 
     // 4. Send to Razorpay

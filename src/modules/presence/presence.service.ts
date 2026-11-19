@@ -1,5 +1,6 @@
 import { IAccessService } from '../access/access.service.interface';
 import { IAttendanceRepository } from '../attendance/attendance.repository.interface';
+import { addDays, crossesMidnight, eachDate } from '../attendance/attendance.domain';
 import { IAuthService } from '../auth/auth.service.interface';
 import { IOrgRepository } from '../org/org.repository.interface';
 import { ApiError } from '../../utils/api-error';
@@ -14,6 +15,7 @@ import {
 } from './presence.domain';
 import { AdminPanelActivity, AdminPanelDay, PresenceBoard, PresenceCount, PresenceSummary } from './presence.model';
 import { BoardMember, buildBoard } from './presence.board';
+import { HOURLY_PANEL_FROM, nightShiftDays } from './presence.night';
 import { IPresenceRepository } from './presence.repository.interface';
 import { IPresenceService } from './presence.service.interface';
 
@@ -137,32 +139,47 @@ export class PresenceService implements IPresenceService {
   ): Promise<PresenceBoard> {
     const ids = members.map((m) => m.employeeId);
     const now = await this.attendanceRepository.now();
-    const [adminOf, context, schedules, unlinked] = await Promise.all([
+    const yesterday = addDays(now.date, -1);
+
+    const [adminOf, contextToday, contextYesterday, schedules, unlinked] = await Promise.all([
       this.repository.findAdminIdMap(ids),
       this.attendanceRepository.findDayContextFor(ids, now.date),
+      this.attendanceRepository.findDayContextFor(ids, yesterday),
       // Weekly offs, so the Active tab can leave out people not expected today.
       this.attendanceRepository.findSchedulesFor(ids),
       this.repository.findUnlinkedSeen(UNLINKED_WITHIN_DAYS),
     ]);
     const adminIds = [...new Set(adminOf.values())];
 
-
     const [latest, roleOf, days] = await Promise.all([
       this.repository.findLatestForMany(adminIds),
       this.repository.findAdminRoles(adminIds),
-      // Today's total on the panel, for linked and unlinked accounts alike.
-      this.repository.findDaysForMany([...adminIds, ...unlinked.map((u) => u.admin_id)], now.date, now.date),
+      // Today and yesterday totals on the panel, so night shifts spanning two calendar days don't reset at midnight.
+      this.repository.findDaysForMany([...adminIds, ...unlinked.map((u) => u.admin_id)], yesterday, now.date),
     ]);
-    const activeSecondsOf = new Map(
-      [...days].map(([adminId, list]) => [adminId, list.reduce((s, d) => s + d.activeSeconds, 0)]),
-    );
+    const activeSecondsOf = new Map<number, Map<string, number>>();
+    for (const [adminId, list] of days) {
+      const byDate = new Map<string, number>();
+      for (const d of list) {
+        byDate.set(d.date, d.activeSeconds);
+      }
+      activeSecondsOf.set(adminId, byDate);
+    }
 
-    const leaveOf = new Map<number, { type: string; isHalfDay: boolean }>();
+    const leaveTodayOf = new Map<number, { type: string; isHalfDay: boolean }>();
+    const leaveYesterdayOf = new Map<number, { type: string; isHalfDay: boolean }>();
     let holidayToday: string | null = null;
-    for (const [employeeId, day] of context) {
-      if (day.leave) leaveOf.set(employeeId, { type: day.leave.type, isHalfDay: day.leave.isHalfDay });
+    let holidayYesterday: string | null = null;
+
+    for (const [employeeId, day] of contextToday) {
+      if (day.leave) leaveTodayOf.set(employeeId, { type: day.leave.type, isHalfDay: day.leave.isHalfDay });
       holidayToday ??= day.holidayName;
     }
+    for (const [employeeId, day] of contextYesterday) {
+      if (day.leave) leaveYesterdayOf.set(employeeId, { type: day.leave.type, isHalfDay: day.leave.isHalfDay });
+      holidayYesterday ??= day.holidayName;
+    }
+
     const weeklyOffOf = new Map([...schedules].map(([id, s]) => [id, s.weeklyOff]));
 
     return buildBoard({
@@ -170,13 +187,16 @@ export class PresenceService implements IPresenceService {
       time: now.time,
       weeklyOffOf,
       holidayToday,
+      holidayYesterday,
       viewerId,
       viewerAdminIds,
       members,
       adminOf,
       roleOf,
       latest,
-      leaveOf,
+      leaveOf: leaveTodayOf,
+      leaveTodayOf,
+      leaveYesterdayOf,
       unlinked,
       activeSecondsOf,
     });
@@ -221,7 +241,8 @@ export class PresenceService implements IPresenceService {
       this.repository.findDays(adminId, from, to),
       this.repository.findLatest(adminId),
     ]);
-    return { linked: true, days, now: latest ? nowFrom(latest) : null };
+    const byAdmin = await this.withNightShifts(new Map([[subjectId, adminId]]), from, to, new Map([[adminId, days]]));
+    return { linked: true, days: byAdmin.get(adminId) ?? [], now: latest ? nowFrom(latest) : null };
   }
 
   async adminPanelForReport(
@@ -230,10 +251,52 @@ export class PresenceService implements IPresenceService {
     to: string,
   ): Promise<Map<number, Map<string, AdminPanelDay>>> {
     const adminOf = await this.repository.findAdminIdMap(employeeIds);
-    const days = await this.repository.findDaysForMany([...new Set(adminOf.values())], from, to);
+    const days = await this.withNightShifts(
+      adminOf,
+      from,
+      to,
+      await this.repository.findDaysForMany([...new Set(adminOf.values())], from, to),
+    );
     const result = new Map<number, Map<string, AdminPanelDay>>();
     for (const [employeeId, adminId] of adminOf) {
       result.set(employeeId, new Map((days.get(adminId) ?? []).map((d) => [d.date, d])));
+    }
+    return result;
+  }
+
+  /**
+   * For people whose shift crosses midnight, each shift date's panel time is
+   * rebuilt from the hourly table (see presence.night.ts). Day shifts and dates
+   * before HOURLY_PANEL_FROM keep the calendar-day rows.
+   */
+  private async withNightShifts(
+    adminOf: Map<number, number>,
+    from: string,
+    to: string,
+    days: Map<number, AdminPanelDay[]>,
+  ): Promise<Map<number, AdminPanelDay[]>> {
+    if (to < HOURLY_PANEL_FROM || adminOf.size === 0) return days;
+    const schedules = await this.attendanceRepository.findSchedulesFor([...adminOf.keys()]);
+    const night = [...adminOf].filter(([employeeId]) => {
+      const s = schedules.get(employeeId);
+      return s ? crossesMidnight(s.shiftStart, s.shiftEnd) : false;
+    });
+    if (night.length === 0) return days;
+
+    // A night window runs from the start date into the next morning.
+    const hours = await this.repository.findHoursForMany(
+      [...new Set(night.map(([, adminId]) => adminId))],
+      `${addDays(from, -1)} 00:00`,
+      `${addDays(to, 2)} 00:00`,
+    );
+    const dates = eachDate(from, to);
+    const result = new Map(days);
+    for (const [employeeId, adminId] of night) {
+      const s = schedules.get(employeeId)!;
+      result.set(
+        adminId,
+        nightShiftDays(dates, s.shiftStart, s.shiftEnd, days.get(adminId) ?? [], hours.get(adminId) ?? []),
+      );
     }
     return result;
   }

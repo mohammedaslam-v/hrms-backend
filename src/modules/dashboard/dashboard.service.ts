@@ -1,10 +1,13 @@
 import {
   attendanceOf,
   EMPTY_SLOTS,
+  isMarkedOff,
+  isMarkedWorking,
   readDayAsObserved,
   slotsForShiftDay,
   type DayAttendance,
   type SlotMask,
+  punchOf,
 } from '../attendance/attendance.domain';
 import type {
   AttendanceRecord,
@@ -172,7 +175,7 @@ export class DashboardService implements IDashboardService {
       : EMPTY_SLOTS;
 
     const stored = punches.get(employeeId);
-    const punch = stored?.loginAt ? { loginAt: stored.loginAt, logoutAt: stored.logoutAt } : null;
+    const punch = punchOf(stored);
     const readAsObserved = readDayAsObserved(observed, mask, Boolean(punch));
     const dayContext = context.get(employeeId);
 
@@ -183,6 +186,8 @@ export class DashboardService implements IDashboardService {
       // as a finished day with nothing on it.
       today: date,
       weeklyOff: schedule.weeklyOff,
+      markedOff: isMarkedOff(stored),
+      markedWorking: isMarkedWorking(stored),
       holidayName: dayContext?.holidayName ?? null,
       leave: dayContext?.leave ?? null,
       punch: readAsObserved ? null : punch,

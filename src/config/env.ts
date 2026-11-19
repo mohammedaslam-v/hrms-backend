@@ -78,6 +78,14 @@ export const env = {
     .filter(Boolean),
   corsOrigin: required('CORS_ORIGIN', 'http://localhost:5173'),
   /**
+   * The key salary figures are encrypted with: 32 random bytes, base64.
+   * Required, with no fallback — without it no salary can be read or saved, so
+   * the server refuses to start rather than fail on the first payslip.
+   * Each environment has its own key; losing the live one loses every salary,
+   * so a copy is kept outside the server. Never commit it.
+   */
+  compensationEncKey: required('COMPENSATION_ENC_KEY'),
+  /**
    * Shared secret for server-to-server calls (admin-backend punching the signed-in
    * admin's own attendance from the admin panel header). Sent in `x-internal-key`.
    * Empty means the internal routes are switched off — they fail closed.
@@ -99,9 +107,9 @@ export const env = {
     // Hidden margin for GPS drift, added to both radii but never shown, so the
     // check allows 500 + 300 = 800 m.
     graceM: Number.parseFloat(process.env.GEOFENCE_GRACE_M ?? '300'),
-    // A reading vaguer than ±this is "not precise enough". 150 lets ordinary
-    // indoor phone and laptop readings through; IP-only guesses (±1 km+) still fail.
-    maxAccuracyM: Number.parseFloat(process.env.OFFICE_MAX_ACCURACY_M ?? '150'),
+    // A reading vaguer than ±this is "not precise enough". 200 lets ordinary
+    // indoor phone and laptop Wi-Fi readings through; IP-only guesses (±1 km+) still fail.
+    maxAccuracyM: Number.parseFloat(process.env.OFFICE_MAX_ACCURACY_M ?? '200'),
   },
 } as const;
 

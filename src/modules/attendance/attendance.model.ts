@@ -39,6 +39,8 @@ export interface WorkSchedule {
   shiftEnd: string;
   weeklyOff: string[];
   dateOfLeaving: string | null;
+  /** `hrms_employees.department`. Decides whether the productivity rule applies. */
+  department?: string | null;
   /**
    * `admins.role` — CSR, SSM, Admin and so on. Null for the one employee with
    * no `admins` row. Read against ACTIVITY_MEASURED_ROLES in attendance.config
@@ -50,6 +52,11 @@ export interface WorkSchedule {
   /** `hrms_employees.home_lat/home_lng`. Null until saved. */
   homeLat: number | null;
   homeLng: number | null;
+  /** The admin's switch for home. Off: the saved point does not count. */
+  homeEnabled: boolean;
+  /** The second location — null when the admin has it off, or it is not saved. */
+  secondLat: number | null;
+  secondLng: number | null;
 }
 
 /**
@@ -68,6 +75,7 @@ export interface CheckInInput {
   loginAt: string;
   status: AttendanceStatus;
   lateByMinutes: number;
+  leaveType?: LeaveType | string | null;
 }
 
 /** A whole day as an admin decided it, written with source = 'manual'. */
@@ -93,6 +101,7 @@ export const DAY_EDIT_STATUSES = [
   'Unpaid half day',
   'LOP full day',
   'LOP half day',
+  'Weekly off',
 ] as const;
 export type DayEditStatus = (typeof DAY_EDIT_STATUSES)[number];
 
@@ -182,6 +191,7 @@ export interface TodayBoardRow {
   shiftEnd: string;
   loginAt: string | null;
   logoutAt: string | null;
+  recheckInAt?: string | null;
   activeHours: number;
   lateByMinutes: number;
   status: AttendanceStatus;
@@ -206,6 +216,7 @@ export interface AttendanceRangeRow {
   shiftEnd: string;
   loginAt: string | null;
   logoutAt: string | null;
+  recheckInAt?: string | null;
   activeHours: number;
   lateByMinutes: number;
   status: AttendanceStatus;

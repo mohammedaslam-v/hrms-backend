@@ -28,6 +28,8 @@ export interface RosterMember extends TeamMember {
   dateOfJoining: string;
   /** Null while they are still with the company. */
   dateOfLeaving: string | null;
+  /** Employee, Probation or Contractor — the directory's Type filter. */
+  employmentType?: 'Employee' | 'Probation' | 'Contractor' | null;
 }
 
 /** Whose roster to build, and whether people who have left are included. */
@@ -41,4 +43,6 @@ export interface RosterScope {
   rootId: number | null;
   /** The directory's Active / Exited filter needs both. Defaults to false. */
   includeLeavers?: boolean;
+  /** Maximum reporting levels to walk below rootId. Defaults to MAX_REPORTING_DEPTH (10). */
+  maxDepth?: number;
 }

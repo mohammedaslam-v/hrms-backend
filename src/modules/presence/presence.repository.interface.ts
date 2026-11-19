@@ -1,5 +1,6 @@
 import {
   AdminPanelDay,
+  PanelHour,
   LatestPresenceForAdmin,
   LatestPresenceRow,
   PresenceRow,
@@ -45,6 +46,9 @@ export interface IPresenceRepository {
 
   /** Several admins' days at once: admin id → their days. */
   findDaysForMany(adminIds: number[], from: string, to: string): Promise<Map<number, AdminPanelDay[]>>;
+
+  /** Several admins' hourly panel time, hour_start in [from, to): admin id → hours. */
+  findHoursForMany(adminIds: number[], from: string, to: string): Promise<Map<number, PanelHour[]>>;
 
   /** Latest presence for several admins, however long ago: admin id → row. */
   findLatestForMany(adminIds: number[]): Promise<Map<number, LatestPresenceForAdmin>>;

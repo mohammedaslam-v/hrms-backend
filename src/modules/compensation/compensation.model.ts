@@ -25,4 +25,19 @@ export interface CompensationRecord {
   createdAt: string;
   /** Monthly components HR set by hand; null means use the formula. */
   components?: SalaryComponents | null;
+  /**
+   * A dummy figure loaded so every card has something to edit, not real pay.
+   * Payouts refuse to run on it.
+   */
+  isPlaceholder?: boolean;
 }
+
+/**
+ * The sensitive part of a revision — everything that is encrypted into
+ * `payload_enc`. The rest of the row (who, which date, when written) stays
+ * readable so a person's history can still be found and ordered.
+ */
+export type CompensationFigures = Pick<
+  CompensationRecord,
+  'ctc' | 'variablePay' | 'bonus' | 'esopUnits' | 'esopVestedPct' | 'revisionNote'
+> & { components: SalaryComponents | null };

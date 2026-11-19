@@ -43,10 +43,16 @@ interface RequestRow extends RowDataPacket {
   status: LeaveStatus;
   reason: string;
   applied_on: string;
+  decision_note?: string | null;
   decided_by_name: string | null;
   employee_name?: string | null;
   employee_code?: string | null;
   designation?: string | null;
+  department?: string | null;
+  manager_id?: number | null;
+  direct_manager_name?: string | null;
+  grand_manager_id?: number | null;
+  grand_manager_name?: string | null;
 }
 
 interface SumRow extends RowDataPacket {
@@ -55,8 +61,9 @@ interface SumRow extends RowDataPacket {
 
 const REQUEST_COLUMNS = `l.id, l.employee_id, l.ref, l.leave_type, l.from_date, l.to_date,
   l.days, l.unpaid_days, l.is_half_day, l.half_day_session,
-  l.status, l.reason, l.applied_on, d.full_name AS decided_by_name,
-  e.full_name AS employee_name, e.employee_code, e.designation`;
+  l.status, l.reason, l.applied_on, l.decision_note, d.full_name AS decided_by_name,
+  e.full_name AS employee_name, e.employee_code, e.designation, e.department, e.manager_id,
+  m.full_name AS direct_manager_name, m.manager_id AS grand_manager_id, gm.full_name AS grand_manager_name`;
 
 const mapRequest = (row: RequestRow): StoredLeaveRequest => ({
   id: row.id,
@@ -64,6 +71,12 @@ const mapRequest = (row: RequestRow): StoredLeaveRequest => ({
   employeeName: row.employee_name ?? undefined,
   employeeCode: row.employee_code ?? undefined,
   designation: row.designation ?? null,
+  department: row.department ?? null,
+  managerId: row.manager_id != null && Number(row.manager_id) > 0 ? Number(row.manager_id) : null,
+  directManagerName: row.direct_manager_name ?? null,
+  grandManagerId: row.grand_manager_id != null && Number(row.grand_manager_id) > 0 ? Number(row.grand_manager_id) : null,
+  grandManagerName: row.grand_manager_name ?? null,
+  decisionNote: row.decision_note ?? null,
   ref: row.ref,
   leaveType: row.leave_type,
   fromDate: row.from_date,
@@ -114,6 +127,17 @@ export class LeaveRepository implements ILeaveRepository {
     return rows.map((r) => ({ date: r.holiday_date, name: r.name }));
   }
 
+  async findMarkedWorkingDates(employeeId: number, from: string, to: string): Promise<Set<string>> {
+    const [rows] = await this.pool.query<RowDataPacket[]>(
+      `SELECT DATE_FORMAT(att_date, '%Y-%m-%d') AS d
+         FROM hrms_attendance
+        WHERE employee_id = ? AND att_date BETWEEN ? AND ?
+          AND source = 'manual' AND status <> 'Weekly off'`,
+      [employeeId, from, to],
+    );
+    return new Set(rows.map((r) => String(r.d)));
+  }
+
   async findLeaveContext(employeeId: number): Promise<LeaveContext | null> {
     const [rows] = await this.pool.execute<ContextRow[]>(
       `SELECT id, opening_leave, date_of_joining, date_of_leaving, weekly_off
@@ -142,6 +166,8 @@ export class LeaveRepository implements ILeaveRepository {
          FROM hrms_leave_requests l
          LEFT JOIN hrms_employees e ON e.id = l.employee_id
          LEFT JOIN hrms_employees d ON d.id = l.decided_by
+         LEFT JOIN hrms_employees m ON m.id = e.manager_id
+         LEFT JOIN hrms_employees gm ON gm.id = m.manager_id
         WHERE l.employee_id = ? AND l.from_date <= ? AND l.to_date >= ?
         ORDER BY l.from_date DESC, l.id DESC`,
       [employeeId, yearEnd, yearStart],
@@ -167,6 +193,8 @@ export class LeaveRepository implements ILeaveRepository {
          FROM hrms_leave_requests l
          LEFT JOIN hrms_employees e ON e.id = l.employee_id
          LEFT JOIN hrms_employees d ON d.id = l.decided_by
+         LEFT JOIN hrms_employees m ON m.id = e.manager_id
+         LEFT JOIN hrms_employees gm ON gm.id = m.manager_id
         WHERE l.employee_id = ?
           AND l.status IN ('Pending','Approved')
           AND l.from_date <= ? AND l.to_date >= ?
@@ -187,6 +215,8 @@ export class LeaveRepository implements ILeaveRepository {
          FROM hrms_leave_requests l
          LEFT JOIN hrms_employees e ON e.id = l.employee_id
          LEFT JOIN hrms_employees d ON d.id = l.decided_by
+         LEFT JOIN hrms_employees m ON m.id = e.manager_id
+         LEFT JOIN hrms_employees gm ON gm.id = m.manager_id
         WHERE l.employee_id = ?
           AND l.status IN ('Pending','Approved')
           AND l.id != ?
@@ -378,6 +408,8 @@ export class LeaveRepository implements ILeaveRepository {
          FROM hrms_leave_requests l
          LEFT JOIN hrms_employees e ON e.id = l.employee_id
          LEFT JOIN hrms_employees d ON d.id = l.decided_by
+         LEFT JOIN hrms_employees m ON m.id = e.manager_id
+         LEFT JOIN hrms_employees gm ON gm.id = m.manager_id
         WHERE l.id = ?`,
       [requestId],
     );
@@ -406,6 +438,87 @@ export class LeaveRepository implements ILeaveRepository {
     );
   }
 
+  async deleteRequest(requestId: number): Promise<void> {
+    await this.pool.execute(`DELETE FROM hrms_leave_requests WHERE id = ?`, [requestId]);
+  }
+
+  async restoreAttendanceAfterLeaveDeleted(
+    employeeId: number,
+    fromDate: string,
+    toDate: string,
+    ref: string,
+    adminId: number,
+  ): Promise<{ removed: number; detached: number }> {
+    // Two kinds of row carry an approved leave into attendance:
+    //
+    //  1. a manual marker with no punch — written by the attendance calendar
+    //     edit, or by clearAttendanceForLeaveDates() when a leave was laid over
+    //     a punched day. With the leave gone the marker says nothing true, and
+    //     left behind it would turn the person's weekly off into a working day
+    //     (isMarkedWorking), so it is removed. The day then derives from
+    //     weekly off / holiday / absence as if the leave had never been.
+    //
+    //  2. a punched half day that was labelled with the leave's type. The
+    //     punch is real and stays; only the leave label comes off. Status is
+    //     derived on read, so nothing else needs rewriting.
+    //
+    // A punched 'Leave' row is never touched: that shape is the attendance
+    // module's own auto-closed missed check-out, not something a request wrote.
+    const [markers] = await this.pool.query<RowDataPacket[]>(
+      `SELECT * FROM hrms_attendance
+        WHERE employee_id = ?
+          AND att_date BETWEEN ? AND ?
+          AND source = 'manual'
+          AND status IN ('Leave', 'Half day')
+          AND login_at IS NULL`,
+      [employeeId, fromDate, toDate],
+    );
+
+    for (const row of markers) {
+      await this.pool.execute(`DELETE FROM hrms_attendance WHERE id = ?`, [row.id]);
+      await recordAudit(this.pool, {
+        actorEmployeeId: adminId,
+        action: 'attendance.removed_for_deleted_leave',
+        entityType: 'hrms_attendance',
+        entityId: row.id,
+        before: row,
+        after: { deleted: true, leaveRef: ref },
+      });
+    }
+
+    const [punched] = await this.pool.query<RowDataPacket[]>(
+      `SELECT * FROM hrms_attendance
+        WHERE employee_id = ?
+          AND att_date BETWEEN ? AND ?
+          AND status = 'Half day'
+          AND login_at IS NOT NULL
+          AND leave_type IS NOT NULL`,
+      [employeeId, fromDate, toDate],
+    );
+
+    const marker = `[Leave ${ref} deleted]`;
+    for (const row of punched) {
+      await this.pool.execute(
+        `UPDATE hrms_attendance
+            SET leave_type = NULL,
+                edited_by = ?,
+                edit_note = LEFT(CONCAT(COALESCE(edit_note, ''), ' ', ?), 255)
+          WHERE id = ?`,
+        [adminId, marker, row.id],
+      );
+      await recordAudit(this.pool, {
+        actorEmployeeId: adminId,
+        action: 'attendance.leave_detached',
+        entityType: 'hrms_attendance',
+        entityId: row.id,
+        before: row,
+        after: { leave_type: null, leaveRef: ref },
+      });
+    }
+
+    return { removed: markers.length, detached: punched.length };
+  }
+
   // ---------------------------------------------------------------- approvals
 
   async findPendingForEmployees(employeeIds?: number[]): Promise<StoredLeaveRequest[]> {
@@ -421,6 +534,8 @@ export class LeaveRepository implements ILeaveRepository {
          FROM hrms_leave_requests l
          LEFT JOIN hrms_employees e ON e.id = l.employee_id
          LEFT JOIN hrms_employees d ON d.id = l.decided_by
+         LEFT JOIN hrms_employees m ON m.id = e.manager_id
+         LEFT JOIN hrms_employees gm ON gm.id = m.manager_id
         ${where}
         ORDER BY l.from_date ASC, l.id ASC`,
       params,
@@ -432,7 +547,7 @@ export class LeaveRepository implements ILeaveRepository {
     employeeIds: number[] | undefined,
     yearStart: string,
     yearEnd: string,
-    limit: number,
+    limit?: number,
   ): Promise<StoredLeaveRequest[]> {
     if (employeeIds && employeeIds.length === 0) return [];
     const hasIds = Array.isArray(employeeIds) && employeeIds.length > 0;
@@ -440,20 +555,32 @@ export class LeaveRepository implements ILeaveRepository {
     const where = hasIds
       ? `WHERE l.employee_id IN (${placeholders}) AND l.from_date <= ? AND l.to_date >= ?`
       : `WHERE l.from_date <= ? AND l.to_date >= ?`;
-    const params = hasIds
-      ? [...employeeIds, yearEnd, yearStart, limit]
-      : [yearEnd, yearStart, limit];
+    const params: (number | string)[] = hasIds
+      ? [...employeeIds, yearEnd, yearStart]
+      : [yearEnd, yearStart];
+    if (limit !== undefined) params.push(limit);
     const [rows] = await this.pool.query<RequestRow[]>(
       `SELECT ${REQUEST_COLUMNS}
          FROM hrms_leave_requests l
          LEFT JOIN hrms_employees e ON e.id = l.employee_id
          LEFT JOIN hrms_employees d ON d.id = l.decided_by
+         LEFT JOIN hrms_employees m ON m.id = e.manager_id
+         LEFT JOIN hrms_employees gm ON gm.id = m.manager_id
         ${where}
         ORDER BY l.from_date DESC, l.id DESC
-        LIMIT ?`,
+        ${limit !== undefined ? 'LIMIT ?' : ''}`,
       params,
     );
     return rows.map(mapRequest);
+  }
+
+  async updatePendingProgress(requestId: number, note: string): Promise<void> {
+    await this.pool.execute(
+      `UPDATE hrms_leave_requests
+          SET decision_note = ?
+        WHERE id = ? AND status = 'Pending'`,
+      [note, requestId],
+    );
   }
 
   /**
@@ -516,6 +643,41 @@ export class LeaveRepository implements ILeaveRepository {
       fromDate: String(r.from_date).slice(0, 10),
       toDate: String(r.to_date).slice(0, 10),
     }));
+  }
+
+  async findAllManagers(): Promise<string[]> {
+    try {
+      const [rows] = await this.pool.query<RowDataPacket[]>(
+        `SELECT DISTINCT full_name AS manager_name
+           FROM hrms_employees
+          WHERE (date_of_leaving IS NULL OR date_of_leaving >= CURDATE())
+            AND (
+              id IN (SELECT DISTINCT manager_id FROM hrms_employees WHERE manager_id IS NOT NULL)
+              OR designation LIKE '%Manager%'
+              OR designation LIKE '%Lead%'
+              OR designation LIKE '%Head%'
+              OR designation LIKE '%Director%'
+              OR designation LIKE '%VP%'
+              OR designation LIKE '%Chief%'
+              OR designation LIKE '%Founder%'
+            )
+          ORDER BY full_name`,
+      );
+      return rows
+        .map((r) => (r.manager_name ? String(r.manager_name).trim() : ''))
+        .filter(Boolean);
+    } catch {
+      const [rows] = await this.pool.query<RowDataPacket[]>(
+        `SELECT DISTINCT m.full_name AS manager_name
+           FROM hrms_employees e
+           JOIN hrms_employees m ON m.id = e.manager_id
+          WHERE m.full_name IS NOT NULL AND TRIM(m.full_name) != ''
+          ORDER BY m.full_name`,
+      );
+      return rows
+        .map((r) => (r.manager_name ? String(r.manager_name).trim() : ''))
+        .filter(Boolean);
+    }
   }
 
   async recordAudit(

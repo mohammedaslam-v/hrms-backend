@@ -2,7 +2,7 @@ import { Pool, RowDataPacket } from 'mysql2/promise';
 import { IOrgRepository } from './org.repository.interface';
 import { RosterMember, RosterScope, TeamMember } from './org.model';
 import { WorkMode } from '../profile/profile.model';
-import { REPORTING_TREE_CTE, reportingTreeParams } from './reporting-tree.sql';
+import { REPORTING_TREE_CTE, reportingTreeCte, reportingTreeParams } from './reporting-tree.sql';
 
 interface TreeRow extends RowDataPacket {
   id: number;
@@ -21,6 +21,7 @@ interface RosterRow extends TreeRow {
   weekly_off: string | null;
   date_of_joining: string;
   date_of_leaving: string | null;
+  employment_type: 'Employee' | 'Probation' | 'Contractor' | null;
 }
 
 const stillHere = (includeLeavers: boolean, hasDeleted: boolean): string => {
@@ -78,7 +79,7 @@ export class OrgRepository implements IOrgRepository {
     const columns = `e.id, e.employee_code, e.full_name, e.designation, e.department, e.manager_id,
               m.full_name AS manager_name,
               e.work_mode, e.shift_start, e.shift_end, e.weekly_off,
-              e.date_of_joining, e.date_of_leaving`;
+              e.date_of_joining, e.date_of_leaving, e.employment_type`;
 
     const [rows] = scope.rootId === null
       ? await this.pool.execute<RosterRow[]>(
@@ -89,7 +90,7 @@ export class OrgRepository implements IOrgRepository {
             ORDER BY e.full_name`,
         )
       : await this.pool.execute<RosterRow[]>(
-          `${REPORTING_TREE_CTE}
+          `${reportingTreeCte(scope.maxDepth)}
            SELECT DISTINCT ${columns}
              FROM hrms_employees e
              JOIN tree ON tree.id = e.id
@@ -113,6 +114,7 @@ export class OrgRepository implements IOrgRepository {
       weeklyOff: row.weekly_off ? row.weekly_off.split(',').filter(Boolean) : [],
       dateOfJoining: row.date_of_joining,
       dateOfLeaving: row.date_of_leaving,
+      employmentType: row.employment_type ?? null,
     }));
   }
 

@@ -56,7 +56,33 @@ export type AttendanceStatus =
 export interface Punch {
   loginAt: string;
   logoutAt: string | null;
+  /**
+   * How late the check-in was against the shift in force THAT day, as stored
+   * on the row. Set, it is used as is, so changing someone's shift later never
+   * re-judges their past days. Absent, lateness is measured against the
+   * current shift (a punch being made now, or a row with no stored figure).
+   */
+  lateByMinutes?: number;
 }
+
+/** A stored row as a punch, carrying the lateness it was recorded with. */
+export function punchOf(
+  record: { loginAt: string | null; logoutAt: string | null; lateByMinutes?: number | null; source?: string } | null | undefined,
+): Punch | null {
+  if (!record?.loginAt) return null;
+  // Only rows written by a check-in or an admin's edit carry a lateness that
+  // was measured; anything else is re-measured as before.
+  const measured = record.source === 'app' || record.source === 'manual';
+  return {
+    loginAt: record.loginAt,
+    logoutAt: record.logoutAt,
+    ...(measured && record.lateByMinutes != null ? { lateByMinutes: record.lateByMinutes } : {}),
+  };
+}
+
+/** The punch's lateness: as recorded if it was, else against `shiftStart`. */
+export const lateOf = (punch: Punch, shiftStart: string): number =>
+  punch.lateByMinutes ?? minutesLate(punch.loginAt, shiftStart);
 
 export interface DayFacts {
   date: string;
@@ -66,6 +92,17 @@ export interface DayFacts {
    */
   today: string;
   weeklyOff: string[];
+  /**
+   * An admin set this one date to a weekly off from the calendar, whatever the
+   * person's usual off days are. See `isMarkedOff`.
+   */
+  markedOff?: boolean;
+  /**
+   * An admin set this date, one of the person's usual off days, to something
+   * other than a weekly off — they came in, or it is leave. The edit wins over
+   * the schedule. See `isMarkedWorking`.
+   */
+  markedWorking?: boolean;
   /** Set only when HR has declared a company-wide closure. Normally null. */
   holidayName: string | null;
   /** Approved leave covering this day, if any. */
@@ -82,6 +119,8 @@ export interface DayFacts {
   slots?: SlotMask | null;
   shiftStart: string;
   lateGraceMinutes: number;
+  lateHalfDayMinutes?: number;
+  recheckInAt?: string | null;
 }
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
@@ -256,6 +295,17 @@ export function minutesLate(loginAt: string, shiftStart: string): number {
  */
 export const isLate = (lateByMinutes: number, lateGraceMinutes: number): boolean =>
   lateByMinutes > lateGraceMinutes;
+
+/**
+ * A check-in 25 minutes or more past shift start is treated as Half day.
+ * It triggers a 0.5 day leave deduction (or 0.5 day LOP if leave balance is exhausted).
+ */
+export const LATE_HALF_DAY_MINUTES = 25;
+
+export const isHalfDayLate = (
+  lateByMinutes: number,
+  cutoffMinutes = LATE_HALF_DAY_MINUTES,
+): boolean => lateByMinutes >= cutoffMinutes;
 
 // -------------------------------------------------------------- active hours
 
@@ -478,8 +528,9 @@ export function resolveDayStatus(facts: DayFacts): AttendanceStatus {
   if (facts.holidayName) return 'Holiday';
 
   // A punch on a weekly off still records its hours — see attendanceOf() — but
-  // the day is reported as the off day it was.
-  if (isWeeklyOff(facts.date, facts.weeklyOff)) return 'Weekly off';
+  // the day is reported as the off day it was, unless an admin edited it.
+  if (facts.markedOff) return 'Weekly off';
+  if (!facts.markedWorking && isWeeklyOff(facts.date, facts.weeklyOff)) return 'Weekly off';
 
   if (facts.leave) return facts.leave.isHalfDay ? 'Half day' : 'Leave';
 
@@ -491,7 +542,10 @@ export function resolveDayStatus(facts: DayFacts): AttendanceStatus {
   }
 
   if (facts.punch) {
-    const late = minutesLate(facts.punch.loginAt, facts.shiftStart);
+    const late = lateOf(facts.punch, facts.shiftStart);
+    if (isHalfDayLate(late, facts.lateHalfDayMinutes ?? LATE_HALF_DAY_MINUTES)) {
+      return 'Half day';
+    }
     return isLate(late, facts.lateGraceMinutes) ? 'Late' : 'On time';
   }
 
@@ -500,6 +554,35 @@ export function resolveDayStatus(facts: DayFacts): AttendanceStatus {
 
   return 'Absent';
 }
+
+/**
+ * A stored row that makes its date a weekly off: one an admin saved by hand as
+ * 'Weekly off'. Nothing else writes that status, so an app or imported row can
+ * never turn a working day into an off day.
+ */
+export const isMarkedOff = (
+  record: { source: string; status: string } | null | undefined,
+): boolean => record?.source === 'manual' && record.status === 'Weekly off';
+
+/**
+ * A stored row an admin saved by hand as anything but 'Weekly off'. On one of
+ * the person's usual off days it makes the date a working day (or leave), so
+ * the calendar shows what the admin set rather than WO.
+ */
+export const isMarkedWorking = (
+  record: { source: string; status: string } | null | undefined,
+): boolean => record?.source === 'manual' && record.status !== 'Weekly off';
+
+/**
+ * Whether a date is an off day for punching — the same rule resolveDayStatus
+ * uses: an admin's 'Weekly off' row makes it one, an admin's working row on a
+ * usual off day unmakes it, otherwise the person's weekly off decides.
+ */
+export const isOffDay = (
+  date: string,
+  weeklyOff: string[],
+  record: { source: string; status: string } | null | undefined,
+): boolean => isMarkedOff(record) || (!isMarkedWorking(record) && isWeeklyOff(date, weeklyOff));
 
 export interface DayAttendance {
   date: string;
@@ -522,6 +605,13 @@ export interface DayAttendance {
    * them and observed days ahead, and the chart should not pretend otherwise.
    */
   source: DaySource;
+  /**
+   * The kind of leave behind a 'Leave' or 'Half day', so the calendar can tell
+   * earned leave from loss of pay. Null on every other day.
+   */
+  leaveType: LeaveType | null;
+  /** Re-check-in time as 'HH:MM' when the employee checked back in after checking out. */
+  recheckInAt?: string | null;
 }
 
 /** How one day's hours were arrived at. */
@@ -530,6 +620,8 @@ export type DaySource = 'punch' | 'activity';
 /** A whole day resolved: its status and its numbers, from one set of facts. */
 export function attendanceOf(facts: DayFacts): DayAttendance {
   const status = resolveDayStatus(facts);
+  const leaveType = status === 'Leave' || status === 'Half day' ? (facts.leave?.type ?? null) : null;
+  const recheckInAt = facts.recheckInAt ?? null;
 
   // Observed. First and last seen stand in for the punches, so every screen
   // downstream keeps one shape; hours come from the slots, and lateness is
@@ -546,6 +638,8 @@ export function attendanceOf(facts: DayFacts): DayAttendance {
       // Walked from the shift's own start, so a night reads forwards.
       segments: segmentsOf(facts.slots, slotOf(facts.shiftStart)),
       source: 'activity',
+      leaveType,
+      recheckInAt,
     };
   }
 
@@ -557,11 +651,13 @@ export function attendanceOf(facts: DayFacts): DayAttendance {
     // Hours and lateness come from the punch whatever the status says, so a
     // Saturday shift or a half day worked around leave is never invisible.
     activeHours: facts.punch ? activeHours(facts.punch) : 0,
-    lateByMinutes: facts.punch ? minutesLate(facts.punch.loginAt, facts.shiftStart) : 0,
+    lateByMinutes: facts.punch ? lateOf(facts.punch, facts.shiftStart) : 0,
     // A declared day is one stretch by definition. `to` stays null while the
     // person is still checked in, which the card reads as "and counting".
     segments: facts.punch ? [{ from: facts.punch.loginAt, to: facts.punch.logoutAt }] : [],
     source: 'punch',
+    leaveType,
+    recheckInAt,
   };
 }
 
@@ -582,6 +678,11 @@ export interface WeekBar {
   segments: TimeRange[];
   /** Whether this day's hours were declared or observed. */
   source: DaySource;
+  /** Earned or unpaid, on a leave or half day — the calendar's EL / LOP. */
+  leaveType: LeaveType | null;
+  recheckInAt?: string | null;
+  /** Why the day was set by hand (calendar only): admin edit, auto-close, productivity rule. */
+  note?: string | null;
 }
 
 /**
@@ -613,5 +714,7 @@ export function dayBars(days: DayAttendance[], today: string): WeekBar[] {
     isToday: day.date === today,
     segments: day.segments,
     source: day.source,
+    leaveType: day.leaveType,
+    recheckInAt: day.recheckInAt,
   }));
 }

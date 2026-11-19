@@ -6,6 +6,12 @@ export interface StoredLeaveRequest extends LeaveRequestRecord {
   employeeName?: string;
   employeeCode?: string;
   designation?: string | null;
+  department?: string | null;
+  managerId?: number | null;
+  directManagerName?: string | null;
+  grandManagerId?: number | null;
+  grandManagerName?: string | null;
+  decisionNote?: string | null;
   isHalfDay: boolean;
   halfDaySession: 'first' | 'second' | null;
   reason: string;
@@ -21,6 +27,13 @@ export interface ILeaveRepository {
   findHolidays(from: string, to: string): Promise<HolidayRecord[]>;
 
   findLeaveContext(employeeId: number): Promise<LeaveContext | null>;
+
+  /**
+   * Dates an admin set by hand to anything but 'Weekly off' (the attendance
+   * rule isMarkedWorking). On a usual weekly off such a row makes it a
+   * working day, so leave can be recorded on it.
+   */
+  findMarkedWorkingDates(employeeId: number, from: string, to: string): Promise<Set<string>>;
 
   /** Requests overlapping the leave year, in date order. */
   findRequestsInYear(
@@ -86,12 +99,12 @@ export interface ILeaveRepository {
   /** Pending requests belonging to the given employees, oldest first. */
   findPendingForEmployees(employeeIds?: number[]): Promise<StoredLeaveRequest[]>;
 
-  /** Decided requests for the log, most recent first. */
+  /** Requests overlapping the period, most recent first. No limit = all of them. */
   findRequestsForEmployees(
     employeeIds: number[] | undefined,
     yearStart: string,
     yearEnd: string,
-    limit: number,
+    limit?: number,
   ): Promise<StoredLeaveRequest[]>;
 
   /**
@@ -99,6 +112,26 @@ export interface ILeaveRepository {
    * fact taken. The note is appended to the decision trail, never replacing it.
    */
   cancelApproved(requestId: number, note: string): Promise<void>;
+
+  /**
+   * Removes the request row for good. The caller writes the audit snapshot
+   * first — once this runs, the row exists nowhere else.
+   */
+  deleteRequest(requestId: number): Promise<void>;
+
+  /**
+   * Undoes what an approved leave wrote to `hrms_attendance` on its dates, so
+   * each day derives again from punches, weekly off and holidays alone.
+   * Returns how many marker rows were removed and how many punched rows had
+   * their leave type detached.
+   */
+  restoreAttendanceAfterLeaveDeleted(
+    employeeId: number,
+    fromDate: string,
+    toDate: string,
+    ref: string,
+    adminId: number,
+  ): Promise<{ removed: number; detached: number }>;
 
   /**
    * Records the decision, including how many of the days the balance could not
@@ -112,7 +145,13 @@ export interface ILeaveRepository {
     unpaidDays: number,
   ): Promise<void>;
 
+  /** Updates the decision note and preserves pending status for multi-level approval progress. */
+  updatePendingProgress(requestId: number, note: string): Promise<void>;
+
   findOnLeaveToday(today: string): Promise<OnLeaveEmployee[]>;
+
+  /** All reporting managers and department leads in the company. */
+  findAllManagers(): Promise<string[]>;
 
   recordAudit(
     actorEmployeeId: number,

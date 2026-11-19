@@ -6,6 +6,11 @@ import {
   crossesMidnight,
   dayBars,
   isLate,
+  isHalfDayLate,
+  isWeeklyOff,
+  isMarkedOff,
+  isMarkedWorking,
+  isOffDay,
   EMPTY_SLOTS,
   readDayAsObserved,
   minutesOf,
@@ -21,6 +26,7 @@ import {
   type DayFacts,
   type SlotMask,
   type WeekBar,
+  punchOf,
 } from './attendance.domain';
 import { IAttendanceRepository } from './attendance.repository.interface';
 import { IAttendanceService } from './attendance.service.interface';
@@ -44,9 +50,11 @@ import {
 } from './attendance.model';
 import { IOrgRepository } from '../org/org.repository.interface';
 import { IAuthService } from '../auth/auth.service.interface';
-import { ILeaveService } from '../leave/leave.service.interface';
+import { DayLeaveChoice, ILeaveService } from '../leave/leave.service.interface';
+import { LeaveType } from '../leave/leave.domain';
 import { RosterMember } from '../org/org.model';
 import { AttendanceStatus, dayNameOf } from './attendance.domain';
+import { isProductivityRuled } from '../productivity/productivity.domain';
 import { ApiError } from '../../utils/api-error';
 import {
   judgeFix,
@@ -171,18 +179,27 @@ export class AttendanceService implements IAttendanceService {
     const isSelf = viewerId === subjectId;
     if (!isSelf) await this.accessService.require(viewerId, subjectId);
 
-    const [now, days, viewer] = await Promise.all([
+    const [now, days, viewer, stored] = await Promise.all([
       this.attendanceRepository.now(),
       this.getDays(subjectId, from, to),
       isSelf ? Promise.resolve(null) : this.authService.getCurrentEmployee(viewerId),
+      this.attendanceRepository.findRange(subjectId, from, to),
     ]);
+
+    // Why a day was set by hand — an admin's edit, an auto-closed check-out, or
+    // the productivity rule. Shown when the day is opened.
+    const notes = new Map(
+      stored
+        .filter((r) => r.source === 'manual' && r.editNote && !r.editNote.startsWith('recheckin:'))
+        .map((r) => [r.date, r.editNote as string]),
+    );
 
     return {
       from,
       to,
       today: now.date,
       canEdit: Boolean(viewer?.tiers.includes('admin')),
-      days: dayBars(days, now.date),
+      days: dayBars(days, now.date).map((bar) => ({ ...bar, note: notes.get(bar.date) ?? null })),
     };
   }
 
@@ -223,8 +240,11 @@ export class AttendanceService implements IAttendanceService {
       dto.status === 'Earned leave' ||
       dto.status === 'Unpaid full day' ||
       dto.status === 'LOP full day';
-    const loginAt = dto.loginAt || null;
-    const logoutAt = isFullLeave ? null : dto.logoutAt || null;
+    // An off day has no working times at all, exactly like a full day's leave.
+    const isOff = dto.status === 'Weekly off';
+    const noTimes = isFullLeave || isOff;
+    const loginAt = isOff ? null : dto.loginAt || null;
+    const logoutAt = noTimes ? null : dto.logoutAt || null;
 
     for (const [label, value] of [['Check-in', loginAt], ['Check-out', logoutAt]] as const) {
       if (value && !HH_MM.test(value)) throw ApiError.badRequest(`${label} must be a time in HH:MM form.`);
@@ -232,7 +252,7 @@ export class AttendanceService implements IAttendanceService {
     if (dto.status === 'Present' && !loginAt) {
       throw ApiError.badRequest('A present day needs a check-in time.');
     }
-    if (!isFullLeave && loginAt && !logoutAt && date !== now.date) {
+    if (!noTimes && loginAt && !logoutAt && date !== now.date) {
       throw ApiError.badRequest('Add a check-out time — only today can be left still checked in.');
     }
     if (!loginAt && logoutAt) throw ApiError.badRequest('A check-out needs a check-in before it.');
@@ -240,22 +260,10 @@ export class AttendanceService implements IAttendanceService {
       throw ApiError.badRequest('Choose which half of the day was taken.');
     }
 
-    const punch = !isFullLeave && loginAt ? { loginAt, logoutAt } : null;
+    const punch = !noTimes && loginAt ? { loginAt, logoutAt } : null;
     if (punch?.logoutAt && activeHours({ loginAt: punch.loginAt, logoutAt: punch.logoutAt }) === 0) {
       throw ApiError.badRequest('Those check-in and check-out times do not make a valid working span.');
     }
-
-    // Leave first: editing an approved leave clears that day's punch, so the
-    // punch the admin typed is written after it, not before.
-    const isLop = dto.status.startsWith('Unpaid') || dto.status.startsWith('LOP');
-    const leaveType = dto.status === 'Present' ? null : isLop ? 'Unpaid' : 'Earned';
-    const leaveMessage = await this.leaveService.setDayLeave(
-      viewerId,
-      subjectId,
-      date,
-      leaveType ? { leaveType, isHalfDay: isHalf, halfDaySession: isHalf ? dto.halfDaySession : null } : null,
-      note,
-    );
 
     const [schedule, policy, before] = await Promise.all([
       this.requireSchedule(subjectId, now.date),
@@ -265,11 +273,89 @@ export class AttendanceService implements IAttendanceService {
 
     let status: AttendanceStatus;
     let lateBy = 0;
-    if (dto.status === 'Present') {
-      lateBy = minutesLate(punch!.loginAt, schedule.shiftStart);
-      status = isLate(lateBy, policy.lateGraceMinutes) ? 'Late' : 'On time';
+    let leaveType: LeaveType | null = null;
+    let leaveChoice: DayLeaveChoice | null = null;
+
+    if (isOff) {
+      status = 'Weekly off';
+      leaveChoice = null;
+    } else if (isFullLeave) {
+      status = 'Leave';
+      const isLop = dto.status.startsWith('Unpaid') || dto.status.startsWith('LOP');
+      leaveType = isLop ? 'Unpaid' : 'Earned';
+      leaveChoice = { leaveType, isHalfDay: false, halfDaySession: null };
+    } else if (punch && !isHalf && isWeeklyOff(date, schedule.weeklyOff)) {
+      // Worked on a usual weekly off: present, with no lateness and no leave —
+      // there is no shift to be late for and no leave to record (the same rule
+      // the live check-in uses for its late half-day penalty).
+      status = 'On time';
+      lateBy = 0;
+      leaveType = null;
+      leaveChoice = null;
+    } else if (punch) {
+      lateBy = minutesLate(punch.loginAt, schedule.shiftStart);
+
+      // Check if this is an explicit afternoon / second-half leave
+      if (isHalf && dto.halfDaySession === 'second') {
+        status = 'Half day';
+        const isLop = dto.status.startsWith('Unpaid') || dto.status.startsWith('LOP');
+        leaveType = isLop ? 'Unpaid' : 'Earned';
+        leaveChoice = { leaveType, isHalfDay: true, halfDaySession: 'second' };
+      } else {
+        // Adjust strictly according to check-in time:
+        if (isHalfDayLate(lateBy)) {
+          status = 'Half day';
+          const isLop = dto.status.startsWith('Unpaid') || dto.status.startsWith('LOP');
+          if (isLop) {
+            leaveType = 'Unpaid';
+          } else if (dto.status === 'Half earned leave') {
+            leaveType = 'Earned';
+          } else {
+            // Check employee leave balance
+            let hasBalance = false;
+            if (this.leaveService) {
+              try {
+                const leaveData = await this.leaveService.getMyLeave(subjectId);
+                hasBalance = (leaveData.ledger?.available ?? 0) >= 0.5;
+              } catch {
+                hasBalance = false;
+              }
+            }
+            leaveType = hasBalance ? 'Earned' : 'Unpaid';
+          }
+          leaveChoice = { leaveType, isHalfDay: true, halfDaySession: 'first' };
+        } else if (isLate(lateBy, policy.lateGraceMinutes)) {
+          // Between grace and 25 min: Late, cancel any single-day leave
+          status = 'Late';
+          leaveType = null;
+          leaveChoice = null;
+        } else {
+          // On time: cancel any single-day leave and restore balance
+          status = 'On time';
+          leaveType = null;
+          leaveChoice = null;
+        }
+      }
     } else {
       status = isHalf ? 'Half day' : 'Leave';
+      const isLop = dto.status.startsWith('Unpaid') || dto.status.startsWith('LOP');
+      leaveType = isLop ? 'Unpaid' : 'Earned';
+      leaveChoice = { leaveType, isHalfDay: isHalf, halfDaySession: dto.halfDaySession };
+    }
+
+    let leaveMessage: string | null = null;
+    if (this.leaveService) {
+      leaveMessage = await this.leaveService.setDayLeave(
+        viewerId,
+        subjectId,
+        date,
+        leaveChoice,
+        note,
+        undefined,
+        // Edit day may put leave on a weekly off: the admin is saying it was a
+        // working day, and the manual row saved below keeps it one.
+        { allowOffDay: true },
+      );
     }
 
     const after = await this.attendanceRepository.saveManualDay({
@@ -290,11 +376,11 @@ export class AttendanceService implements IAttendanceService {
       'attendance.day_edited',
       after?.id ?? null,
       before,
-      { ...dto, savedStatus: status },
+      { ...dto, savedStatus: status, adjustedLeaveType: leaveType },
     );
 
     return {
-      message: [`${dto.status} saved for ${date}.`, leaveMessage].filter(Boolean).join(' '),
+      message: [`${status} saved for ${date}.`, leaveMessage].filter(Boolean).join(' '),
     };
   }
 
@@ -312,7 +398,7 @@ export class AttendanceService implements IAttendanceService {
       open &&
       isPunchExpired(open.date, schedule.shiftStart, schedule.shiftEnd, now.date, now.time, CHECKOUT_GRACE_MINUTES)
     ) {
-      await this.autoCloseAsLop(open);
+      await this.closeExpired(open, schedule);
       open = null;
     }
 
@@ -340,7 +426,9 @@ export class AttendanceService implements IAttendanceService {
 
     const day = attendanceOf({
       ...facts,
-      punch: stored?.loginAt ? { loginAt: stored.loginAt, logoutAt: stored.logoutAt } : null,
+      markedOff: isMarkedOff(stored),
+      markedWorking: isMarkedWorking(stored),
+      punch: punchOf(stored),
     });
 
     const recheckInAt =
@@ -362,7 +450,10 @@ export class AttendanceService implements IAttendanceService {
       lateByMinutes: day.lateByMinutes,
       shiftStart: schedule.shiftStart,
       shiftEnd: schedule.shiftEnd,
-      canCheckIn: !stored?.loginAt || Boolean(stored?.logoutAt),
+      canCheckIn:
+        !(facts.leave && !facts.leave.isHalfDay) &&
+        !(!stored?.loginAt && isOffDay(shiftDate, schedule.weeklyOff, stored)) &&
+        (!stored?.loginAt || Boolean(stored?.logoutAt)),
       canCheckOut: Boolean(stored?.loginAt && !stored.logoutAt),
       geofence: this.fenceFor(schedule),
     };
@@ -379,16 +470,21 @@ export class AttendanceService implements IAttendanceService {
   }
 
   /**
-   * Every place this person may punch from (office and/or home), or null when
-   * they may punch anywhere. The rule itself is policyFor() in the domain.
+   * Every place this person may punch from (office, home, second location), or
+   * null when they may punch anywhere. The rule itself is policyFor() in the
+   * domain; the repository already blanks a second location that is switched off.
    */
   private fenceFor(schedule: WorkSchedule): GeofencePolicy | null {
     if (!this.geofenceConfig) return null;
-    const home =
-      schedule.homeLat !== null && schedule.homeLng !== null
-        ? { lat: schedule.homeLat, lng: schedule.homeLng }
-        : null;
-    return policyFor(schedule.workMode, home, this.geofenceConfig);
+    const point = (lat: number | null, lng: number | null) =>
+      lat !== null && lng !== null ? { lat, lng } : null;
+    return policyFor(
+      schedule.workMode,
+      point(schedule.homeLat, schedule.homeLng),
+      this.geofenceConfig,
+      point(schedule.secondLat, schedule.secondLng),
+      schedule.homeEnabled,
+    );
   }
 
   /**
@@ -428,7 +524,7 @@ export class AttendanceService implements IAttendanceService {
       if (
         isPunchExpired(open.date, schedule.shiftStart, schedule.shiftEnd, now.date, now.time, CHECKOUT_GRACE_MINUTES)
       ) {
-        await this.autoCloseAsLop(open);
+        await this.closeExpired(open, schedule);
       } else {
         throw ApiError.badRequest(
           `You are still checked in from ${open.loginAt} on ${open.date}. Check out first.`,
@@ -441,8 +537,71 @@ export class AttendanceService implements IAttendanceService {
     const shiftDate = shiftDateOf(now.date, now.time, schedule.shiftStart, schedule.shiftEnd);
     const { facts } = await this.factsFor(employeeId, shiftDate, schedule, now.date);
 
-    const lateByMinutes = minutesLate(now.time, schedule.shiftStart);
-    const status = resolveDayStatus({ ...facts, punch: { loginAt: now.time, logoutAt: null } });
+    // HR's rule (10 Nov 2026): no punching on a day of approved full-day leave —
+    // HR removes or edits the leave first. A half-day leave still works the other half.
+    if (facts.leave && !facts.leave.isHalfDay) {
+      throw ApiError.badRequest(
+        'You are on approved leave for this day, so check-in is not allowed. Please ask HR to remove the leave first.',
+      );
+    }
+
+    // Check if an existing punch already exists for today (re-check-in after earlier checkout)
+    const existingRecord = await this.attendanceRepository.findByDate(employeeId, shiftDate);
+
+    // Same rule for a weekly off — unless an admin made that off day a working
+    // day by hand (a manual non-'Weekly off' row, e.g. Sales 10–15 Nov 2026).
+    // A day already checked into is working: its row turns source 'app' on the
+    // first check-in, and a re-check-in after a break must not be refused.
+    if (!existingRecord?.loginAt && isOffDay(shiftDate, schedule.weeklyOff, existingRecord)) {
+      throw ApiError.badRequest(
+        'This is your weekly off, so check-in is not allowed. Please ask HR to mark it as a working day first.',
+      );
+    }
+
+    const isRecheckIn = Boolean(existingRecord?.loginAt);
+
+    const lateByMinutes = isRecheckIn
+      ? (existingRecord?.lateByMinutes ?? 0)
+      : minutesLate(now.time, schedule.shiftStart);
+
+    let status = isRecheckIn
+      ? (existingRecord?.status ?? 'On time')
+      : resolveDayStatus({ ...facts, punch: { loginAt: now.time, logoutAt: null } });
+
+    let leaveType: LeaveType | null = isRecheckIn ? (existingRecord?.leaveType ?? null) : null;
+
+    // A working shift without approved leave or declared holiday.
+    // Late half-day penalty applies ONLY on first check-in of the day, NEVER on a re-check-in.
+    const isWorkingShift = !facts.leave && !facts.holidayName && !isWeeklyOff(shiftDate, schedule.weeklyOff);
+    if (!isRecheckIn && isWorkingShift && isHalfDayLate(lateByMinutes)) {
+      status = 'Half day';
+
+      let hasBalance = false;
+      if (this.leaveService) {
+        try {
+          const leaveData = await this.leaveService.getMyLeave(employeeId);
+          hasBalance = (leaveData.ledger?.available ?? 0) >= 0.5;
+        } catch {
+          hasBalance = false;
+        }
+      }
+
+      leaveType = hasBalance ? 'Earned' : 'Unpaid';
+
+      if (this.leaveService) {
+        try {
+          await this.leaveService.setDayLeave(
+            employeeId,
+            employeeId,
+            shiftDate,
+            { leaveType, isHalfDay: true, halfDaySession: 'first' },
+            `Late check-in by ${lateByMinutes}m (${hasBalance ? '0.5 Earned leave deducted' : '0.5 Unpaid LOP'})`,
+          );
+        } catch (err) {
+          console.error('[Attendance] Failed to record late half-day leave:', err);
+        }
+      }
+    }
 
     const record = await this.attendanceRepository.checkIn({
       employeeId,
@@ -450,6 +609,7 @@ export class AttendanceService implements IAttendanceService {
       loginAt: now.time,
       status,
       lateByMinutes,
+      leaveType,
     });
 
     if (!record) {
@@ -468,6 +628,7 @@ export class AttendanceService implements IAttendanceService {
       loginAt: record.loginAt,
       status: record.status,
       lateByMinutes: record.lateByMinutes,
+      leaveType,
       location,
     });
   }
@@ -490,9 +651,11 @@ export class AttendanceService implements IAttendanceService {
         schedule &&
         isPunchExpired(before.date, schedule.shiftStart, schedule.shiftEnd, now.date, now.time, CHECKOUT_GRACE_MINUTES)
       ) {
-        await this.autoCloseAsLop(before);
+        const ruled = await this.closeExpired(before, schedule);
         throw ApiError.badRequest(
-          'The check-out window for your previous shift has expired (marked as LOP). Please check in for today.',
+          ruled
+            ? 'The check-out window for your previous shift has expired. It was closed at your shift end; the day is decided by your productive time. Please check in for today.'
+            : 'The check-out window for your previous shift has expired (marked as LOP). Please check in for today.',
         );
       }
     }
@@ -596,7 +759,7 @@ export class AttendanceService implements IAttendanceService {
     return eachDate(from, to).map((date) => {
       const record = byDate.get(date);
       const day = context.get(date);
-      const punch = record?.loginAt ? { loginAt: record.loginAt, logoutAt: record.logoutAt } : null;
+      const punch = punchOf(record);
       const mask = slots.get(date) ?? EMPTY_SLOTS;
 
       // A day is read by the method that actually recorded it — see the rule
@@ -608,10 +771,17 @@ export class AttendanceService implements IAttendanceService {
         record?.source === 'manual',
       );
 
+      const recheckInAt =
+        record?.editNote && record.editNote.startsWith('recheckin:')
+          ? record.editNote.replace('recheckin:', '').slice(0, 5)
+          : null;
+
       return attendanceOf({
         date,
         today: now.date,
         weeklyOff: schedule.weeklyOff,
+        markedOff: isMarkedOff(record),
+        markedWorking: isMarkedWorking(record),
         holidayName: day?.holidayName ?? null,
         leave: day?.leave ?? null,
         punch: readAsObserved ? null : punch,
@@ -621,6 +791,7 @@ export class AttendanceService implements IAttendanceService {
         slots: readAsObserved ? mask : undefined,
         shiftStart: schedule.shiftStart,
         lateGraceMinutes: policy.lateGraceMinutes,
+        recheckInAt,
       });
     });
   }
@@ -674,6 +845,26 @@ export class AttendanceService implements IAttendanceService {
    * the unclosed day is marked as Unpaid Leave (LOP) with zero active hours so that
    * subsequent shifts start fresh without blocking today's check-in.
    */
+  /**
+   * A check-in left open past shift end + 4 hours. For a day the productivity
+   * rule decides (Sales, from 10 Nov 2026) it is closed at the shift's end and
+   * left to that rule — missing the check-out is not itself loss of pay there.
+   * Everyone else keeps the old rule: closed as LOP. Returns whether the
+   * productivity rule has it.
+   */
+  private async closeExpired(open: AttendanceRecord, schedule: WorkSchedule): Promise<boolean> {
+    if (!isProductivityRuled(schedule.department, open.date) || !open.loginAt) {
+      await this.autoCloseAsLop(open);
+      return false;
+    }
+    await this.attendanceRepository.checkOut({
+      id: open.id,
+      logoutAt: schedule.shiftEnd,
+      activeHours: activeHours({ loginAt: open.loginAt, logoutAt: schedule.shiftEnd }),
+    });
+    return true;
+  }
+
   private async autoCloseAsLop(open: AttendanceRecord): Promise<void> {
     await this.attendanceRepository.saveManualDay({
       employeeId: open.employeeId,
@@ -950,6 +1141,11 @@ export class AttendanceService implements IAttendanceService {
       else if (day.status === 'Leave' || day.status === 'Half day') leaveCount++;
       else if (day.status === 'Weekly off' || day.status === 'Holiday') off++;
 
+      const recheckInAt =
+        punch?.editNote && punch.editNote.startsWith('recheckin:')
+          ? punch.editNote.replace('recheckin:', '').slice(0, 5)
+          : null;
+
       rows.push({
         employeeId: member.id,
         code: member.employeeCode,
@@ -962,6 +1158,7 @@ export class AttendanceService implements IAttendanceService {
         shiftEnd: member.shiftEnd,
         loginAt: day.loginAt,
         logoutAt: day.logoutAt,
+        recheckInAt,
         activeHours: day.activeHours,
         lateByMinutes: day.lateByMinutes,
         status: day.status,
@@ -1078,6 +1275,11 @@ export class AttendanceService implements IAttendanceService {
           }
         }
 
+        const recheckInAt =
+          realPunch?.editNote && realPunch.editNote.startsWith('recheckin:')
+            ? realPunch.editNote.replace('recheckin:', '').slice(0, 5)
+            : null;
+
         rows.push({
           date: d,
           dayName: dayNameOf(d),
@@ -1089,6 +1291,7 @@ export class AttendanceService implements IAttendanceService {
           shiftEnd: member.shiftEnd,
           loginAt: day.loginAt,
           logoutAt: day.logoutAt,
+          recheckInAt,
           activeHours: day.activeHours,
           lateByMinutes: day.lateByMinutes,
           status: day.status,

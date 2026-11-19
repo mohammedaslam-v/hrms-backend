@@ -19,6 +19,7 @@ const day = (status: AttendanceStatus, activeHours = 0): DayAttendance => ({
   lateByMinutes: 0,
   segments: [],
   source: 'punch',
+  leaveType: null,
 });
 
 const person = (

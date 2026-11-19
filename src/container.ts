@@ -1,5 +1,9 @@
 import { ICompanyPolicyRepository } from "./modules/company-policy/company-policy.repository.interface";
 import { env } from './config/env';
+import { ProductivityRepository } from './modules/productivity/productivity.repository';
+import { ProductivityService } from './modules/productivity/productivity.service';
+import { IProductivityService } from './modules/productivity/productivity.service.interface';
+import { ProductivityController } from './modules/productivity/productivity.controller';
 import { WorkActivityController } from './modules/work-activity/work-activity.controller';
 import { IWorkActivityRepository } from './modules/work-activity/work-activity.repository.interface';
 import { WorkActivityRepository } from './modules/work-activity/work-activity.repository';
@@ -118,6 +122,7 @@ import { LoanController } from './modules/loans/loan.controller';
 import { InternalAttendanceRepository } from './modules/internal/internal-attendance.repository';
 import { InternalAttendanceController } from './modules/internal/internal-attendance.controller';
 import { InternalPresenceController } from './modules/internal/internal-presence.controller';
+import { FieldCipher, IFieldCipher } from './shared/field-cipher';
 
 
 export const createContainer = () => {
@@ -151,7 +156,13 @@ export const createContainer = () => {
 
   // Compensation. Read by My page today and by the Salary page later, so it is
   // its own service rather than a query hidden inside the profile.
-  const compensationRepository: ICompensationRepository = new CompensationRepository(pool);
+  // Salary figures are stored encrypted. One cipher, handed to every repository
+  // that reads or writes hrms_employee_compensation.
+  const fieldCipher: IFieldCipher = new FieldCipher(
+    { v1: FieldCipher.keyFromBase64('COMPENSATION_ENC_KEY', env.compensationEncKey) },
+    'v1',
+  );
+  const compensationRepository: ICompensationRepository = new CompensationRepository(pool, fieldCipher);
   const compensationService: ICompensationService = new CompensationService(compensationRepository, clock);
 
   // Goals read the financial year's dates and the risk tolerance from policy.
@@ -237,14 +248,18 @@ export const createContainer = () => {
   const profileController = new ProfileController(profileService);
 
   const salaryRepository: ISalaryRepository = new SalaryRepository(pool);
+  // Loss of pay is read from the leave ledger and the attendance calendar, so
+  // a day corrected on the calendar moves the payslip with it.
   const salaryService: ISalaryService = new SalaryService(
     salaryRepository,
     compensationService,
     accessService,
+    leaveService,
+    attendanceService,
   );
   const salaryController = new SalaryController(salaryService);
 
-  const employeeRepository: IEmployeeRepository = new EmployeeRepository(pool);
+  const employeeRepository: IEmployeeRepository = new EmployeeRepository(pool, fieldCipher);
   const employeeService: IEmployeeService = new EmployeeService(employeeRepository, authService);
   const employeeController = new EmployeeController(employeeService);
 
@@ -299,7 +314,18 @@ export const createContainer = () => {
   );
   const workActivityController = new WorkActivityController(workActivityService);
 
-  const reportsRepository: IReportsRepository = new ReportsRepository(pool);
+  // Sales: a working day decided by productive time (panels + activities).
+  const productivityService: IProductivityService = new ProductivityService(
+    new ProductivityRepository(pool),
+    attendanceRepository,
+    leaveRepository,
+    leaveService,
+    workActivityRepository,
+    presenceService,
+  );
+  const productivityController = new ProductivityController(productivityService, authService);
+
+  const reportsRepository: IReportsRepository = new ReportsRepository(pool, fieldCipher);
   // attendanceRepository and policyService are what make the attendance
   // reports read real punches and observed slots instead of printing a fixed
   // 10:04 for every person on every day.
@@ -313,6 +339,7 @@ export const createContainer = () => {
     presenceService,
     leaveRepository,
     goalsRepository,
+    orgRepository,
   );
   const reportsController = new ReportsController(reportsService);
   const companyPolicyRepository: ICompanyPolicyRepository = new CompanyPolicyRepository(pool);
@@ -357,6 +384,8 @@ export const createContainer = () => {
     workActivityController,
     internalAttendanceController,
     internalPresenceController,
+    productivityController,
+    productivityService,
     companyPolicyService,
     reportsService,
     payoutService,

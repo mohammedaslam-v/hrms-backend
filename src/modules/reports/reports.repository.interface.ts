@@ -33,6 +33,8 @@ export interface RawEmployeeRow {
   status?: string | null;
   opening_leave?: number | string | null;
   weekly_off?: string | null;
+  shift_start?: string | null;
+  shift_end?: string | null;
 }
 
 export interface RawLoanRow {
@@ -66,6 +68,15 @@ export interface RawCompensationRevision {
   created_at: string;
 }
 
+/** One day the Sales productivity rule decided short (`hrms_productivity_days`). */
+export interface RawProductivityShortDay {
+  employee_id: number;
+  work_date: string;
+  panel_minutes: number;
+  activity_minutes: number;
+  outcome: 'earned' | 'unpaid';
+}
+
 export interface IReportsRepository {
   findActiveEmployees(department?: string): Promise<RawEmployeeRow[]>;
   findAllEmployees(): Promise<RawEmployeeRow[]>;
@@ -74,4 +85,6 @@ export interface IReportsRepository {
   findRecentResignees(from: string, to: string, department?: string): Promise<RawEmployeeRow[]>;
   findCompensationHistory(): Promise<RawCompensationRevision[]>;
   hasColumn(tableName: string, columnName: string): Promise<boolean>;
+  /** Days the productivity rule marked as leave (EL or LOP) between two dates, inclusive. */
+  findProductivityShortDays(from: string, to: string): Promise<RawProductivityShortDay[]>;
 }

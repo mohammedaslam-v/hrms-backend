@@ -1,3 +1,47 @@
+/**
+ * The first day a Not Marked working day costs pay. Employees started using the
+ * HRMS portal on 5 Oct 2026; an empty day before that is missing data, not an
+ * absence.
+ */
+export const NOT_MARKED_LOP_FROM = "2026-10-05";
+
+/** A salary month that has been pushed, with what its slip was based on. */
+export interface PaidMonth {
+  /** YYYY-MM */
+  month: string;
+  lopDays: number;
+  lopRate: number;
+  /** Arrears (+) or recovery (−) that payout itself carried. */
+  arrearsAmount: number;
+}
+
+/** The month before a YYYY-MM month, as YYYY-MM. */
+export function previousMonth(month: string): string {
+  const [y, m] = month.split("-").map(Number);
+  return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, "0")}`;
+}
+
+/**
+ * What the next salary owes for months already paid: positive is arrears (a
+ * day given back), negative is recovery (a day taken back).
+ *
+ * Each paid month is re-measured with the LOP its days show now, at the rate it
+ * was paid at, and everything earlier payouts already settled is subtracted. It
+ * is a running balance rather than a list of corrections, so an admin changing
+ * a day twice, or changing it and changing it back, can never pay or recover it
+ * twice. A month with no live figure has nothing to settle.
+ */
+export function arrearsOwed(paid: PaidMonth[], liveLop: ReadonlyMap<string, number>): number {
+  let owed = 0;
+  let settled = 0;
+  for (const p of paid) {
+    const now = liveLop.get(p.month) ?? p.lopDays;
+    owed += Math.round((p.lopDays - now) * p.lopRate);
+    settled += p.arrearsAmount;
+  }
+  return Math.round(owed - settled);
+}
+
 export const COMPANY_CONFIG = {
   name: "Bambinos Learning Private Limited",
   address: "Koramangala, Bengaluru, Karnataka 560034",

@@ -227,9 +227,9 @@ describe('a day resolved from observation', () => {
     assert.equal(attendanceOf(facts({ slots: EMPTY_SLOTS, date: '2026-09-07' })).status, 'Absent');
     assert.equal(attendanceOf(facts({ date: '2026-09-07' })).status, 'Absent');
     // ... and the punch path is untouched by any of this.
-    const punched = attendanceOf(facts({ punch: { loginAt: '10:40', logoutAt: '19:00' } }));
+    const punched = attendanceOf(facts({ punch: { loginAt: '10:20', logoutAt: '19:00' } }));
     assert.equal(punched.status, 'Late');
-    assert.equal(punched.lateByMinutes, 40);
+    assert.equal(punched.lateByMinutes, 20);
   });
 
   it('prefers slots over a punch if somehow given both', () => {

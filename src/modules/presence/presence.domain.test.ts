@@ -88,6 +88,9 @@ function serviceFor(tiers: AccessTier[], team: number[] = []) {
     async findDaysForMany() {
       return new Map();
     },
+    async findHoursForMany() {
+      return new Map();
+    },
     async findLatest() {
       return {
         last_path: '/tickets/show/9',

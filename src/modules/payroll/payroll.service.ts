@@ -8,6 +8,23 @@ import {
 } from './payroll.model';
 import { PayoutStatus } from '../payout/payout.model';
 
+/** Slips built at once. Below the default pool of 10, so other requests still get a connection. */
+const SLIP_CONCURRENCY = 4;
+
+/** `fn` over every item, at most `limit` at a time, results in input order. */
+async function mapInBatches<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
+}
+
 export class PayrollService implements IPayrollService {
   constructor(
     private readonly payrollRepository: IPayrollRepository,
@@ -54,7 +71,11 @@ export class PayrollService implements IPayrollService {
     let pfRemittance = 0;
     let tdsDeposit = 0;
 
-    for (const emp of activeEmployees) {
+    // Each slip is a dozen small queries, so they are built several at a time
+    // rather than one after another — capped below the connection pool, so the
+    // payroll page cannot starve every other request while it loads. Results
+    // keep the roster's order.
+    const items = await mapInBatches(activeEmployees, SLIP_CONCURRENCY, async (emp) => {
       try {
         const salaryView = await this.salaryService.getMySalary(
           adminId,
@@ -62,7 +83,7 @@ export class PayrollService implements IPayrollService {
           targetMonth,
         );
 
-        if (!salaryView || !salaryView.slip) continue;
+        if (!salaryView || !salaryView.slip) return null;
 
         const slip = salaryView.slip;
         const payoutInfo = payoutsMap.get(emp.id);
@@ -87,6 +108,7 @@ export class PayrollService implements IPayrollService {
           basic: slip.earnings.basic,
           hra: slip.earnings.hra,
           special: slip.earnings.special,
+          arrears: slip.earnings.arrears,
           gross: slip.earnings.gross,
           lopDays: slip.lopDays,
           lopAmount: slip.lopAmount,
@@ -103,19 +125,25 @@ export class PayrollService implements IPayrollService {
           utr: payoutInfo?.utr,
           failureReason: payoutInfo?.failureReason,
         };
-
-        employees.push(item);
-
-        grossPayout += slip.earnings.gross;
-        netDisbursement += slip.netPay;
-        if (payoutStatus === 'processed') {
-          disbursedAmount += slip.netPay;
-        }
-        pfRemittance += slip.deductions.employeePf + slip.employer.employerPf;
-        tdsDeposit += slip.deductions.tds;
+        return { item, slip, payoutStatus };
       } catch {
         // Skip individual errors so overall payroll view doesn't crash
+        return null;
       }
+    });
+
+    for (const result of items) {
+      if (!result) continue;
+      const { item, slip, payoutStatus } = result;
+      employees.push(item);
+
+      grossPayout += slip.earnings.gross;
+      netDisbursement += slip.netPay;
+      if (payoutStatus === 'processed') {
+        disbursedAmount += slip.netPay;
+      }
+      pfRemittance += slip.deductions.employeePf + slip.employer.employerPf;
+      tdsDeposit += slip.deductions.tds;
     }
 
     const pendingDisbursement = Math.max(0, netDisbursement - disbursedAmount);

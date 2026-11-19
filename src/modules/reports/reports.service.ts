@@ -1,6 +1,8 @@
 import { ILeaveRepository, StoredLeaveRequest } from '../leave/leave.repository.interface';
 import {
   computeLedger,
+  isSpecialSeniorApprover,
+  isTwoLevelDepartment,
   monthKeyOf,
   workingDaysBetween,
 } from '../leave/leave.domain';
@@ -32,6 +34,10 @@ import {
   type AttendanceDay,
 } from './reports.attendance';
 import { ApiError } from '../../utils/api-error';
+import { IOrgRepository } from '../org/org.repository.interface';
+import { buildActiveTimeRows, type ActiveTimeView } from './reports.active-time';
+import { buildActivityRows, type ActivitiesView } from './reports.activities';
+import type { RosterMember } from '../org/org.model';
 
 const PAYROLL_REPORT_TYPES: ReadonlySet<ReportType> = new Set([
   'salary',
@@ -47,7 +53,15 @@ const PAYROLL_REPORT_TYPES: ReadonlySet<ReportType> = new Set([
   'appraisals',
 ]);
 /** Attendance-side reports that only admins may open. */
-const ADMIN_ONLY_REPORT_TYPES: ReadonlySet<ReportType> = new Set(['activity_log']);
+const ADMIN_ONLY_REPORT_TYPES: ReadonlySet<ReportType> = new Set([
+  'activity_log',
+  'lop',
+  'shift_roster',
+  'productivity_lop',
+]);
+
+/** The Active time tab's longest range: about two months stays readable. */
+const ACTIVE_TIME_MAX_DAYS = 62;
 
 import { payStructure, ptOf } from '../salary/salary.domain';
 import { computeTaxComputation, TAX_CONFIG } from '../tax/tax.domain';
@@ -158,7 +172,153 @@ export class ReportsService implements IReportsService {
     private readonly presenceService?: IPresenceService,
     private readonly leaveRepository?: ILeaveRepository,
     private readonly goalsRepository?: IGoalsRepository,
+    /** Who a manager may see: their reporting tree (the Active time tab). */
+    private readonly orgRepository?: IOrgRepository,
   ) {}
+
+  /**
+   * The Active time tab: panel active time and checked-in time per person per
+   * day. An admin sees the whole company; a manager only their reporting tree
+   * — the same scope as the rest of Attendance & activity. Anyone else is
+   * refused, and ids outside the viewer's scope are dropped, not trusted.
+   */
+  async getActiveTime(
+    viewerId: number,
+    options: { from: string; to: string; employeeIds?: number[]; department?: string },
+  ): Promise<ActiveTimeView> {
+    if (!this.authService || !this.orgRepository || !this.attendanceRepository) {
+      throw new ApiError(503, 'Active time is not available right now.');
+    }
+    const viewer = await this.authService.getCurrentEmployee(viewerId);
+    const isAdmin = viewer.tiers.includes('admin');
+    if (!isAdmin && !viewer.tiers.includes('manager')) {
+      throw ApiError.forbidden('Active time is for managers and admins.');
+    }
+
+    const { from, to } = options;
+    const dates = datesBetween(from, to, ACTIVE_TIME_MAX_DAYS + 1);
+    if (dates.length === 0) throw ApiError.badRequest('The end date must not be before the start date.');
+    if (dates.length > ACTIVE_TIME_MAX_DAYS) {
+      throw ApiError.badRequest(`Choose at most ${ACTIVE_TIME_MAX_DAYS} days at a time.`);
+    }
+
+    // Leavers are included so a past range still shows the days they worked;
+    // anyone gone before the range, or not yet joined, is left out.
+    // Managers see up to 2 levels below them; admins see the whole company.
+    const scope = (await this.orgRepository.findRoster({
+      rootId: isAdmin ? null : viewerId,
+      includeLeavers: true,
+      maxDepth: 2,
+    }))
+      .filter((m) => (!m.dateOfLeaving || m.dateOfLeaving >= from) && (!m.dateOfJoining || m.dateOfJoining <= to));
+
+    let members = scope;
+    if (options.department) members = members.filter((m) => m.department === options.department);
+    if (options.employeeIds && options.employeeIds.length > 0) {
+      const wanted = new Set(options.employeeIds);
+      members = members.filter((m) => wanted.has(m.id));
+    }
+
+    const now = istNow();
+    const [attendance, panel] = await Promise.all([
+      this.attendanceFor(members, from, to),
+      this.presenceService
+        ? this.presenceService.adminPanelForReport(members.map((m) => m.id), from, to)
+        : Promise.resolve(new Map()),
+    ]);
+
+    return {
+      from,
+      to,
+      today: now.date,
+      dates,
+      people: scope
+        .map((m) => ({ id: m.id, code: m.employeeCode, name: m.fullName, department: m.department }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+      rows: buildActiveTimeRows(members, dates, attendance, panel, now.date, now.time),
+    };
+  }
+
+  /**
+   * The Activities tab: per person per day, panel time and the activities they
+   * recorded. Who a manager sees follows the leave approval chain:
+   *
+   *   admin                   — everyone;
+   *   manager                 — their direct reports, plus the reports of those
+   *                             reports who are in Sales or Operations (the
+   *                             people whose leave they approve at level 2);
+   *   senior approver (Rhea)  — the above, plus everyone in Sales or Operations.
+   *
+   * Ids outside that scope are dropped, not trusted.
+   */
+  async getActivities(
+    viewerId: number,
+    options: { from: string; to: string; employeeIds?: number[]; department?: string },
+  ): Promise<ActivitiesView> {
+    if (!this.authService || !this.orgRepository || !this.attendanceRepository || !this.workActivityRepository) {
+      throw new ApiError(503, 'Activities are not available right now.');
+    }
+    const viewer = await this.authService.getCurrentEmployee(viewerId);
+    const isAdmin = viewer.tiers.includes('admin');
+    if (!isAdmin && !viewer.tiers.includes('manager')) {
+      throw ApiError.forbidden('Activities are for managers and admins.');
+    }
+
+    const { from, to } = options;
+    const dates = datesBetween(from, to, ACTIVE_TIME_MAX_DAYS + 1);
+    if (dates.length === 0) throw ApiError.badRequest('The end date must not be before the start date.');
+    if (dates.length > ACTIVE_TIME_MAX_DAYS) {
+      throw ApiError.badRequest(`Choose at most ${ACTIVE_TIME_MAX_DAYS} days at a time.`);
+    }
+
+    let roster: RosterMember[];
+    if (isAdmin) {
+      roster = await this.orgRepository.findRoster({ rootId: null, includeLeavers: true });
+    } else {
+      const tree = await this.orgRepository.findRoster({ rootId: viewerId, includeLeavers: true, maxDepth: 2 });
+      roster = tree.filter(
+        (m) => m.id !== viewerId && (m.managerId === viewerId || isTwoLevelDepartment(m.department)),
+      );
+      if (isSpecialSeniorApprover(viewerId, viewer.workEmail)) {
+        const seen = new Set(roster.map((m) => m.id));
+        const everyone = await this.orgRepository.findRoster({ rootId: null, includeLeavers: true });
+        for (const m of everyone) {
+          if (m.id !== viewerId && !seen.has(m.id) && isTwoLevelDepartment(m.department)) roster.push(m);
+        }
+      }
+    }
+    const scope = roster.filter(
+      (m) => (!m.dateOfLeaving || m.dateOfLeaving >= from) && (!m.dateOfJoining || m.dateOfJoining <= to),
+    );
+
+    let members = scope;
+    if (options.department) members = members.filter((m) => m.department === options.department);
+    if (options.employeeIds && options.employeeIds.length > 0) {
+      const wanted = new Set(options.employeeIds);
+      members = members.filter((m) => wanted.has(m.id));
+    }
+
+    const ids = members.map((m) => m.id);
+    const [attendance, panel, activities] = await Promise.all([
+      this.attendanceFor(members, from, to),
+      this.presenceService
+        ? this.presenceService.adminPanelForReport(ids, from, to)
+        : Promise.resolve(new Map()),
+      ids.length > 0
+        ? this.workActivityRepository.findRangeForMany(ids, from, to)
+        : Promise.resolve(new Map()),
+    ]);
+
+    return {
+      from,
+      to,
+      today: istNow().date,
+      people: scope
+        .map((m) => ({ id: m.id, code: m.employeeCode, name: m.fullName, department: m.department }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+      rows: buildActivityRows(members, dates, activities, panel, attendance),
+    };
+  }
 
   private filterEmployees(employees: any[], filter: ReportFilterDto): any[] {
     let result = employees;
@@ -272,6 +432,13 @@ export class ReportsService implements IReportsService {
         description: 'Per employee per day: check-in and check-out, recorded calls and meetings, and admin-panel time.',
         filterType: 'period',
       },
+      {
+        type: 'lop',
+        title: 'Loss of pay (LOP) report',
+        category: 'Attendance',
+        description: 'Details of Half-Day LOP (late check-in >= 25m) and Full-Day LOP (missed checkout, absent, or manual).',
+        filterType: 'period',
+      },
 
       // Payroll
       {
@@ -374,6 +541,20 @@ export class ReportsService implements IReportsService {
         description: 'Full profile master record including statutory IDs, shift, bank, CTC, and status.',
         filterType: 'none',
       },
+      {
+        type: 'shift_roster',
+        title: 'Shift timings and weekly offs',
+        category: 'People',
+        description: 'Every active employee with their shift start, shift end and weekly off days, as set today.',
+        filterType: 'none',
+      },
+      {
+        type: 'productivity_lop',
+        title: 'Productivity auto LOP marked',
+        category: 'Attendance',
+        description: 'Sales days the productivity rule marked as LOP: panel + activity time below 8h 06m.',
+        filterType: 'period',
+      },
     ];
   }
 
@@ -405,6 +586,8 @@ export class ReportsService implements IReportsService {
         return this.buildLateLogins(filter);
       case 'nologin':
         return this.buildNoLogin(filter);
+      case 'lop':
+        return this.buildLopReport(filter);
       case 'active':
         return this.buildActiveHours(filter);
       case 'salary':
@@ -438,6 +621,10 @@ export class ReportsService implements IReportsService {
         return this.buildGoals(filter);
       case 'basic':
         return this.buildBasicInfo(filter);
+      case 'shift_roster':
+        return this.buildShiftRoster(filter);
+      case 'productivity_lop':
+        return this.buildProductivityLop(filter);
       default:
         return this.buildAllEmployees(filter);
     }
@@ -851,6 +1038,264 @@ export class ReportsService implements IReportsService {
     };
   }
 
+  // Loss of pay (LOP) report
+  private async buildLopReport(filter: ReportFilterDto): Promise<ReportResult> {
+    const range = resolveRange(filter);
+    const allEmployees = await this.repository.findActiveEmployees(filter.department);
+    const employees = this.filterEmployees(allEmployees, filter);
+
+    const columns: ReportColumn[] = [
+      { key: 'date', label: 'Date', width: '110px' },
+      { key: 'day', label: 'Day', width: '70px' },
+      { key: 'code', label: 'Code', width: '100px' },
+      { key: 'employee', label: 'Employee', width: '190px' },
+      { key: 'department', label: 'Department', width: '150px' },
+      { key: 'manager', label: 'Manager', width: '160px' },
+      { key: 'lopCategory', label: 'Category', width: '140px' },
+      { key: 'lopDays', label: 'Deduction', width: '90px', isNumeric: true },
+      { key: 'checkIn', label: 'Check-in', width: '90px' },
+      { key: 'checkOut', label: 'Check-out', width: '90px' },
+      { key: 'lateBy', label: 'Late by (min)', width: '100px', isNumeric: true },
+      { key: 'reason', label: 'Reason / Trigger', width: '280px' },
+    ];
+
+    if (employees.length === 0) {
+      return {
+        type: 'lop',
+        meta: {
+          companyName: COMPANY_HEADER.name,
+          companyAddress: COMPANY_HEADER.address,
+          reportTitle: 'Loss of pay (LOP) report',
+          periodLabel: range.label,
+          generatedAt: new Date().toISOString(),
+          totalRecords: 0,
+        },
+        columns,
+        rows: [],
+      };
+    }
+
+    const facts = await this.attendanceFor(employees, range.from, range.to);
+
+    const empIds = employees.map((e) => e.id);
+    let approvedLeaves: StoredLeaveRequest[] = [];
+    if (this.leaveRepository && empIds.length > 0) {
+      try {
+        approvedLeaves = await this.leaveRepository.findRequestsForEmployees(
+          empIds,
+          range.from,
+          range.to,
+          10000,
+        );
+      } catch {
+        approvedLeaves = [];
+      }
+    }
+
+    const approvedUnpaidMap = new Map<string, StoredLeaveRequest>();
+    for (const req of approvedLeaves) {
+      if (req.status === 'Approved' && req.leaveType === 'Unpaid') {
+        const reqDays = datesBetween(
+          req.fromDate < range.from ? range.from : req.fromDate,
+          req.toDate > range.to ? range.to : req.toDate,
+        );
+        for (const dStr of reqDays) {
+          approvedUnpaidMap.set(`${req.employeeId}|${dStr}`, req);
+        }
+      }
+    }
+
+    interface LopItem {
+      date: string;
+      day: string;
+      code: string;
+      employee: string;
+      department: string;
+      manager: string;
+      lopCategory: 'Half-Day LOP' | 'Full-Day LOP' | 'Half-Day Leave';
+      lopDays: number;
+      checkIn: string;
+      checkOut: string;
+      lateBy: number | string;
+      reason: string;
+      _sort: string;
+    }
+
+    const itemsMap = new Map<string, LopItem>();
+
+    for (const e of employees) {
+      const days = facts.get(e.id);
+      if (!days) continue;
+
+      for (const d of days.values()) {
+        const key = `${e.id}|${d.date}`;
+        const leaveReq = approvedUnpaidMap.get(key);
+
+        // 1. Auto-closed: Missed check-out (takes priority over generic LOP)
+        const isMissedCheckout =
+          d.editNote?.includes('Missed check-out') ||
+          (d.status === 'Leave' && d.leaveType === 'Unpaid' && d.loginAt && !d.logoutAt && d.activeHours === 0);
+
+        if (isMissedCheckout) {
+          itemsMap.set(key, {
+            date: formatDisplayDate(d.date),
+            day: d.dayName,
+            code: e.employee_code,
+            employee: e.full_name,
+            department: e.department || 'General',
+            manager: e.manager_name || '—',
+            lopCategory: 'Full-Day LOP',
+            lopDays: 1.0,
+            checkIn: timeLabel(d.loginAt),
+            checkOut: '—',
+            lateBy: d.lateByMinutes > 0 ? d.lateByMinutes : '—',
+            reason: 'Auto-closed: Missed check-out (LOP)',
+            _sort: d.date,
+          });
+          continue;
+        }
+
+        // 2. Late check-in >= 25 min (Half-Day LOP or Half-Day Leave)
+        if (d.lateByMinutes >= 25 && d.loginAt) {
+          const isLop = d.leaveType === 'Unpaid';
+          itemsMap.set(key, {
+            date: formatDisplayDate(d.date),
+            day: d.dayName,
+            code: e.employee_code,
+            employee: e.full_name,
+            department: e.department || 'General',
+            manager: e.manager_name || '—',
+            lopCategory: isLop ? 'Half-Day LOP' : 'Half-Day Leave',
+            lopDays: 0.5,
+            checkIn: timeLabel(d.loginAt),
+            checkOut: timeLabel(d.logoutAt),
+            lateBy: d.lateByMinutes,
+            reason:
+              d.editNote ||
+              (isLop
+                ? `Late check-in by ${d.lateByMinutes}m (no leave balance)`
+                : `Late check-in by ${d.lateByMinutes}m (0.5 Earned leave deducted)`),
+            _sort: d.date,
+          });
+          continue;
+        }
+
+        // 3. No login activity (Absent on past working day)
+        if (d.status === 'No login') {
+          itemsMap.set(key, {
+            date: formatDisplayDate(d.date),
+            day: d.dayName,
+            code: e.employee_code,
+            employee: e.full_name,
+            department: e.department || 'General',
+            manager: e.manager_name || '—',
+            lopCategory: 'Full-Day LOP',
+            lopDays: 1.0,
+            checkIn: '—',
+            checkOut: '—',
+            lateBy: '—',
+            reason: 'No login activity (Absent)',
+            _sort: d.date,
+          });
+          continue;
+        }
+
+        // 4. Admin marked or stored Unpaid leave (LOP)
+        if (d.leaveType === 'Unpaid') {
+          const isHalf = d.status === 'Half day';
+          const defaultReason = isHalf ? 'Marked by admin: Half-Day LOP' : 'Marked by admin: Full-Day LOP';
+          const reason =
+            d.editNote
+              ? d.editNote.startsWith('Marked') || d.editNote.startsWith('Auto')
+                ? d.editNote
+                : `Marked by admin: ${d.editNote}`
+              : leaveReq
+              ? leaveReq.reason || leaveReq.decisionNote || defaultReason
+              : defaultReason;
+
+          itemsMap.set(key, {
+            date: formatDisplayDate(d.date),
+            day: d.dayName,
+            code: e.employee_code,
+            employee: e.full_name,
+            department: e.department || 'General',
+            manager: e.manager_name || '—',
+            lopCategory: isHalf ? 'Half-Day LOP' : 'Full-Day LOP',
+            lopDays: isHalf ? 0.5 : 1.0,
+            checkIn: timeLabel(d.loginAt),
+            checkOut: timeLabel(d.logoutAt),
+            lateBy: d.lateByMinutes > 0 ? d.lateByMinutes : '—',
+            reason,
+            _sort: d.date,
+          });
+          continue;
+        }
+
+        // 5. Approved Unpaid leave request not already matched
+        if (leaveReq) {
+          const isHalf = leaveReq.isHalfDay;
+          itemsMap.set(key, {
+            date: formatDisplayDate(d.date),
+            day: d.dayName,
+            code: e.employee_code,
+            employee: e.full_name,
+            department: e.department || 'General',
+            manager: e.manager_name || '—',
+            lopCategory: isHalf ? 'Half-Day LOP' : 'Full-Day LOP',
+            lopDays: isHalf ? 0.5 : 1.0,
+            checkIn: timeLabel(d.loginAt),
+            checkOut: timeLabel(d.logoutAt),
+            lateBy: d.lateByMinutes > 0 ? d.lateByMinutes : '—',
+            reason: leaveReq.reason || leaveReq.decisionNote || (isHalf ? 'Approved Unpaid Leave (Half Day)' : 'Approved Unpaid Leave (Full Day)'),
+            _sort: d.date,
+          });
+        }
+      }
+    }
+
+    let allItems = Array.from(itemsMap.values());
+
+    // Filter by lopCategory if specified
+    if (filter.lopCategory === 'half_day') {
+      allItems = allItems.filter((i) => i.lopCategory === 'Half-Day LOP' || i.lopCategory === 'Half-Day Leave');
+    } else if (filter.lopCategory === 'full_day') {
+      allItems = allItems.filter((i) => i.lopCategory === 'Full-Day LOP');
+    }
+
+    const rows = allItems
+      .sort((a, b) => (a._sort < b._sort ? 1 : a._sort > b._sort ? -1 : a.employee.localeCompare(b.employee)))
+      .map(({ _sort, ...row }) => row);
+
+    const totalLopDays = Number(rows.reduce((sum, r) => sum + r.lopDays, 0).toFixed(1));
+    const fullDayCount = rows.filter((r) => r.lopCategory === 'Full-Day LOP').length;
+    const halfDayCount = rows.filter((r) => r.lopCategory === 'Half-Day LOP').length;
+    const halfDayLeaveCount = rows.filter((r) => r.lopCategory === 'Half-Day Leave').length;
+
+    const note = `Loss of pay (LOP) report covering Half-Day LOP (${halfDayCount}), Full-Day LOP (${fullDayCount})${
+      halfDayLeaveCount > 0 ? `, and Half-Day Leave (${halfDayLeaveCount})` : ''
+    }. Total LOP deduction: ${totalLopDays} day${totalLopDays === 1 ? '' : 's'}.`;
+
+    return {
+      type: 'lop',
+      meta: {
+        companyName: COMPANY_HEADER.name,
+        companyAddress: COMPANY_HEADER.address,
+        reportTitle: 'Loss of pay (LOP) report',
+        periodLabel: range.label,
+        generatedAt: new Date().toISOString(),
+        totalRecords: rows.length,
+        note,
+      },
+      note,
+      columns,
+      rows,
+      totals: {
+        date: 'Total',
+        lopDays: totalLopDays,
+      },
+    };
+  }
+
   // Daily active hours
   private async buildActiveHours(filter: ReportFilterDto): Promise<ReportResult> {
     const range = resolveRange(filter);
@@ -1108,18 +1553,18 @@ export class ReportsService implements IReportsService {
     const allEmployees = await this.repository.findActiveEmployees(filter.department);
     const employees = this.filterEmployees(allEmployees, filter);
 
+    // Who was on leave in the chosen dates, and how much of it. Every count is
+    // for the period only; the balance is the one year-to-date figure, kept for
+    // reference. The whole-year view is Leave approvals → Balances.
     const columns: ReportColumn[] = [
       { key: 'code', label: 'Code', width: '100px' },
       { key: 'employee', label: 'Employee', width: '200px' },
       { key: 'department', label: 'Department', width: '160px' },
-      { key: 'opening', label: 'Opening balance', isNumeric: true },
-      { key: 'credited', label: 'Credited this FY', isNumeric: true },
-      { key: 'taken', label: 'Taken this FY', isNumeric: true },
-      { key: 'inPeriod', label: 'Taken in period', isNumeric: true },
-      { key: 'lop', label: 'Loss of pay', isNumeric: true },
+      { key: 'dates', label: 'Leave dates', width: '220px' },
+      { key: 'paid', label: 'Paid leave (EL)', isNumeric: true },
+      { key: 'lop', label: 'Loss of pay (LOP)', isNumeric: true },
       { key: 'pending', label: 'Awaiting approval', isNumeric: true },
-      { key: 'balance', label: 'Balance', isNumeric: true },
-      { key: 'lastLeave', label: 'Last leave', width: '120px' },
+      { key: 'balance', label: 'Balance today', isNumeric: true },
     ];
 
     const today = istNow().date;
@@ -1168,85 +1613,104 @@ export class ReportsService implements IReportsService {
       requestsByEmp.set(req.employeeId, list);
     }
 
-    let sumOpening = 0;
-    let sumCredited = 0;
-    let sumTaken = 0;
-    let sumInPeriod = 0;
+    const round1 = (n: number) => Math.round(n * 10) / 10;
+    const short = (date: string) =>
+      new Date(`${date}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+    const spanLabel = (from: string, to: string) =>
+      from === to
+        ? short(from)
+        : from.slice(0, 7) === to.slice(0, 7)
+          ? `${Number(from.slice(8))}–${short(to)}`
+          : `${short(from)} – ${short(to)}`;
+
+    let sumPaid = 0;
     let sumLop = 0;
     let sumPending = 0;
-    let sumBalance = 0;
 
-    const rows = employees.map((e) => {
-      const weeklyOff = e.weekly_off ? String(e.weekly_off).split(',').filter(Boolean) : ['Sun'];
-      const openingLeave = Number(e.opening_leave ?? 0);
-      const empReqs = requestsByEmp.get(e.id) || [];
+    const rows = employees
+      // Test logins are not people.
+      .filter((e) => !String(e.employee_code ?? '').toUpperCase().startsWith('TEST-'))
+      .map((e) => {
+        const weeklyOff = e.weekly_off ? String(e.weekly_off).split(',').filter(Boolean) : ['Sun'];
+        const empReqs = requestsByEmp.get(e.id) || [];
 
-      // Compute standard ledger
-      const ledger = computeLedger({
-        openingLeave,
-        carryCap: yearConfig.carryCap,
-        weeklyOff,
-        holidays: holidaySet,
-        dateOfJoining: e.date_of_joining,
-        dateOfLeaving: e.date_of_leaving,
-        yearStart: yearConfig.startDate,
-        leavePerMonth: yearConfig.leavePerMonth,
-        uptoMonth: today > yearConfig.endDate ? monthKeyOf(yearConfig.endDate) : monthKeyOf(today),
-        requests: empReqs,
-        adjustments: 0,
-      });
+        let paid = 0;
+        let lop = 0;
+        let pending = 0;
+        const dates: string[] = [];
 
-      // Calculate working leave days falling in [range.from, range.to]
-      let inPeriod = 0;
-      for (const req of empReqs) {
-        if (req.status !== 'Approved') continue;
-        if (req.toDate < range.from || req.fromDate > range.to) continue;
-        const spanStart = req.fromDate < range.from ? range.from : req.fromDate;
-        const spanEnd = req.toDate > range.to ? range.to : req.toDate;
-        const wDays = workingDaysBetween(spanStart, spanEnd, weeklyOff, holidaySet);
-        const days = req.isHalfDay ? wDays * 0.5 : wDays;
-        inPeriod += days;
-      }
-      inPeriod = Math.round(inPeriod * 10) / 10;
+        const inRange = empReqs
+          .filter((r) => r.status === 'Approved' || r.status === 'Pending')
+          .filter((r) => r.toDate >= range.from && r.fromDate <= range.to)
+          .sort((a, b) => a.fromDate.localeCompare(b.fromDate));
 
-      // Pending working days awaiting approval
-      let pending = 0;
-      for (const req of empReqs) {
-        if (req.status === 'Pending') {
-          pending += Number(req.days);
+        for (const req of inRange) {
+          const spanStart = req.fromDate < range.from ? range.from : req.fromDate;
+          const spanEnd = req.toDate > range.to ? range.to : req.toDate;
+          const working = workingDaysBetween(spanStart, spanEnd, weeklyOff, holidaySet);
+          // A one-day leave on a weekly off made a working day by hand: its
+          // stored days count (the ledger does the same).
+          const days =
+            working === 0 && req.fromDate === req.toDate && req.days > 0
+              ? req.days
+              : req.isHalfDay ? working * 0.5 : working;
+          if (days <= 0) continue;
+
+          const unpaid = req.leaveType === 'Unpaid';
+          let tag = req.isHalfDay ? ' (half)' : '';
+          if (req.status === 'Pending') {
+            pending += days;
+            tag += ' · awaiting';
+          } else if (unpaid) {
+            lop += days;
+            tag += ' · LOP';
+          } else {
+            // An earned request the balance only partly covered: its unpaid
+            // share is spread evenly over its days, as the ledger does.
+            const unpaidShare = req.days > 0 ? Math.min(1, (req.unpaidDays ?? 0) / req.days) : 0;
+            lop += days * unpaidShare;
+            paid += days * (1 - unpaidShare);
+            if (unpaidShare > 0) tag += ' · part LOP';
+          }
+          dates.push(spanLabel(spanStart, spanEnd) + tag);
         }
-      }
-      pending = Math.round(pending * 10) / 10;
 
-      // Determine latest approved leave date
-      const approvedPast = empReqs
-        .filter((r) => r.status === 'Approved')
-        .sort((a, b) => b.fromDate.localeCompare(a.fromDate));
-      const lastLeave = approvedPast.length > 0 ? approvedPast[0].toDate : (ledger.lastLeaveOn || '—');
+        if (dates.length === 0) return null;
 
-      sumOpening += ledger.opening;
-      sumCredited += ledger.credited;
-      sumTaken += ledger.taken;
-      sumInPeriod += inPeriod;
-      sumLop += ledger.lop;
-      sumPending += pending;
-      sumBalance += ledger.balance;
+        const ledger = computeLedger({
+          openingLeave: Number(e.opening_leave ?? 0),
+          carryCap: yearConfig.carryCap,
+          weeklyOff,
+          holidays: holidaySet,
+          dateOfJoining: e.date_of_joining,
+          dateOfLeaving: e.date_of_leaving,
+          yearStart: yearConfig.startDate,
+          leavePerMonth: yearConfig.leavePerMonth,
+          uptoMonth: today > yearConfig.endDate ? monthKeyOf(yearConfig.endDate) : monthKeyOf(today),
+          requests: empReqs,
+          adjustments: 0,
+        });
 
-      return {
-        code: e.employee_code,
-        employee: e.full_name,
-        department: e.department || 'General',
-        opening: ledger.opening,
-        credited: ledger.credited,
-        taken: ledger.taken,
-        inPeriod,
-        lop: ledger.lop,
-        pending,
-        balance: ledger.balance,
-        lastLeave,
-      };
-    });
+        sumPaid += paid;
+        sumLop += lop;
+        sumPending += pending;
 
+        const department = String(e.department ?? '').trim();
+        return {
+          code: e.employee_code,
+          employee: e.full_name,
+          department: department && department !== '0' ? department : '—',
+          dates: dates.join(', '),
+          paid: round1(paid),
+          lop: round1(lop),
+          pending: round1(pending),
+          balance: ledger.balance,
+        };
+      })
+      .filter((row): row is NonNullable<typeof row> => row !== null)
+      .sort((a, b) => String(a.employee).localeCompare(String(b.employee)));
+
+    const note = 'Only people with leave in the selected dates. EL, LOP and awaiting approval count working days inside the period; balance is as of today.';
     return {
       type: 'leave',
       meta: {
@@ -1256,20 +1720,16 @@ export class ReportsService implements IReportsService {
         periodLabel: range.label,
         generatedAt: new Date().toISOString(),
         totalRecords: rows.length,
-        note: '2 paid leaves are credited on the 1st of every month. Balance = opening + credited − taken.',
+        note,
       },
-      note: '2 paid leaves are credited on the 1st of every month. Balance = opening + credited − taken.',
+      note,
       columns,
       rows,
       totals: {
         employee: 'Total',
-        opening: Math.round(sumOpening * 10) / 10,
-        credited: Math.round(sumCredited * 10) / 10,
-        taken: Math.round(sumTaken * 10) / 10,
-        inPeriod: Math.round(sumInPeriod * 10) / 10,
-        lop: Math.round(sumLop * 10) / 10,
-        pending: Math.round(sumPending * 10) / 10,
-        balance: Math.round(sumBalance * 10) / 10,
+        paid: round1(sumPaid),
+        lop: round1(sumLop),
+        pending: round1(sumPending),
       },
     };
   }
@@ -1450,6 +1910,126 @@ export class ReportsService implements IReportsService {
   }
 
   // 1. All Active Employees Report
+  /**
+   * Shift timings and weekly offs — admins only. One row per active employee
+   * with the shift and weekly off on their profile today.
+   */
+  private async buildShiftRoster(filter: ReportFilterDto): Promise<ReportResult> {
+    const allEmployees = await this.repository.findActiveEmployees(filter.department);
+    const employees = this.filterEmployees(allEmployees, filter)
+      // Test logins are not people.
+      .filter((e) => !String(e.employee_code ?? '').toUpperCase().startsWith('TEST-'))
+      .sort((a, b) => String(a.full_name).localeCompare(String(b.full_name)));
+
+    const columns: ReportColumn[] = [
+      { key: 'code', label: 'Emp ID', width: '100px' },
+      { key: 'employee', label: 'Name', width: '220px' },
+      { key: 'department', label: 'Department', width: '160px' },
+      { key: 'designation', label: 'Designation', width: '200px' },
+      { key: 'workMode', label: 'Work mode', width: '100px' },
+      { key: 'shiftStart', label: 'Shift start', width: '100px' },
+      { key: 'shiftEnd', label: 'Shift end', width: '100px' },
+      { key: 'weeklyOff', label: 'Weekly off', width: '160px' },
+    ];
+
+    const hhmm = (t: string | null | undefined) => (t ? String(t).slice(0, 5) : '—');
+    const DAY_ORDER = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    const offDays = (raw: string | null | undefined) => {
+      const days = String(raw ?? '').split(',').map((d) => d.trim()).filter(Boolean);
+      days.sort((a, b) => DAY_ORDER.indexOf(a) - DAY_ORDER.indexOf(b));
+      return days.length > 0 ? days.join(', ') : '—';
+    };
+
+    const rows = employees.map((e) => {
+      const department = String(e.department ?? '').trim();
+      return {
+        code: e.employee_code,
+        employee: e.full_name,
+        department: department && department !== '0' ? department : '—',
+        designation: e.designation || '—',
+        workMode: e.work_mode || '—',
+        shiftStart: hhmm(e.shift_start),
+        shiftEnd: hhmm(e.shift_end),
+        weeklyOff: offDays(e.weekly_off),
+      };
+    });
+
+    return {
+      type: 'shift_roster',
+      meta: {
+        companyName: COMPANY_HEADER.name,
+        companyAddress: COMPANY_HEADER.address,
+        reportTitle: 'Shift timings and weekly offs',
+        generatedAt: new Date().toISOString(),
+        totalRecords: rows.length,
+      },
+      columns,
+      rows,
+    };
+  }
+
+  /**
+   * Productivity auto LOP — admins only. One row per day the Sales
+   * productivity rule decided short, read from `hrms_productivity_days`.
+   * Leavers stay in: a day decided before someone left is still on the books.
+   */
+  private async buildProductivityLop(filter: ReportFilterDto): Promise<ReportResult> {
+    const range = resolveRange(filter);
+    const [days, allEmployees] = await Promise.all([
+      this.repository.findProductivityShortDays(range.from, range.to),
+      this.repository.findAllEmployees(),
+    ]);
+    const byId = new Map(this.filterEmployees(allEmployees, filter).map((e) => [Number(e.id), e]));
+
+    const columns: ReportColumn[] = [
+      { key: 'date', label: 'Date', width: '110px' },
+      { key: 'code', label: 'Emp Code', width: '100px' },
+      { key: 'employee', label: 'Name', width: '200px' },
+      { key: 'manager', label: 'Reporting Manager', width: '180px' },
+      { key: 'workMode', label: 'Work mode', width: '100px' },
+      { key: 'department', label: 'Department', width: '140px' },
+      { key: 'activeHours', label: 'Active hrs', width: '100px' },
+      { key: 'status', label: 'Status', width: '160px' },
+    ];
+
+    const hm = (minutes: number) => {
+      const m = Math.max(0, Math.round(Number(minutes) || 0));
+      return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m`;
+    };
+
+    const rows = days.flatMap((d) => {
+      const e = byId.get(Number(d.employee_id));
+      if (!e) return [];
+      const department = String(e.department ?? '').trim();
+      return [
+        {
+          date: d.work_date,
+          code: e.employee_code,
+          employee: e.full_name,
+          manager: e.manager_name || '—',
+          workMode: e.work_mode || '—',
+          department: department && department !== '0' ? department : '—',
+          activeHours: hm(Number(d.panel_minutes) + Number(d.activity_minutes)),
+          status: d.outcome === 'unpaid' ? 'Auto LOP applied' : 'Auto EL applied',
+        },
+      ];
+    });
+
+    return {
+      type: 'productivity_lop',
+      meta: {
+        companyName: COMPANY_HEADER.name,
+        companyAddress: COMPANY_HEADER.address,
+        reportTitle: 'Productivity auto LOP marked',
+        periodLabel: range.label,
+        generatedAt: new Date().toISOString(),
+        totalRecords: rows.length,
+      },
+      columns,
+      rows,
+    };
+  }
+
   private async buildAllEmployees(filter: ReportFilterDto): Promise<ReportResult> {
     const allEmployees = await this.repository.findActiveEmployees(filter.department);
     const employees = this.filterEmployees(allEmployees, filter);
@@ -2178,12 +2758,13 @@ export class ReportsService implements IReportsService {
 
     const lines: string[] = [];
 
-    // Header metadata block matching company letterhead format
-    lines.push(`"${report.meta.companyName}"`);
-    lines.push(`"${report.meta.companyAddress}"`);
+    // Title block. No company name or address: HR asked for them off every download.
     lines.push(`"${report.meta.reportTitle}"`);
     if (report.meta.reportSubtitle) {
       lines.push(`"${report.meta.reportSubtitle}"`);
+    }
+    if (report.meta.periodLabel) {
+      lines.push(`"Period: ${report.meta.periodLabel}"`);
     }
     lines.push('');
 

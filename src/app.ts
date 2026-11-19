@@ -39,6 +39,14 @@ export const createApp = (): Application => {
     next();
   });
 
+  // Ordinary traffic starts the productivity check now and then (at most every
+  // few minutes, in the background). The panels' trackers call every minute, so
+  // it runs without a scheduler — Cloud Run has none that survives scale-to-zero.
+  app.use('/api/v1', (_req, _res, next) => {
+    container.productivityService.kick();
+    next();
+  });
+
   app.use('/api/v1', createApiRouter(container));
 
   app.use(notFoundHandler);

@@ -4,6 +4,7 @@ import {
   ApprovalsView,
   DecideLeaveDto,
   DecisionResult,
+  DeleteLeaveResult,
   EditApprovedLeaveDto,
   EditApprovedResult,
   LeavePreview,
@@ -58,6 +59,13 @@ export interface ILeaveService {
 
   getOnLeaveToday(): Promise<OnLeaveEmployee[]>;
 
+  /**
+   * Loss-of-pay days the leave ledger settles in each month asked for
+   * (`YYYY-MM`) — unpaid leave plus any leave the balance could not cover.
+   * Salary reads it.
+   */
+  lopDaysByMonth(employeeId: number, months: string[]): Promise<Map<string, number>>;
+
   // ---------------------------------------------------------------- approvals
 
   /** Pending queue, team balances and the request log, scoped to the manager's tree. */
@@ -77,6 +85,15 @@ export interface ILeaveService {
   editApproved(adminId: number, dto: EditApprovedLeaveDto): Promise<EditApprovedResult>;
 
   /**
+   * Admin-only: remove a leave request of any status for good, with a reason.
+   * The full row goes to the audit log first. Deleting an APPROVED request
+   * also returns its days to the balance, drops the loss of pay it caused and
+   * undoes what it wrote to attendance — all of which follow from the row
+   * being gone, because balance and day status are derived on read.
+   */
+  deleteRequest(adminId: number, requestId: number, note: string): Promise<DeleteLeaveResult>;
+
+  /**
    * Admin-only: what ONE day's leave should be, set from the attendance
    * calendar. `choice` null means the day was not leave at all.
    *
@@ -92,6 +109,14 @@ export interface ILeaveService {
     date: string,
     choice: DayLeaveChoice | null,
     note: string,
+    /** The approval note on a new request. Defaults to "Marked by admin …". */
+    decisionNote?: string,
+    /**
+     * An admin's Edit day: leave may be recorded on the person's weekly off —
+     * choosing it says the day was a working day (the saved manual row then
+     * marks it working for every later read).
+     */
+    options?: { allowOffDay?: boolean },
   ): Promise<string | null>;
 }
 

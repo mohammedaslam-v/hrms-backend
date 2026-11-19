@@ -1,12 +1,18 @@
 import {
   addMonths,
+  ApprovalProgress,
+  ApprovalStep,
   computeLedger,
   daysByMonth,
   eachDay,
+  formatDecisionNote,
   formatMonthRange,
+  isSpecialSeniorApprover,
+  isTwoLevelLeave,
   LeaveLedger,
   LeaveType,
   monthKeyOf,
+  parseApprovalProgress,
   projectRequest,
   round1,
   workingDaysBetween,
@@ -24,6 +30,7 @@ import {
   ApprovalsView,
   DecideLeaveDto,
   DecisionResult,
+  DeleteLeaveResult,
   EditApprovedLeaveDto,
   EditApprovedResult,
   HolidayRecord,
@@ -42,6 +49,8 @@ interface Resolved {
   year: LeaveYearConfig;
   holidays: HolidayRecord[];
   holidaySet: Set<string>;
+  /** Usual weekly offs made working days by hand — see findMarkedWorkingDates. */
+  workingDates: Set<string>;
   requests: StoredLeaveRequest[];
   ledger: LeaveLedger;
   /** Kept so a proposed request can be projected through the same simulation. */
@@ -185,9 +194,9 @@ export class LeaveService implements ILeaveService {
             toDate,
           );
       if (clash) {
-        const { context, holidaySet, ledger } = resolved;
+        const { context, holidaySet, workingDates, ledger } = resolved;
         const calendarDays = eachDay(fromDate, toDate).length;
-        const workingDays = workingDaysBetween(fromDate, toDate, context.weeklyOff, holidaySet);
+        const workingDays = workingDaysBetween(fromDate, toDate, context.weeklyOff, holidaySet, workingDates);
         const days = isHalfDay ? Math.round(workingDays * 0.5 * 10) / 10 : workingDays;
         const skippedDays = calendarDays - workingDays;
         return {
@@ -293,6 +302,7 @@ export class LeaveService implements ILeaveService {
   async getApprovals(managerId: number): Promise<ApprovalsView> {
     const viewer = this.authService ? await this.authService.getCurrentEmployee(managerId) : null;
     const isAdmin = viewer?.tiers.includes('admin') ?? false;
+    const isSpecialSenior = isSpecialSeniorApprover(managerId, viewer?.workEmail);
 
     const team = await this.orgRepository.findReportingTree(managerId);
     const teamIds = team.map((t) => t.id);
@@ -304,10 +314,18 @@ export class LeaveService implements ILeaveService {
     }
 
     // When an admin is logged in, show all pending leave approval requests.
-    // For managers, only their reporting tree's requests are shown.
-    const pendingRequests = isAdmin
+    // When a special senior approver (e.g. Rhea Diwan) is logged in, include her reporting
+    // tree's requests PLUS any 2-level pending requests for Sales and Operations.
+    // For other managers, only their reporting tree's requests are shown.
+    let pendingRequests = (isAdmin || isSpecialSenior)
       ? await this.leaveRepository.findPendingForEmployees()
       : await this.leaveRepository.findPendingForEmployees(teamIds);
+
+    if (!isAdmin && isSpecialSenior) {
+      pendingRequests = pendingRequests.filter(
+        (req) => teamIds.includes(req.employeeId) || isTwoLevelLeave(req),
+      );
+    }
 
     // The ledger for each report, plus any applicant whose request is pending,
     // so the queue can show the consequence of a decision and the balances table can be built.
@@ -332,6 +350,20 @@ export class LeaveService implements ILeaveService {
       // from the baseline so it is not counted twice.
       const projected = this.project(resolved, request);
 
+      const isTwoLevel = isTwoLevelLeave(request);
+      const progress = parseApprovalProgress(request.decisionNote);
+      const directApproval = progress?.l1 ?? null;
+      const seniorApproval = progress?.l2 ?? null;
+      const hasViewerApproved = Boolean(
+        (directApproval && directApproval.by === managerId) ||
+        (seniorApproval && seniorApproval.by === managerId),
+      );
+      const awaitingApproval = !isTwoLevel ? null
+        : (!directApproval && !seniorApproval) ? 'both'
+        : (!directApproval) ? 'direct'
+        : (!seniorApproval) ? 'senior'
+        : null;
+
       return {
         id: request.id,
         ref: request.ref,
@@ -339,6 +371,7 @@ export class LeaveService implements ILeaveService {
         employeeName,
         employeeCode,
         designation,
+        department: request.department ?? null,
         leaveType: request.leaveType,
         fromDate: request.fromDate,
         toDate: request.toDate,
@@ -352,11 +385,20 @@ export class LeaveService implements ILeaveService {
         paidDays: projected.paidDays,
         unpaidDays: projected.lopDays,
         createsLossOfPay: projected.lopDays > 0,
+        isTwoLevel,
+        directApproval,
+        seniorApproval,
+        directManagerName: request.directManagerName ?? null,
+        managerName: request.directManagerName ?? null,
+        grandManagerName: request.grandManagerName ?? null,
+        hasViewerApproved,
+        awaitingApproval,
+        decisionNote: request.decisionNote ?? null,
       };
     });
 
     const balanceMembers = [...team];
-    if (isAdmin) {
+    if (isAdmin || isSpecialSenior) {
       for (const req of pendingRequests) {
         if (!balanceMembers.some((m) => m.id === req.employeeId)) {
           balanceMembers.push({
@@ -386,34 +428,45 @@ export class LeaveService implements ILeaveService {
       };
     });
 
+    // Every request in the leave year, newest first — the page filters and searches all of them.
     const logRows = await this.leaveRepository.findRequestsForEmployees(
       isAdmin ? undefined : teamIds,
       year.startDate,
       year.endDate,
-      200,
     );
     const nameOf = new Map(team.map((t) => [t.id, t.fullName]));
+    const allManagers = await this.leaveRepository.findAllManagers();
 
     return {
       pending,
       balances,
-      log: logRows.map((r) => ({
-        id: r.id,
-        ref: r.ref,
-        employeeId: r.employeeId,
-        leaveType: r.leaveType,
-        fromDate: r.fromDate,
-        toDate: r.toDate,
-        days: r.days,
-        unpaidDays: r.unpaidDays,
-        status: r.status,
-        employeeName: r.employeeName ?? nameOf.get(r.employeeId) ?? '—',
-        reason: r.reason,
-        appliedOn: r.appliedOn,
-        decidedBy: r.decidedBy,
-        isHalfDay: r.isHalfDay,
-        halfDaySession: r.halfDaySession,
-      })),
+      log: logRows.map((r) => {
+        const isTwoLevel = isTwoLevelLeave(r);
+        const progress = parseApprovalProgress(r.decisionNote);
+        return {
+          id: r.id,
+          ref: r.ref,
+          employeeId: r.employeeId,
+          leaveType: r.leaveType,
+          fromDate: r.fromDate,
+          toDate: r.toDate,
+          days: r.days,
+          unpaidDays: r.unpaidDays,
+          status: r.status,
+          employeeName: r.employeeName ?? nameOf.get(r.employeeId) ?? '—',
+          reason: r.reason,
+          appliedOn: r.appliedOn,
+          decidedBy: r.decidedBy,
+          isHalfDay: r.isHalfDay,
+          halfDaySession: r.halfDaySession,
+          isTwoLevel,
+          directApproval: progress?.l1 ?? null,
+          seniorApproval: progress?.l2 ?? null,
+          directManagerName: r.directManagerName ?? null,
+          managerName: r.directManagerName ?? null,
+          decisionNote: r.decisionNote ?? null,
+        };
+      }),
       policy: {
         leaveYear: year.leaveYear,
         leavePerMonth: year.leavePerMonth,
@@ -422,6 +475,7 @@ export class LeaveService implements ILeaveService {
       },
       teamSize: team.length,
       isAdmin,
+      allManagers,
     };
   }
 
@@ -431,10 +485,18 @@ export class LeaveService implements ILeaveService {
 
     const viewer = this.authService ? await this.authService.getCurrentEmployee(managerId) : null;
     const isAdmin = viewer?.tiers.includes('admin') ?? false;
+    const isSpecialSenior = isSpecialSeniorApprover(managerId, viewer?.workEmail);
 
-    // Scope check: the request must belong to someone in this manager's tree, unless viewer is admin.
+    if (managerId === request.employeeId) {
+      throw ApiError.forbidden('You cannot approve or reject your own leave request.');
+    }
+
+    const isTwoLevel = isTwoLevelLeave(request);
+
+    // Scope check: the request must belong to someone in this manager's tree, unless viewer is admin,
+    // OR viewer is a special senior approver (e.g. Rhea Diwan) deciding a 2-level leave request.
     // A manager cannot decide their own leave, and the tree excludes them.
-    if (!isAdmin) {
+    if (!isAdmin && !(isSpecialSenior && isTwoLevel)) {
       const team = await this.orgRepository.findReportingTree(managerId);
       const member = team.find((t) => t.id === request.employeeId);
       if (!member) {
@@ -449,17 +511,30 @@ export class LeaveService implements ILeaveService {
       );
     }
 
-    let convertedToUnpaid = false;
-    let message: string;
-
     if (dto.decision === 'Rejected') {
-      await this.leaveRepository.decide(request.id, 'Rejected', managerId, dto.note ?? null, 0);
-      message = `${request.ref} rejected.`;
-    } else {
+      const progress = parseApprovalProgress(request.decisionNote) ?? {};
+      const today = new Date().toISOString().slice(0, 10);
+      const approverName = viewer?.fullName || (isAdmin ? 'Admin' : 'Manager');
+      const rejectAuditLine = `[Rejected by ${approverName} on ${today}]${dto.note ? `: ${dto.note}` : ''}`;
+      const finalNote = formatDecisionNote(request.decisionNote, progress, rejectAuditLine);
+
+      await this.leaveRepository.decide(request.id, 'Rejected', managerId, finalNote, 0);
+      await this.leaveRepository.recordAudit(
+        managerId,
+        'leave.rejected',
+        request.id,
+        { status: request.status, leaveType: request.leaveType },
+        { status: 'Rejected', note: dto.note ?? null },
+      );
+      return { view: await this.getApprovals(managerId), message: `${request.ref} rejected.`, convertedToUnpaid: false };
+    }
+
+    // Decision is 'Approved'
+    if (!isTwoLevel) {
       const resolved = await this.resolve(request.employeeId);
       const projected = this.project(resolved, request);
       const unpaid = projected.lopDays;
-      convertedToUnpaid = unpaid > 0;
+      const convertedToUnpaid = unpaid > 0;
 
       // `unpaid_days` is stored as a record of what the approver was shown. The
       // ledger derives loss of pay independently, month by month, so the two
@@ -472,20 +547,118 @@ export class LeaveService implements ILeaveService {
         unpaid,
       );
 
-      message = convertedToUnpaid
+      const message = convertedToUnpaid
         ? `${request.ref} approved — ${projected.paidDays} paid and ${unpaid} as loss of pay.`
         : `${request.ref} approved.`;
+
+      await this.leaveRepository.recordAudit(
+        managerId,
+        'leave.approved',
+        request.id,
+        { status: request.status, leaveType: request.leaveType },
+        {
+          status: 'Approved',
+          leaveType: convertedToUnpaid ? 'Unpaid' : request.leaveType,
+          convertedToUnpaid,
+        },
+      );
+
+      return { view: await this.getApprovals(managerId), message, convertedToUnpaid };
     }
+
+    // 2-level approval logic for Sales and Operations departments
+    const progress: ApprovalProgress = parseApprovalProgress(request.decisionNote) ?? { l1: null, l2: null };
+    const isDirectManager = request.managerId === managerId;
+    const isGrandManager = request.grandManagerId === managerId;
+    const canApproveL2 = isGrandManager || isAdmin || isSpecialSenior;
+
+    let slot: 'l1' | 'l2';
+    let role: 'manager' | 'senior_manager' | 'admin';
+
+    if (isDirectManager) {
+      if (progress.l1) {
+        throw ApiError.badRequest('You have already approved this request at Level 1 (Direct Manager). It is awaiting Level 2 approval.');
+      }
+      slot = 'l1';
+      role = 'manager';
+    } else if (canApproveL2) {
+      if (progress.l2) {
+        throw ApiError.badRequest('This request has already received Level 2 (Senior / Admin) approval.');
+      }
+      if (progress.l1 && progress.l1.by === managerId) {
+        throw ApiError.badRequest('You have already approved this request at Level 1. Level 2 approval must be provided by a different approver.');
+      }
+      slot = 'l2';
+      role = isAdmin ? 'admin' : 'senior_manager';
+    } else {
+      throw ApiError.forbidden('Only the direct manager, senior manager, Rhea Diwan, or an administrator can approve leave for Sales and Operations department employees.');
+    }
+
+    const nowIso = new Date().toISOString();
+    const today = nowIso.slice(0, 10);
+    const approverName = viewer?.fullName || (role === 'admin' ? 'Admin' : 'Manager');
+    const step: ApprovalStep = {
+      by: managerId,
+      name: approverName,
+      at: nowIso,
+      note: dto.note ?? null,
+      role,
+    };
+
+    if (slot === 'l1') {
+      progress.l1 = step;
+    } else {
+      progress.l2 = step;
+    }
+
+    const bothApproved = Boolean(progress.l1 && progress.l2);
+    const slotLabel = slot === 'l1' ? 'Direct Manager' : (role === 'admin' ? 'Admin' : 'Senior Manager');
+    const auditLine = `[Level ${slot === 'l1' ? '1' : '2'} (${slotLabel}) Approved by ${approverName} on ${today}]${dto.note ? `: ${dto.note}` : ''}`;
+    const formattedNote = formatDecisionNote(request.decisionNote, progress, auditLine);
+
+    if (!bothApproved) {
+      await this.leaveRepository.updatePendingProgress(request.id, formattedNote);
+      await this.leaveRepository.recordAudit(
+        managerId,
+        'leave.partially_approved',
+        request.id,
+        { status: request.status, progressBefore: parseApprovalProgress(request.decisionNote) },
+        { status: 'Pending', slot, progressAfter: progress },
+      );
+
+      const awaitingLabel = slot === 'l1' ? 'Senior Manager or Admin' : 'Direct Manager';
+      const message = `${request.ref}: Approved (1 of 2). Awaiting approval from ${awaitingLabel}.`;
+      return { view: await this.getApprovals(managerId), message, convertedToUnpaid: false };
+    }
+
+    // Both approved: complete the approval
+    const resolved = await this.resolve(request.employeeId);
+    const projected = this.project(resolved, request);
+    const unpaid = projected.lopDays;
+    const convertedToUnpaid = unpaid > 0;
+
+    await this.leaveRepository.decide(
+      request.id,
+      'Approved',
+      managerId,
+      formattedNote,
+      unpaid,
+    );
+
+    const message = convertedToUnpaid
+      ? `${request.ref} fully approved (2 of 2) — ${projected.paidDays} paid and ${unpaid} as loss of pay.`
+      : `${request.ref} fully approved (2 of 2).`;
 
     await this.leaveRepository.recordAudit(
       managerId,
-      dto.decision === 'Approved' ? 'leave.approved' : 'leave.rejected',
+      'leave.approved',
       request.id,
       { status: request.status, leaveType: request.leaveType },
       {
-        status: dto.decision,
+        status: 'Approved',
         leaveType: convertedToUnpaid ? 'Unpaid' : request.leaveType,
         convertedToUnpaid,
+        progress,
       },
     );
 
@@ -547,6 +720,7 @@ export class LeaveService implements ILeaveService {
         dto.toDate,
         resolved.context.weeklyOff,
         resolved.holidaySet,
+        resolved.workingDates,
       );
     }
 
@@ -659,12 +833,80 @@ export class LeaveService implements ILeaveService {
     };
   }
 
+  async deleteRequest(adminId: number, requestId: number, note: string): Promise<DeleteLeaveResult> {
+    const viewer = this.authService ? await this.authService.getCurrentEmployee(adminId) : null;
+    const isAdmin = viewer?.tiers.includes('admin') ?? false;
+    if (!isAdmin) {
+      throw ApiError.forbidden('Only administrators can delete leave requests.');
+    }
+
+    const trimmedNote = (note || '').trim();
+    if (trimmedNote.length < 3) {
+      throw ApiError.badRequest('A reason for deleting this leave is required.');
+    }
+
+    const request = await this.leaveRepository.findById(requestId);
+    if (!request) {
+      throw ApiError.notFound('That leave request could not be found.');
+    }
+
+    const wasApproved = request.status === 'Approved';
+
+    // The attendance side first: it needs the request's dates, and if it fails
+    // the request is still there to try again. Only an approved leave ever
+    // reached attendance — pending, rejected and cancelled ones never did.
+    const restored = wasApproved
+      ? await this.leaveRepository.restoreAttendanceAfterLeaveDeleted(
+          request.employeeId,
+          request.fromDate,
+          request.toDate,
+          request.ref,
+          adminId,
+        )
+      : { removed: 0, detached: 0 };
+
+    // The whole row goes to the audit log — after the delete it exists nowhere else.
+    await this.leaveRepository.recordAudit(
+      adminId,
+      'leave.deleted',
+      request.id,
+      request,
+      {
+        deleted: true,
+        deletedBy: viewer?.fullName ?? 'Admin',
+        note: trimmedNote,
+        attendanceRowsRemoved: restored.removed,
+        attendanceRowsDetached: restored.detached,
+      },
+    );
+
+    await this.leaveRepository.deleteRequest(request.id);
+
+    let message = `${request.ref} deleted.`;
+    if (wasApproved) {
+      const paidDays = Math.max(0, round1(request.days - request.unpaidDays));
+      if (paidDays > 0) {
+        message += ` ${paidDays} day(s) returned to the balance.`;
+      }
+      if (request.unpaidDays > 0) {
+        message += ` ${request.unpaidDays} day(s) of loss of pay removed.`;
+      }
+      if (restored.removed > 0 || restored.detached > 0) {
+        message += ` Attendance on ${restored.removed + restored.detached} day(s) restored.`;
+      }
+    }
+
+    return { view: await this.getApprovals(adminId), message };
+  }
+
   async setDayLeave(
     adminId: number,
     employeeId: number,
     date: string,
     choice: DayLeaveChoice | null,
     note: string,
+    decisionNote?: string,
+    options?: { allowOffDay?: boolean },
   ): Promise<string | null> {
     const existing = await this.leaveRepository.findOverlapping(employeeId, date, date);
 
@@ -728,6 +970,8 @@ export class LeaveService implements ILeaveService {
     if (date < resolved.context.dateOfJoining) {
       throw ApiError.badRequest('That date is before the employee joined.');
     }
+    // An admin choosing leave for a weekly off is declaring it a working day.
+    if (options?.allowOffDay) resolved.workingDates.add(date);
     const preview = this.buildPreview(resolved, date, date, choice.leaveType, choice.isHalfDay);
     if (preview.days <= 0) {
       throw ApiError.badRequest('That day is a weekly off, so there is no leave to record.');
@@ -757,7 +1001,7 @@ export class LeaveService implements ILeaveService {
       created.id,
       'Approved',
       adminId,
-      `Marked by admin from the attendance calendar: ${note}`,
+      decisionNote ?? `Marked by admin from the attendance calendar: ${note}`,
       unpaid,
     );
     await this.leaveRepository.recordAudit(
@@ -781,14 +1025,35 @@ export class LeaveService implements ILeaveService {
     return projectRequest(baseline, { ...request, status: 'Approved' });
   }
 
+  async lopDaysByMonth(employeeId: number, months: string[]): Promise<Map<string, number>> {
+    // The ledger's figure, not a count of Unpaid requests: it already halves a
+    // half day, skips weekly offs inside a range, and includes earned leave the
+    // balance could not cover. One ledger covers a whole leave year, so it is
+    // read once per year, however many months are asked for.
+    const out = new Map<string, number>();
+    let resolved: Resolved | null = null;
+    for (const month of [...new Set(months)].sort()) {
+      const date = `${month}-01`;
+      if (!resolved || date < resolved.year.startDate || date > resolved.year.endDate) {
+        resolved = await this.resolve(employeeId, date);
+      }
+      out.set(month, resolved.ledger.rows.find((r) => r.month === month)?.lop ?? 0);
+    }
+    return out;
+  }
+
   // ---------------------------------------------------------------- internals
 
-  private async resolve(employeeId: number): Promise<Resolved> {
+  /**
+   * `onDate` picks the leave year to read — today's unless a caller needs an
+   * earlier one, as salary does for a month in last year's ledger.
+   */
+  private async resolve(employeeId: number, onDate?: string): Promise<Resolved> {
     const today = new Date().toISOString().slice(0, 10);
 
     const [context, year] = await Promise.all([
       this.leaveRepository.findLeaveContext(employeeId),
-      this.leaveRepository.findLeaveYearForDate(today),
+      this.leaveRepository.findLeaveYearForDate(onDate ?? today),
     ]);
 
     if (!context) throw ApiError.notFound('No HRMS profile found for this account.');
@@ -799,10 +1064,11 @@ export class LeaveService implements ILeaveService {
       );
     }
 
-    const [holidays, requests, adjustments] = await Promise.all([
+    const [holidays, requests, adjustments, workingDates] = await Promise.all([
       this.leaveRepository.findHolidays(year.startDate, year.endDate),
       this.leaveRepository.findRequestsInYear(employeeId, year.startDate, year.endDate),
       this.leaveRepository.sumAdjustments(employeeId, year.leaveYear),
+      this.leaveRepository.findMarkedWorkingDates(employeeId, year.startDate, year.endDate),
     ]);
 
     const ledgerInput = {
@@ -826,6 +1092,7 @@ export class LeaveService implements ILeaveService {
       year,
       holidays,
       holidaySet: new Set(holidays.map((h) => h.date)),
+      workingDates,
       requests,
       ledger,
       ledgerInput,
@@ -839,7 +1106,7 @@ export class LeaveService implements ILeaveService {
     leaveType: LeaveType,
     isHalfDay: boolean,
   ): LeavePreview {
-    const { context, holidaySet, ledger } = resolved;
+    const { context, holidaySet, workingDates, ledger } = resolved;
 
     if (!fromDate || !toDate || toDate < fromDate) {
       return {
@@ -855,7 +1122,7 @@ export class LeaveService implements ILeaveService {
     }
 
     const calendarDays = eachDay(fromDate, toDate).length;
-    const workingDays = workingDaysBetween(fromDate, toDate, context.weeklyOff, holidaySet);
+    const workingDays = workingDaysBetween(fromDate, toDate, context.weeklyOff, holidaySet, workingDates);
     // Half day applies to EVERY working day in the range, not to the request as
     // a whole: five working days at half a day each is 2.5 days, not 0.5.
     const days = isHalfDay ? Math.round(workingDays * 0.5 * 10) / 10 : workingDays;
@@ -963,7 +1230,7 @@ export class LeaveService implements ILeaveService {
       for (const day of eachDay(request.fromDate, request.toDate)) {
         const month = monthKeyOf(day);
         if (!monthly.has(month)) continue;
-        if (context.weeklyOff.includes(dayName(day))) continue;
+        if (context.weeklyOff.includes(dayName(day)) && !resolved.workingDates.has(day)) continue;
         if (resolved.holidaySet.has(day)) continue;
         monthly.set(month, (monthly.get(month) ?? 0) + 1);
       }
@@ -983,22 +1250,38 @@ export class LeaveService implements ILeaveService {
 
     return {
       ledger,
-      requests: requests.map((r) => ({
-        daysCounted: countedDays(r),
-        id: r.id,
-        ref: r.ref,
-        leaveType: r.leaveType,
-        fromDate: r.fromDate,
-        toDate: r.toDate,
-        days: r.days,
-        unpaidDays: r.unpaidDays,
-        status: r.status,
-        reason: r.reason,
-        appliedOn: r.appliedOn,
-        isHalfDay: r.isHalfDay,
-        halfDaySession: r.halfDaySession,
-        decidedBy: r.decidedBy,
-      })),
+      requests: requests.map((r) => {
+        const isTwoLevel = isTwoLevelLeave(r);
+        const progress = parseApprovalProgress(r.decisionNote);
+        const directApproval = progress?.l1 ?? null;
+        const seniorApproval = progress?.l2 ?? null;
+        const awaitingApproval = !isTwoLevel ? null
+          : (!directApproval && !seniorApproval) ? 'both'
+          : (!directApproval) ? 'direct'
+          : (!seniorApproval) ? 'senior'
+          : null;
+        return {
+          daysCounted: countedDays(r),
+          id: r.id,
+          ref: r.ref,
+          leaveType: r.leaveType,
+          fromDate: r.fromDate,
+          toDate: r.toDate,
+          days: r.days,
+          unpaidDays: r.unpaidDays,
+          status: r.status,
+          reason: r.reason,
+          appliedOn: r.appliedOn,
+          isHalfDay: r.isHalfDay,
+          halfDaySession: r.halfDaySession,
+          decidedBy: r.decidedBy,
+          isTwoLevel,
+          directApproval,
+          seniorApproval,
+          awaitingApproval,
+          decisionNote: r.decisionNote ?? null,
+        };
+      }),
       policy: {
         leaveYear: year.leaveYear,
         leavePerMonth: year.leavePerMonth,

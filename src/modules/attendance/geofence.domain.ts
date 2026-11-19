@@ -12,6 +12,13 @@
  *           with "save your home location first"
  *   Hybrid  not fenced
  *
+ *   Each of the two places (home, second) has an admin on/off switch and counts
+ *   only while it is on and saved:
+ *
+ *     WFO  the office always, plus whichever places are on
+ *     WFH  whichever places are on. Home on but not saved yet → blocked until
+ *          it is saved. Both off → no location check at all for this person.
+ *
  *   An admin punching on someone's behalf is never fenced — that is a
  *   correction, not the employee standing somewhere.
  *
@@ -46,7 +53,7 @@ export interface DeviceFix extends GeoPoint {
   accuracyM: number;
 }
 
-export type ZoneKind = 'office' | 'home';
+export type ZoneKind = 'office' | 'home' | 'second';
 
 /** One allowed place: a circle on the map. */
 export interface GeofenceZone extends GeoPoint {
@@ -147,20 +154,28 @@ export function policyFor(
   workMode: string | null | undefined,
   home: GeoPoint | null,
   config: GeofenceConfig,
+  /** Only when an admin has switched it on AND it is saved — else null. */
+  second: GeoPoint | null = null,
+  /** The admin's switch for home. Off: the saved home point does not count. */
+  homeEnabled = true,
 ): GeofencePolicy | null {
-  const homeZone: GeofenceZone | null = home
-    ? { kind: 'home', lat: home.lat, lng: home.lng, radiusM: config.homeRadiusM, graceM: config.graceM }
-    : null;
+  // Home and second share the home radius: both are places a person lives or
+  // works from, not a building the size of a tech park.
+  const zoneAt = (kind: ZoneKind, p: GeoPoint | null): GeofenceZone[] =>
+    p ? [{ kind, lat: p.lat, lng: p.lng, radiusM: config.homeRadiusM, graceM: config.graceM }] : [];
+
+  const places = [...(homeEnabled ? zoneAt('home', home) : []), ...zoneAt('second', second)];
 
   let zones: GeofenceZone[];
   if (workMode === 'WFO') {
-    zones = [
-      { kind: 'office', ...config.office, graceM: config.graceM },
-      ...(homeZone ? [homeZone] : []),
-    ];
+    zones = [{ kind: 'office', ...config.office, graceM: config.graceM }, ...places];
   } else if (workMode === 'WFH') {
-    if (!homeZone) return { zones: [], maxAccuracyM: config.maxAccuracyM, homeMissing: true };
-    zones = [homeZone];
+    if (places.length === 0) {
+      // Home switched on but never saved: blocked until it is. Both switched
+      // off: HR has turned location checks off for this person.
+      return homeEnabled ? { zones: [], maxAccuracyM: config.maxAccuracyM, homeMissing: true } : null;
+    }
+    zones = places;
   } else {
     return null;
   }
@@ -180,7 +195,11 @@ export function formatDistance(meters: number): string {
 export const HOME_MISSING_MESSAGE =
   'Save your home location before checking in or out: My page → Edit personal details → Home location.';
 
-const PLACE: Record<ZoneKind, string> = { office: 'the office', home: 'your home location' };
+const PLACE: Record<ZoneKind, string> = {
+  office: 'the office',
+  home: 'your home location',
+  second: 'your second location',
+};
 
 /** "the office", "your home location", "the office or your home location". */
 const placesOf = (zones: GeofenceZone[]): string => zones.map((z) => PLACE[z.kind]).join(' or ');

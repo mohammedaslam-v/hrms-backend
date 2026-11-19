@@ -46,6 +46,95 @@ export const HALF_DAY_SESSION_LABEL: Record<HalfDaySession, string> = {
   second: 'Session 2 · second half',
 };
 
+export interface ApprovalStep {
+  by: number;
+  name: string;
+  at: string;
+  note?: string | null;
+  role?: 'manager' | 'senior_manager' | 'admin';
+}
+
+export interface ApprovalProgress {
+  l1?: ApprovalStep | null;
+  l2?: ApprovalStep | null;
+}
+
+const PROGRESS_REGEX = /<!--approvals:(\{.*?\})-->/;
+
+export function parseApprovalProgress(decisionNote?: string | null): ApprovalProgress | null {
+  if (!decisionNote) return null;
+  const match = decisionNote.match(PROGRESS_REGEX);
+  if (!match || !match[1]) return null;
+  try {
+    return JSON.parse(match[1]) as ApprovalProgress;
+  } catch {
+    return null;
+  }
+}
+
+export function formatDecisionNote(
+  existingNote: string | null | undefined,
+  progress: ApprovalProgress,
+  newAuditLine?: string | null,
+): string {
+  const cleanExisting = (existingNote || '').replace(PROGRESS_REGEX, '').trim();
+  const metadata = `<!--approvals:${JSON.stringify(progress)}-->`;
+  const lines: string[] = [];
+  if (cleanExisting) lines.push(cleanExisting);
+  if (newAuditLine && newAuditLine.trim()) lines.push(newAuditLine.trim());
+  return lines.length > 0 ? `${metadata}\n${lines.join('\n')}` : metadata;
+}
+
+const TWO_LEVEL_DEPARTMENTS = new Set([
+  'sales',
+  'operations',
+  'sales and operations',
+  'sales & operations',
+  'sales/operations',
+  'sales & ops',
+  'operations and sales',
+  'operations & sales',
+]);
+
+/**
+ * Designated senior approvers who are authorized to provide Level 2 leave
+ * approvals across Sales and Operations departments, in addition to the
+ * employee's direct manager's manager or any administrator.
+ *
+ * Rhea Diwan (id: 5, rhea@bambinos.live) — Head of Sales.
+ */
+export const SPECIAL_SENIOR_APPROVER_IDS: readonly number[] = [5];
+export const SPECIAL_SENIOR_APPROVER_EMAILS: readonly string[] = ['rhea@bambinos.live'];
+
+export function isSpecialSeniorApprover(employeeId: number, email?: string | null): boolean {
+  if (SPECIAL_SENIOR_APPROVER_IDS.includes(employeeId)) return true;
+  if (email && SPECIAL_SENIOR_APPROVER_EMAILS.includes(email.trim().toLowerCase())) return true;
+  return false;
+}
+
+/**
+ * Sales and Operations: the departments whose leave goes up two levels, and
+ * whose people their manager's manager also sees on the Activities tab.
+ */
+export function isTwoLevelDepartment(department?: string | null): boolean {
+  const dept = (department ?? '').trim().toLowerCase();
+  return (
+    TWO_LEVEL_DEPARTMENTS.has(dept) ||
+    dept === 'sales' ||
+    dept === 'operations' ||
+    (dept.includes('sales') && dept.includes('operat'))
+  );
+}
+
+export function isTwoLevelLeave(request: {
+  department?: string | null;
+  managerId?: number | null;
+  grandManagerId?: number | null;
+}): boolean {
+  if (!isTwoLevelDepartment(request.department)) return false;
+  return Boolean(request.managerId);
+}
+
 export interface LedgerInput {
   openingLeave: number;
   /** Needed to attribute a request's days to the months they fall in. */
@@ -150,10 +239,17 @@ export function workingDaysBetween(
   to: string,
   weeklyOff: string[],
   holidays: ReadonlySet<string>,
+  /**
+   * Usual weekly offs made working days by hand (an admin's manual attendance
+   * row, e.g. Sales 10–15 Nov 2026). They count, so leave can be taken on them.
+   */
+  workingDates: ReadonlySet<string> = new Set(),
 ): number {
   if (to < from) return 0;
   const off = new Set(weeklyOff);
-  return eachDay(from, to).filter((d) => !off.has(dayNameOf(d)) && !holidays.has(d)).length;
+  return eachDay(from, to).filter(
+    (d) => !holidays.has(d) && (!off.has(dayNameOf(d)) || workingDates.has(d)),
+  ).length;
 }
 
 // ---------------------------------------------------------------- the ledger
@@ -179,7 +275,16 @@ export function daysByMonth(
   }
 
   const counted = [...out.values()].reduce((sum, n) => sum + n, 0);
-  if (counted === 0) return out;
+  if (counted === 0) {
+    // Days were stored, yet every date reads as an off day: leave taken on a
+    // weekly off that was made a working day by hand. The stored days still
+    // count, in the month(s) the request falls in, rather than vanishing.
+    if (request.days > 0) {
+      const months = [...new Set(eachDay(request.fromDate, request.toDate).map(monthKeyOf))];
+      for (const month of months) out.set(month, round1(request.days / months.length));
+    }
+    return out;
+  }
 
   // Scale so a half-day request contributes 0.5, not 1.
   const scale = request.days / counted;

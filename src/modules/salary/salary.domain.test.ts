@@ -2,8 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   SALARY_RULES,
+  arrearsOwed,
   grossFromCtc,
   payStructure,
+  previousMonth,
   ptOf,
   structure,
   structureFromComponents,
@@ -120,4 +122,40 @@ test('professional tax: HR figure when set, state slab otherwise', () => {
   assert.equal(ptOf({ ...edited, professionalTaxM: 150 }, 'Karnataka', 71618), 150);
   assert.equal(ptOf(edited, 'Karnataka', 71618), 200);
   assert.equal(ptOf(null, 'Karnataka', 20000), 0);
+});
+
+// ------------------------------------------------------------------ arrears
+
+const oct = { month: '2026-10', lopDays: 2, lopRate: 1000, arrearsAmount: 0 };
+
+test('arrears: a LOP day corrected after October was paid comes back in November', () => {
+  assert.equal(arrearsOwed([oct], new Map([['2026-10', 1]])), 1000);
+});
+
+test('arrears: a day turned into LOP after October was paid is recovered', () => {
+  assert.equal(arrearsOwed([oct], new Map([['2026-10', 3]])), -1000);
+});
+
+test('arrears: nothing changed, nothing owed', () => {
+  assert.equal(arrearsOwed([oct], new Map([['2026-10', 2]])), 0);
+});
+
+test('arrears: once November paid it back, December owes nothing more', () => {
+  const nov = { month: '2026-11', lopDays: 0, lopRate: 1000, arrearsAmount: 1000 };
+  assert.equal(arrearsOwed([oct, nov], new Map([['2026-10', 1], ['2026-11', 0]])), 0);
+});
+
+test('arrears: corrected back after being paid back is recovered, not paid twice', () => {
+  const nov = { month: '2026-11', lopDays: 0, lopRate: 1000, arrearsAmount: 1000 };
+  // October's day was put back to LOP after November returned it.
+  assert.equal(arrearsOwed([oct, nov], new Map([['2026-10', 2], ['2026-11', 0]])), -1000);
+});
+
+test('arrears: half a day at the month it was paid in', () => {
+  assert.equal(arrearsOwed([oct], new Map([['2026-10', 1.5]])), 500);
+});
+
+test('previousMonth crosses the year', () => {
+  assert.equal(previousMonth('2027-01'), '2026-12');
+  assert.equal(previousMonth('2026-11'), '2026-10');
 });

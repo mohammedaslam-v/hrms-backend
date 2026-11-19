@@ -4,12 +4,19 @@ import {
   RawEmployeeRow,
   RawLoanRow,
   RawCompensationRevision,
+  RawProductivityShortDay,
 } from './reports.repository.interface';
+import { readFigures, StoredCompensationColumns } from '../compensation/compensation.domain';
+import { IFieldCipher } from '../../shared/field-cipher';
 
 export class ReportsRepository implements IReportsRepository {
   private columnCache = new Map<string, boolean>();
 
-  constructor(private readonly pool: Pool) {}
+  constructor(
+    private readonly pool: Pool,
+    // Compensation figures are stored encrypted; see findCompensationHistory.
+    private readonly cipher: IFieldCipher,
+  ) {}
 
   async hasColumn(tableName: string, columnName: string): Promise<boolean> {
     const key = `${tableName}.${columnName}`;
@@ -69,7 +76,9 @@ export class ReportsRepository implements IReportsRepository {
       e.resignation_date,
       e.resignation_reason,
       e.opening_leave,
-      e.weekly_off
+      e.weekly_off,
+      e.shift_start,
+      e.shift_end
     `;
   }
 
@@ -102,6 +111,19 @@ export class ReportsRepository implements IReportsRepository {
 
     const [rows] = await this.pool.query<RowDataPacket[]>(sql, params);
     return rows as RawEmployeeRow[];
+  }
+
+  async findProductivityShortDays(from: string, to: string): Promise<RawProductivityShortDay[]> {
+    const [rows] = await this.pool.query<RowDataPacket[]>(
+      `SELECT employee_id, DATE_FORMAT(work_date, '%Y-%m-%d') AS work_date,
+              panel_minutes, activity_minutes, outcome
+         FROM hrms_productivity_days
+        WHERE work_date BETWEEN ? AND ?
+          AND outcome IN ('earned', 'unpaid')
+        ORDER BY work_date ASC, employee_id ASC`,
+      [from, to],
+    );
+    return rows as RawProductivityShortDay[];
   }
 
   async findAllEmployees(): Promise<RawEmployeeRow[]> {
@@ -185,24 +207,46 @@ export class ReportsRepository implements IReportsRepository {
     return rows as RawEmployeeRow[];
   }
 
+  /**
+   * Real revisions only: a placeholder is not an appraisal, and counting it
+   * would report a dummy figure as somebody's pay and the real one as a hike.
+   * The figures are decrypted here, so the report code sees plain numbers.
+   */
   async findCompensationHistory(): Promise<RawCompensationRevision[]> {
-    const [rows] = await this.pool.query<RowDataPacket[]>(`
+    const [rows] = await this.pool.query<(RowDataPacket & StoredCompensationColumns)[]>(`
       SELECT c.id,
              c.employee_id,
              e.employee_code,
              e.full_name AS employee_name,
              e.date_of_joining,
              c.effective_from,
+             c.created_at,
+             c.payload_enc,
              c.ctc,
              c.variable_pay,
              c.bonus,
-             c.revision_note,
-             c.created_at
+             c.revision_note
         FROM hrms_employee_compensation c
         JOIN hrms_employees e ON e.id = c.employee_id
        WHERE e.deleted_at IS NULL
+         AND c.is_placeholder = 0
        ORDER BY c.employee_id ASC, c.effective_from DESC, c.id DESC
     `);
-    return rows as RawCompensationRevision[];
+    return rows.map((row) => {
+      const figures = readFigures(row, this.cipher);
+      return {
+        id: row.id,
+        employee_id: row.employee_id,
+        employee_code: row.employee_code,
+        employee_name: row.employee_name,
+        date_of_joining: row.date_of_joining,
+        effective_from: row.effective_from,
+        ctc: figures.ctc,
+        variable_pay: figures.variablePay,
+        bonus: figures.bonus,
+        revision_note: figures.revisionNote,
+        created_at: row.created_at,
+      };
+    });
   }
 }

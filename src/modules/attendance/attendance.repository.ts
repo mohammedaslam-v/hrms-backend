@@ -23,11 +23,16 @@ interface ScheduleRow extends RowDataPacket {
   shift_end: string;
   weekly_off: string | null;
   date_of_leaving: string | null;
+  /** Selected by findSchedule only. */
+  department?: string | null;
   portal_role: string | null;
   work_mode: string | null;
   // DECIMAL(9,6). mysql2 returns DECIMAL as a string so no digit is lost.
   home_lat: string | null;
   home_lng: string | null;
+  home_location_enabled: number | null;
+  second_lat: string | null;
+  second_lng: string | null;
 }
 
 /** A DECIMAL column as a number, or null when empty. */
@@ -117,8 +122,11 @@ export class AttendanceRepository implements IAttendanceRepository {
 
   async findSchedule(employeeId: number): Promise<WorkSchedule | null> {
     const [rows] = await this.pool.execute<ScheduleRow[]>(
-      `SELECT e.shift_start, e.shift_end, e.weekly_off, e.date_of_leaving,
-              COALESCE(a.role, e.designation) AS portal_role, e.work_mode, e.home_lat, e.home_lng
+      `SELECT e.shift_start, e.shift_end, e.weekly_off, e.date_of_leaving, e.department,
+              COALESCE(a.role, e.designation) AS portal_role, e.work_mode, e.home_lat, e.home_lng, e.home_location_enabled,
+              -- Only while an admin has it switched on; off means "not a place".
+              IF(e.second_location_enabled = 1, e.second_lat, NULL) AS second_lat,
+              IF(e.second_location_enabled = 1, e.second_lng, NULL) AS second_lng
          FROM hrms_employees e
          LEFT JOIN admins a ON a.id = e.admin_id AND a.deleted_at IS NULL
         WHERE e.id = ?`,
@@ -132,10 +140,14 @@ export class AttendanceRepository implements IAttendanceRepository {
       // MariaDB returns a SET column as a comma-separated string.
       weeklyOff: row.weekly_off ? row.weekly_off.split(',').filter(Boolean) : [],
       dateOfLeaving: row.date_of_leaving,
+      department: row.department ?? null,
       portalRole: row.portal_role,
       workMode: row.work_mode,
       homeLat: coordinate(row.home_lat),
       homeLng: coordinate(row.home_lng),
+      homeEnabled: row.home_location_enabled === null ? true : Boolean(row.home_location_enabled),
+      secondLat: coordinate(row.second_lat),
+      secondLng: coordinate(row.second_lng),
     };
   }
 
@@ -187,7 +199,10 @@ export class AttendanceRepository implements IAttendanceRepository {
 
     const [rows] = await this.pool.query<(ScheduleRow & { id: number })[]>(
       `SELECT e.id, e.shift_start, e.shift_end, e.weekly_off, e.date_of_leaving,
-              a.role AS portal_role, e.work_mode, e.home_lat, e.home_lng
+              a.role AS portal_role, e.work_mode, e.home_lat, e.home_lng, e.home_location_enabled,
+              -- Only while an admin has it switched on; off means "not a place".
+              IF(e.second_location_enabled = 1, e.second_lat, NULL) AS second_lat,
+              IF(e.second_location_enabled = 1, e.second_lng, NULL) AS second_lng
          FROM hrms_employees e
          LEFT JOIN admins a ON a.id = e.admin_id AND a.deleted_at IS NULL
         WHERE e.id IN (${AttendanceRepository.idList(employeeIds)})`,
@@ -203,6 +218,9 @@ export class AttendanceRepository implements IAttendanceRepository {
         workMode: row.work_mode,
         homeLat: coordinate(row.home_lat),
         homeLng: coordinate(row.home_lng),
+        homeEnabled: row.home_location_enabled === null ? true : Boolean(row.home_location_enabled),
+        secondLat: coordinate(row.second_lat),
+        secondLng: coordinate(row.second_lng),
       });
     }
     return byId;
@@ -383,7 +401,9 @@ export class AttendanceRepository implements IAttendanceRepository {
           AND login_at  IS NOT NULL
           AND logout_at IS NULL
           AND status NOT IN ('Leave', 'Holiday')
-          AND (leave_type IS NULL OR leave_type != 'Unpaid')
+          -- No leave_type filter: a late check-in with no balance is 'Half day'
+          -- + Unpaid and is still a running punch that must be closable. A day
+          -- auto-closed as LOP is status 'Leave', already excluded above.
           AND att_date >= DATE_SUB(CURDATE(), INTERVAL 2 DAY)
         ORDER BY att_date DESC
         LIMIT 1`,
@@ -434,9 +454,9 @@ export class AttendanceRepository implements IAttendanceRepository {
     //    and only the first one matches.
     const [claimed] = await this.pool.execute<ResultSetHeader>(
       `UPDATE hrms_attendance
-          SET login_at = ?, status = ?, late_by_minutes = ?, source = 'app'
+          SET login_at = ?, status = ?, late_by_minutes = ?, leave_type = ?, source = 'app'
         WHERE employee_id = ? AND att_date = ? AND login_at IS NULL`,
-      [input.loginAt, input.status, input.lateByMinutes, input.employeeId, input.date],
+      [input.loginAt, input.status, input.lateByMinutes, input.leaveType ?? null, input.employeeId, input.date],
     );
     if (claimed.affectedRows === 1) {
       return this.findByDate(input.employeeId, input.date);
@@ -462,9 +482,9 @@ export class AttendanceRepository implements IAttendanceRepository {
     try {
       await this.pool.execute<ResultSetHeader>(
         `INSERT INTO hrms_attendance
-           (employee_id, att_date, status, login_at, late_by_minutes, source)
-         VALUES (?, ?, ?, ?, ?, 'app')`,
-        [input.employeeId, input.date, input.status, input.loginAt, input.lateByMinutes],
+           (employee_id, att_date, status, login_at, late_by_minutes, leave_type, source)
+         VALUES (?, ?, ?, ?, ?, ?, 'app')`,
+        [input.employeeId, input.date, input.status, input.loginAt, input.lateByMinutes, input.leaveType ?? null],
       );
     } catch (error) {
       if (isDuplicateKey(error)) return null;

@@ -3,6 +3,8 @@ import { describe, it } from 'node:test';
 import {
   activeHours,
   attendanceOf,
+  isOffDay,
+  punchOf,
   crossesMidnight,
   dayNameOf,
   eachDate,
@@ -12,6 +14,8 @@ import {
   minutesLate,
   minutesOf,
   resolveDayStatus,
+  isMarkedOff,
+  isMarkedWorking,
   shiftDateOf,
   isPunchExpired,
   CHECKOUT_GRACE_MINUTES,
@@ -43,6 +47,7 @@ const day = (date: string, hours: number): DayAttendance => ({
   source: 'punch' as const,
   activeHours: hours,
   lateByMinutes: 0,
+  leaveType: null,
 });
 
 describe('reading times and dates', () => {
@@ -162,6 +167,33 @@ describe('what a day was — precedence', () => {
     assert.equal(status, 'Weekly off');
   });
 
+  it('2b. a date an admin marked off is a weekly off on a working day', () => {
+    const status = resolveDayStatus(facts({ date: '2026-09-01', markedOff: true }));
+    assert.equal(status, 'Weekly off');
+    // Only a manual row saying so marks a day off.
+    assert.equal(isMarkedOff({ source: 'manual', status: 'Weekly off' }), true);
+    assert.equal(isMarkedOff({ source: 'app', status: 'Weekly off' }), false);
+    assert.equal(isMarkedOff({ source: 'manual', status: 'On time' }), false);
+    assert.equal(isMarkedOff(null), false);
+  });
+
+  it('2c. an admin edit on a usual off day shows what the admin set', () => {
+    const sunday = '2026-09-06';
+    const worked = resolveDayStatus(
+      facts({ date: sunday, markedWorking: true, punch: { loginAt: '10:00', logoutAt: '19:00' } }),
+    );
+    assert.equal(worked, 'On time');
+    const onLeave = resolveDayStatus(
+      facts({ date: sunday, markedWorking: true, leave: { type: 'Unpaid', isHalfDay: false } }),
+    );
+    assert.equal(onLeave, 'Leave');
+    // Only a manual row that is not itself a weekly off overrides the schedule.
+    assert.equal(isMarkedWorking({ source: 'manual', status: 'On time' }), true);
+    assert.equal(isMarkedWorking({ source: 'manual', status: 'Weekly off' }), false);
+    assert.equal(isMarkedWorking({ source: 'app', status: 'On time' }), false);
+    assert.equal(isMarkedWorking(null), false);
+  });
+
   it('3. approved leave beats absence — the rule that matters most', () => {
     // Get this order wrong and someone on approved leave is marked absent.
     const status = resolveDayStatus(
@@ -184,10 +216,25 @@ describe('what a day was — precedence', () => {
     );
   });
 
-  it('4b. a punch past the grace window is Late', () => {
+  it('4b. a punch past the grace window but under 25 min is Late', () => {
     assert.equal(
       resolveDayStatus(facts({ punch: { loginAt: '10:16', logoutAt: '19:00' } })),
       'Late',
+    );
+    assert.equal(
+      resolveDayStatus(facts({ punch: { loginAt: '10:24', logoutAt: '19:00' } })),
+      'Late',
+    );
+  });
+
+  it('4c. a punch 25 minutes or more late is Half day', () => {
+    assert.equal(
+      resolveDayStatus(facts({ punch: { loginAt: '10:25', logoutAt: '19:00' } })),
+      'Half day',
+    );
+    assert.equal(
+      resolveDayStatus(facts({ punch: { loginAt: '10:40', logoutAt: '19:00' } })),
+      'Half day',
     );
   });
 
@@ -212,11 +259,33 @@ describe('what a day was — precedence', () => {
 
 describe('a whole day resolved', () => {
   it('carries the hours and the lateness alongside the status', () => {
-    const d = attendanceOf(facts({ punch: { loginAt: '10:25', logoutAt: '19:10' } }));
+    const d = attendanceOf(facts({ punch: { loginAt: '10:20', logoutAt: '19:10' } }));
     assert.equal(d.status, 'Late');
+    assert.equal(d.lateByMinutes, 20);
+    assert.equal(d.activeHours, 8.83);
+    assert.equal(d.loginAt, '10:20');
+  });
+
+  it('resolves a 25+ min late punch as Half day with lateness and hours preserved', () => {
+    const d = attendanceOf(facts({ punch: { loginAt: '10:25', logoutAt: '19:10' } }));
+    assert.equal(d.status, 'Half day');
     assert.equal(d.lateByMinutes, 25);
     assert.equal(d.activeHours, 8.75);
     assert.equal(d.loginAt, '10:25');
+  });
+
+  it('preserves recheckInAt and original on-time status when present', () => {
+    const d = attendanceOf(
+      facts({
+        punch: { loginAt: '07:50', logoutAt: '17:34' },
+        shiftStart: '08:00',
+        recheckInAt: '17:19',
+      }),
+    );
+    assert.equal(d.status, 'On time');
+    assert.equal(d.lateByMinutes, 0);
+    assert.equal(d.activeHours, 9.73);
+    assert.equal(d.recheckInAt, '17:19');
   });
 
   it('still counts hours worked on a weekly off', () => {
@@ -432,7 +501,23 @@ describe('shifts that cross midnight', () => {
     assert.equal(d.activeHours, 7.92);
   });
 
-  it('marks a night worker late when they miss the grace window', () => {
+  it('marks a night worker late when they miss the grace window (under 25 min)', () => {
+    const d = attendanceOf({
+      date: '2026-09-07',
+      today: '2026-09-08',
+      weeklyOff: ['Sun'],
+      holidayName: null,
+      leave: null,
+      punch: { loginAt: '23:20', logoutAt: '07:00' },
+      shiftStart: '23:00',
+      lateGraceMinutes: 15,
+    });
+    assert.equal(d.status, 'Late');
+    assert.equal(d.lateByMinutes, 20);
+    assert.equal(d.activeHours, 7.67);
+  });
+
+  it('marks a night worker half day when they are 25+ min late', () => {
     const d = attendanceOf({
       date: '2026-09-07',
       today: '2026-09-08',
@@ -443,7 +528,7 @@ describe('shifts that cross midnight', () => {
       shiftStart: '23:00',
       lateGraceMinutes: 15,
     });
-    assert.equal(d.status, 'Late');
+    assert.equal(d.status, 'Half day');
     assert.equal(d.lateByMinutes, 90);
     assert.equal(d.activeHours, 6.5);
   });
@@ -488,5 +573,41 @@ describe('punch expiration and checkout grace window (LOP)', () => {
     assert.equal(isPunchExpired('2026-10-12', '23:00', '08:00', '2026-10-13', '12:01'), true);
     // When next night arrives at 23:00
     assert.equal(isPunchExpired('2026-10-12', '23:00', '08:00', '2026-10-13', '23:00'), true);
+  });
+});
+
+describe('isOffDay — no punching on a weekly off', () => {
+  // 15 Nov 2026 is a Sunday, 16 Nov a Monday.
+  it('a usual off day is off, a working day is not', () => {
+    assert.equal(isOffDay('2026-11-15', ['Sun'], null), true);
+    assert.equal(isOffDay('2026-11-16', ['Sun'], null), false);
+  });
+  it("an admin's working row on a usual off day makes it a working day", () => {
+    assert.equal(isOffDay('2026-11-15', ['Sun'], { source: 'manual', status: 'Absent' }), false);
+  });
+  it("an admin's 'Weekly off' row makes any day off", () => {
+    assert.equal(isOffDay('2026-11-16', ['Sun'], { source: 'manual', status: 'Weekly off' }), true);
+  });
+});
+
+describe('a shift change does not re-judge past days', () => {
+  // Checked in at 10:02 when the shift started at 10:00 (2 min late). The shift
+  // was later moved to 09:30: measured again, that would be 32 min — Half day.
+  const facts = {
+    date: '2026-11-10',
+    today: '2026-11-14',
+    weeklyOff: ['Sun'],
+    holidayName: null,
+    leave: null,
+    shiftStart: '09:30',
+    lateGraceMinutes: 15,
+  };
+  it('uses the lateness stored at check-in', () => {
+    const punch = punchOf({ loginAt: '10:02', logoutAt: '19:05', lateByMinutes: 2, source: 'app' });
+    assert.equal(resolveDayStatus({ ...facts, punch }), 'On time');
+  });
+  it('re-measures only a row with no measured lateness', () => {
+    const punch = punchOf({ loginAt: '10:02', logoutAt: '19:05', lateByMinutes: 0, source: 'import' });
+    assert.equal(resolveDayStatus({ ...facts, punch }), 'Half day');
   });
 });

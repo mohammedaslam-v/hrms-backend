@@ -183,6 +183,16 @@ export class LeaveController {
     res.json({ success: true, data: result });
   });
 
+  deleteRequest: RequestHandler = asyncHandler(async (req, res) => {
+    const { employeeId } = req as AuthenticatedRequest;
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const requestId = this.readId(req.params.id);
+    const note = typeof body.note === 'string' ? body.note.trim() : '';
+
+    const result = await this.leaveService.deleteRequest(employeeId, requestId, note);
+    res.json({ success: true, data: result });
+  });
+
   decide: RequestHandler = asyncHandler(async (req, res) => {
     const { employeeId } = req as AuthenticatedRequest;
     const body = (req.body ?? {}) as Record<string, unknown>;

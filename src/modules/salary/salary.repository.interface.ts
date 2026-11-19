@@ -1,3 +1,4 @@
+import type { PaidMonth } from "./salary.domain";
 
 export interface FrozenPayslipRow {
   id: number;
@@ -58,5 +59,9 @@ export interface ISalaryRepository {
   findFrozenHistory(employeeId: number): Promise<FrozenPayslipRow[]>;
   findActiveLoan(employeeId: number): Promise<LoanRow | null>;
   findActiveLoans(employeeId: number): Promise<LoanRow[]>;
-  findApprovedLopDays(employeeId: number, payMonth: string): Promise<number>;
+  /**
+   * Every month this person's salary was pushed (not failed or reversed), by
+   * YYYY-MM. `snapshot` is null for a push made before snapshots were saved.
+   */
+  findSalaryPushes(employeeId: number): Promise<Map<string, PaidMonth | null>>;
 }

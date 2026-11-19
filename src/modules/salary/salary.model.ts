@@ -16,6 +16,11 @@ export interface SalarySlipEarnings {
   basic: number;
   hra: number;
   special: number;
+  /**
+   * Settles months already paid: + arrears (a day given back), − recovery (a
+   * day taken back). Included in gross. Zero on most slips.
+   */
+  arrears: number;
   gross: number;
 }
 
@@ -47,6 +52,8 @@ export interface SalarySlip {
   payableDays: number;
   lopDays: number;
   lopAmount: number;
+  /** One day of pay this month — what a LOP day costs, and what arrears are paid at. */
+  lopRate: number;
   isContractor: boolean;
   employee: SalarySlipEmployee;
   earnings: SalarySlipEarnings;
@@ -116,4 +123,9 @@ export interface MySalaryView {
   history: PayslipHistoryItem[];
   loan: EmployeeLoanView | null;
   company: CompanyConfig;
+  /**
+   * The pay this slip is built from is a dummy figure, not the employee's
+   * real salary. Payouts refuse to send money on it.
+   */
+  isPlaceholderPay: boolean;
 }

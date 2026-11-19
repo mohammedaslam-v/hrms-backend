@@ -93,4 +93,59 @@ export class ReportsController {
       res.status(status).json({ success: false, message: err.message || "Failed to export report" });
     }
   };
+
+  /**
+   * GET /reports/active-time?from&to[&employeeIds=1,2][&department=]
+   *
+   * The viewer is the verified session only — no fallback id: who may see
+   * whom is the whole point of this endpoint.
+   */
+  getActiveTime = async (req: Request, res: Response): Promise<void> => {
+    await this.scopedRange(req, res, "Could not load active time.", (viewerId, options) =>
+      this.reportsService.getActiveTime(viewerId, options),
+    );
+  };
+
+  /** GET /reports/activities?from&to[&employeeIds=1,2][&department=] — same rules as active-time. */
+  getActivities = async (req: Request, res: Response): Promise<void> => {
+    await this.scopedRange(req, res, "Could not load activities.", (viewerId, options) =>
+      this.reportsService.getActivities(viewerId, options),
+    );
+  };
+
+  private async scopedRange(
+    req: Request,
+    res: Response,
+    failure: string,
+    load: (
+      viewerId: number,
+      options: { from: string; to: string; employeeIds: number[]; department?: string },
+    ) => Promise<unknown>,
+  ): Promise<void> {
+    try {
+      const viewerId = (req as AuthenticatedRequest).employeeId;
+      if (!viewerId) {
+        res.status(401).json({ success: false, message: "Sign in again." });
+        return;
+      }
+      const isoDate = /^\d{4}-\d{2}-\d{2}$/;
+      const from = String(req.query.from ?? "");
+      const to = String(req.query.to ?? "");
+      if (!isoDate.test(from) || !isoDate.test(to)) {
+        res.status(400).json({ success: false, message: "from and to must be dates in YYYY-MM-DD form." });
+        return;
+      }
+      const employeeIds = String(req.query.employeeIds ?? "")
+        .split(",")
+        .map((v) => Number(v))
+        .filter((n) => Number.isInteger(n) && n > 0);
+      const department = req.query.department ? String(req.query.department) : undefined;
+
+      const data = await load(viewerId, { from, to, employeeIds, department });
+      res.json({ success: true, data });
+    } catch (err: any) {
+      const status = err.statusCode || 500;
+      res.status(status).json({ success: false, message: err.message || failure });
+    }
+  }
 }

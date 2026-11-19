@@ -5,6 +5,7 @@ import {
   ISalaryRepository,
   LoanRow,
 } from "./salary.repository.interface";
+import type { PaidMonth } from "./salary.domain";
 
 interface EmpRow extends RowDataPacket {
   id: number;
@@ -24,9 +25,11 @@ interface EmpRow extends RowDataPacket {
 
 interface SlipRow extends RowDataPacket, FrozenPayslipRow {}
 interface LRow extends RowDataPacket, LoanRow {}
-interface LopRow extends RowDataPacket {
-  from_date: string;
-  to_date: string;
+interface PushRow extends RowDataPacket {
+  reference_id: string;
+  lop_days: string | null;
+  lop_rate: string | null;
+  arrears_amount: string | null;
 }
 
 export class SalaryRepository implements ISalaryRepository {
@@ -119,26 +122,30 @@ export class SalaryRepository implements ISalaryRepository {
     return rows[0] || null;
   }
 
-  async findApprovedLopDays(employeeId: number, payMonth: string): Promise<number> {
-    const [rows] = await this.pool.execute<LopRow[]>(
-      `SELECT from_date, to_date
-         FROM hrms_leave_requests
+  async findSalaryPushes(employeeId: number): Promise<Map<string, PaidMonth | null>> {
+    const [rows] = await this.pool.execute<PushRow[]>(
+      `SELECT reference_id, lop_days, lop_rate, arrears_amount
+         FROM hrms_payouts
         WHERE employee_id = ?
-          AND status = 'Approved'
-          AND leave_type = 'Unpaid'
-          AND (DATE_FORMAT(from_date, '%Y-%m') = ? OR DATE_FORMAT(to_date, '%Y-%m') = ?)`,
-      [employeeId, payMonth, payMonth],
+          AND payout_type = 'salary'
+          AND status NOT IN ('failed', 'reversed', 'rejected', 'cancelled')`,
+      [employeeId],
     );
-
-    let totalLop = 0;
-    for (const row of rows) {
-      const start = new Date(row.from_date);
-      const end = new Date(row.to_date);
-      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-        const mKey = d.toISOString().slice(0, 7);
-        if (mKey === payMonth) totalLop += 1;
-      }
+    const out = new Map<string, PaidMonth | null>();
+    for (const r of rows) {
+      const month = String(r.reference_id).slice(0, 7);
+      out.set(
+        month,
+        r.lop_days == null
+          ? null
+          : {
+              month,
+              lopDays: Number(r.lop_days),
+              lopRate: Number(r.lop_rate ?? 0),
+              arrearsAmount: Number(r.arrears_amount ?? 0),
+            },
+      );
     }
-    return totalLop;
+    return out;
   }
 }

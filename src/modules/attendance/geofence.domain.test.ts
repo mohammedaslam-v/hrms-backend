@@ -87,6 +87,54 @@ describe('policyFor', () => {
   });
 });
 
+describe('second location', () => {
+  // ~3 km north of the office — somewhere other than home or office.
+  const SECOND: GeoPoint = { lat: 12.9275, lng: 77.6508 };
+
+  it('adds a third place for WFO and a second for WFH', () => {
+    assert.deepEqual(policyFor('WFO', HOME, CONFIG, SECOND)!.zones.map((z) => z.kind), [
+      'office',
+      'home',
+      'second',
+    ]);
+    assert.deepEqual(policyFor('WFH', HOME, CONFIG, SECOND)!.zones.map((z) => z.kind), ['home', 'second']);
+  });
+
+  it('allows a punch at the second location', () => {
+    const verdict = judgeFix({ ...north(SECOND, 20), accuracyM: 10 }, policyFor('WFH', HOME, CONFIG, SECOND)!);
+    assert.deepEqual(verdict.allowed && verdict.zone, 'second');
+  });
+
+  it('lets WFH punch at the second location while home is on but unsaved', () => {
+    assert.deepEqual(policyFor('WFH', null, CONFIG, SECOND)!.zones.map((z) => z.kind), ['second']);
+  });
+
+  it('is ignored for Hybrid', () => {
+    assert.equal(policyFor('Hybrid', HOME, CONFIG, SECOND), null);
+  });
+
+  it('names it in the message', () => {
+    const verdict = judgeFix({ ...north(SECOND, 400), accuracyM: 10 }, policyFor('WFH', HOME, CONFIG, SECOND)!);
+    assert.match(verdict.allowed === false ? verdict.message : '', /your home location or your second location/);
+  });
+});
+
+describe('home switch', () => {
+  const SECOND: GeoPoint = { lat: 12.9275, lng: 77.6508 };
+
+  it('drops a switched-off home from the places', () => {
+    assert.deepEqual(policyFor('WFH', HOME, CONFIG, SECOND, false)!.zones.map((z) => z.kind), ['second']);
+  });
+
+  it('turns location checks off for WFH when both places are off', () => {
+    assert.equal(policyFor('WFH', HOME, CONFIG, null, false), null);
+  });
+
+  it('keeps the office for WFO when both places are off', () => {
+    assert.deepEqual(policyFor('WFO', HOME, CONFIG, null, false)!.zones.map((z) => z.kind), ['office']);
+  });
+});
+
 describe('needsHomeLocation', () => {
   it('asks WFO and WFH, not Hybrid', () => {
     assert.equal(needsHomeLocation('WFO'), true);
