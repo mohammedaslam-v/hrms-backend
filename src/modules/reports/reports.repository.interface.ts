@@ -1,3 +1,4 @@
+import type { IdentityRow } from './reports.identity';
 
 export interface RawEmployeeRow {
   id: number;
@@ -77,9 +78,27 @@ export interface RawProductivityShortDay {
   outcome: 'earned' | 'unpaid';
 }
 
+/** One break, as the Breaks report reads it. Times are 'YYYY-MM-DD HH:MM'. */
+export interface RawBreakRow {
+  employee_id: number;
+  work_date: string;
+  started_at: string;
+  ended_at: string | null;
+  ends_by: string;
+  /** 'self' | 'checkout' | 'auto'; null while running. */
+  end_reason: string | null;
+}
+
 export interface IReportsRepository {
   findActiveEmployees(department?: string): Promise<RawEmployeeRow[]>;
   findAllEmployees(): Promise<RawEmployeeRow[]>;
+  /**
+   * Everyone — leavers and soft-deleted included, since old payroll or resignee
+   * rows still name them — for the six standard columns every report starts with.
+   */
+  findIdentities(): Promise<IdentityRow[]>;
+  /** Every break whose shift day falls in the range, oldest first per person. */
+  findBreaks(from: string, to: string): Promise<RawBreakRow[]>;
   findLoans(): Promise<RawLoanRow[]>;
   findRecentJoinees(from: string, to: string, department?: string): Promise<RawEmployeeRow[]>;
   findRecentResignees(from: string, to: string, department?: string): Promise<RawEmployeeRow[]>;

@@ -81,7 +81,7 @@ function createMockLopService(options: {
   } as never;
 
   return new ReportsService(
-    { findActiveEmployees: async () => employees } as never,
+    { findActiveEmployees: async () => employees, findIdentities: async () => [] } as never,
     {} as never,
     authService,
     attendanceRepository,
