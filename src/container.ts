@@ -124,6 +124,8 @@ import { InternalAttendanceRepository } from './modules/internal/internal-attend
 import { InternalAttendanceController } from './modules/internal/internal-attendance.controller';
 import { InternalPresenceController } from './modules/internal/internal-presence.controller';
 import { FieldCipher, IFieldCipher } from './shared/field-cipher';
+import { InternalCompensationController } from './modules/internal/internal-compensation.controller';
+import { InternalCompensationRepository } from './modules/internal/internal-compensation.repository';
 
 
 export const createContainer = () => {
@@ -358,6 +360,12 @@ export const createContainer = () => {
   );
   // ...and its header "who is active" list, built by the same board as HRMS.
   const internalPresenceController = new InternalPresenceController(presenceService);
+  // ...and salary cost for its Sales Pulse page. HRMS decrypts; the key never leaves here.
+  const internalCompensationController = new InternalCompensationController(
+    compensationService,
+    new InternalCompensationRepository(pool),
+    clock,
+  );
 
 
 
@@ -386,6 +394,7 @@ export const createContainer = () => {
     workActivityController,
     internalAttendanceController,
     internalPresenceController,
+    internalCompensationController,
     productivityController,
     productivityService,
     companyPolicyService,

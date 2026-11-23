@@ -14,6 +14,12 @@ export interface ICompensationService {
    * map when nothing has taken effect for them yet.
    */
   getCurrentForMany(employeeIds: number[]): Promise<Map<number, CompensationRecord>>;
+
+  /**
+   * What each of these people was paid on `onDate` (YYYY-MM-DD), keyed by
+   * employee. Absent when nothing had taken effect for them by then.
+   */
+  getOnDateForMany(employeeIds: number[], onDate: string): Promise<Map<number, CompensationRecord>>;
   recordRevision(
     record: Omit<CompensationRecord, 'id' | 'createdAt'>,
     createdBy: number,
