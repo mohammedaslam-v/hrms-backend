@@ -19,7 +19,10 @@ export class CompensationService implements ICompensationService {
   ) {}
 
   async getCurrentForMany(employeeIds: number[]): Promise<Map<number, CompensationRecord>> {
-    const today = await this.clock.today();
+    return this.getOnDateForMany(employeeIds, await this.clock.today());
+  }
+
+  async getOnDateForMany(employeeIds: number[], today: string): Promise<Map<number, CompensationRecord>> {
     const histories = await this.compensationRepository.findHistoryForMany(employeeIds);
 
     const current = new Map<number, CompensationRecord>();

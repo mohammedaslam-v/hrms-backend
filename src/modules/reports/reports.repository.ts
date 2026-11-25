@@ -1,6 +1,8 @@
 import { Pool, RowDataPacket } from 'mysql2/promise';
+import type { IdentityRow } from './reports.identity';
 import {
   IReportsRepository,
+  RawBreakRow,
   RawEmployeeRow,
   RawLoanRow,
   RawCompensationRevision,
@@ -136,6 +138,47 @@ export class ReportsRepository implements IReportsRepository {
        ORDER BY e.id ASC
     `);
     return rows as RawEmployeeRow[];
+  }
+
+  async findIdentities(): Promise<IdentityRow[]> {
+    const [rows] = await this.pool.query<RowDataPacket[]>(`
+      SELECT e.id, e.employee_code, e.full_name, e.designation, e.department, e.manager_id,
+             m.full_name AS manager_name
+        FROM hrms_employees e
+        LEFT JOIN hrms_employees m ON m.id = e.manager_id
+    `);
+    return rows.map((r) => ({
+      id: Number(r.id),
+      employee_code: r.employee_code,
+      full_name: r.full_name,
+      designation: r.designation,
+      department: r.department,
+      manager_id: r.manager_id === null ? null : Number(r.manager_id),
+      manager_name: r.manager_name,
+    }));
+  }
+
+  async findBreaks(from: string, to: string): Promise<RawBreakRow[]> {
+    const [rows] = await this.pool.execute<RowDataPacket[]>(
+      `SELECT employee_id,
+              DATE_FORMAT(work_date, '%Y-%m-%d')        AS work_date,
+              DATE_FORMAT(started_at, '%Y-%m-%d %H:%i') AS started_at,
+              DATE_FORMAT(ended_at, '%Y-%m-%d %H:%i')   AS ended_at,
+              DATE_FORMAT(ends_by, '%Y-%m-%d %H:%i')    AS ends_by,
+              end_reason
+         FROM hrms_attendance_breaks
+        WHERE work_date BETWEEN ? AND ?
+        ORDER BY employee_id, work_date, started_at`,
+      [from, to],
+    );
+    return rows.map((r) => ({
+      employee_id: Number(r.employee_id),
+      work_date: r.work_date,
+      started_at: r.started_at,
+      ended_at: r.ended_at,
+      ends_by: r.ends_by,
+      end_reason: r.end_reason,
+    }));
   }
 
   async findLoans(): Promise<RawLoanRow[]> {

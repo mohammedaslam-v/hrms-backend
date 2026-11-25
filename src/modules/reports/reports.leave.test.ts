@@ -38,7 +38,7 @@ const request = (
 
 function serviceWith(employees: unknown[], requests: StoredLeaveRequest[]) {
   return new ReportsService(
-    { findActiveEmployees: async () => employees } as never,
+    { findActiveEmployees: async () => employees, findIdentities: async () => [] } as never,
     {} as never,
     undefined,
     undefined,
@@ -87,7 +87,8 @@ test('lists only people with leave in the period, counting only days inside it',
       ['Yash Gupta', '7–8 Oct', 2, 0],
     ],
   );
-  assert.deepEqual(report.totals, { employee: 'Total', paid: 2, lop: 1, pending: 0 });
+  // The label also lands in the standard EMP Id column, which every report now starts with.
+  assert.deepEqual(report.totals, { employee: 'Total', paid: 2, lop: 1, pending: 0, stdEmpId: 'Total' });
   assert.ok(!report.columns.some((c) => c.key === 'lastLeave'));
 });
 

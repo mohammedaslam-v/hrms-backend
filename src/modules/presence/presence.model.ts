@@ -134,6 +134,8 @@ export interface BoardPerson {
    * new admin shows it), or the HRMS department for someone with no account.
    */
   team: string | null;
+  /** The employee's HRMS department (e.g. Sales, Operations, Tech). Null for unlinked accounts. */
+  department?: string | null;
   /** Shift start time (HH:MM), or null for unlinked accounts. */
   shiftStart: string | null;
   /** Approved leave today. Shown instead of the online status. */

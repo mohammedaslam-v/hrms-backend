@@ -38,6 +38,8 @@ import { IOrgRepository } from '../org/org.repository.interface';
 import { buildActiveTimeRows, type ActiveTimeView } from './reports.active-time';
 import { buildActivityRows, type ActivitiesView } from './reports.activities';
 import type { RosterMember } from '../org/org.model';
+import { buildIdentities, withStandardColumns } from './reports.identity';
+import { breakDayRows, maxBreaks } from './reports.breaks';
 
 const PAYROLL_REPORT_TYPES: ReadonlySet<ReportType> = new Set([
   'salary',
@@ -555,6 +557,13 @@ export class ReportsService implements IReportsService {
         description: 'Sales days the productivity rule marked as LOP: panel + activity time below 8h 06m.',
         filterType: 'period',
       },
+      {
+        type: 'breaks',
+        title: 'Breaks',
+        category: 'Attendance',
+        description: 'Every break taken, each in its own column, with the day’s total and what was left of the hour.',
+        filterType: 'period',
+      },
     ];
   }
 
@@ -575,6 +584,17 @@ export class ReportsService implements IReportsService {
       }
     }
 
+    // Every report starts with the same six identity columns — EMP Id, name,
+    // manager, designation, department, head of department — added here once
+    // rather than in each builder. See reports.identity.
+    const [report, identityRows] = await Promise.all([
+      this.buildReport(filter),
+      this.repository.findIdentities(),
+    ]);
+    return withStandardColumns(report, buildIdentities(identityRows));
+  }
+
+  private buildReport(filter: ReportFilterDto): Promise<ReportResult> {
     switch (filter.type) {
       case 'activity_log':
         return this.buildActivityLog(filter);
@@ -625,9 +645,93 @@ export class ReportsService implements IReportsService {
         return this.buildShiftRoster(filter);
       case 'productivity_lop':
         return this.buildProductivityLop(filter);
+      case 'breaks':
+        return this.buildBreaks(filter);
       default:
         return this.buildAllEmployees(filter);
     }
+  }
+
+  /**
+   * Breaks — one row per person per shift day they took one, each break in its
+   * own column (Break 1, Break 2, …), then the count, the total and what was
+   * left of the hour. The six identity columns are added in generateReport.
+   */
+  private async buildBreaks(filter: ReportFilterDto): Promise<ReportResult> {
+    const range = resolveRange(filter);
+    const [allEmployees, breaks] = await Promise.all([
+      this.repository.findActiveEmployees(filter.department),
+      this.repository.findBreaks(range.from, range.to),
+    ]);
+    const employees = this.filterEmployees(allEmployees, filter);
+    const byId = new Map<number, (typeof employees)[number]>(employees.map((e) => [e.id, e]));
+
+    const now = istNow();
+    const days = breakDayRows(
+      breaks.filter((b) => byId.has(b.employee_id)),
+      `${now.date} ${now.time.slice(0, 5)}`,
+    );
+    const breakColumns = Math.max(1, maxBreaks(days));
+
+    const columns: ReportColumn[] = [
+      { key: 'date', label: 'Date', width: '110px' },
+      { key: 'day', label: 'Day', width: '60px' },
+      { key: 'shift', label: 'Shift', width: '110px' },
+      ...Array.from({ length: breakColumns }, (_, i) => ({
+        key: `break${i + 1}`,
+        label: `Break ${i + 1}`,
+        width: '200px',
+      })),
+      { key: 'breakCount', label: 'Breaks taken', isNumeric: true },
+      { key: 'totalMinutes', label: 'Total break (min)', isNumeric: true },
+      { key: 'remainingMinutes', label: 'Remaining (min)', isNumeric: true },
+    ];
+
+    let totalMinutes = 0;
+    let totalBreaks = 0;
+    const rows = days.map((d) => {
+      const e = byId.get(d.employeeId);
+      totalMinutes += d.totalMinutes;
+      totalBreaks += d.breaks.length;
+      const cells: Record<string, string> = {};
+      d.breaks.forEach((text, i) => {
+        cells[`break${i + 1}`] = text;
+      });
+      return {
+        _employeeId: d.employeeId,
+        date: formatDisplayDate(d.workDate),
+        day: new Intl.DateTimeFormat('en-GB', { weekday: 'short', timeZone: 'UTC' }).format(
+          new Date(`${d.workDate}T00:00:00Z`),
+        ),
+        shift:
+          e?.shift_start && e?.shift_end
+            ? `${String(e.shift_start).slice(0, 5)}–${String(e.shift_end).slice(0, 5)}`
+            : '—',
+        ...cells,
+        breakCount: d.breaks.length,
+        totalMinutes: d.totalMinutes,
+        remainingMinutes: d.remainingMinutes,
+      };
+    });
+
+    return {
+      type: 'breaks',
+      meta: {
+        companyName: COMPANY_HEADER.name,
+        companyAddress: COMPANY_HEADER.address,
+        reportTitle: 'Breaks',
+        periodLabel: range.label,
+        generatedAt: new Date().toISOString(),
+        totalRecords: rows.length,
+      },
+      columns,
+      rows,
+      totals: {
+        code: 'Total',
+        breakCount: totalBreaks,
+        totalMinutes,
+      },
+    };
   }
 
   /**
@@ -722,6 +826,7 @@ export class ReportsService implements IReportsService {
         rows.push({
           date: formatDisplayDate(d),
           day: day.dayName,
+          _employeeId: e.id,
           code: e.employee_code,
           employee: e.full_name,
           department: e.department || 'General',
@@ -808,6 +913,7 @@ export class ReportsService implements IReportsService {
         rows.push({
           date: formatDisplayDate(d),
           day: day.dayName,
+          _employeeId: e.id,
           code: e.employee_code,
           employee: e.full_name,
           // Dash rather than blank: a blank cell reads as missing data, and the
@@ -884,6 +990,7 @@ export class ReportsService implements IReportsService {
       const totalActive = days.reduce((sum, d) => sum + d.activeHours, 0);
 
       return {
+        _employeeId: e.id,
         code: e.employee_code,
         employee: e.full_name,
         department: e.department || 'General',
@@ -948,6 +1055,7 @@ export class ReportsService implements IReportsService {
           .map((d) => ({
             date: formatDisplayDate(d.date),
             day: d.dayName,
+            _employeeId: e.id,
             code: e.employee_code,
             employee: e.full_name,
             department: e.department || 'General',
@@ -1009,6 +1117,7 @@ export class ReportsService implements IReportsService {
           .map((d) => ({
             date: formatDisplayDate(d.date),
             day: d.dayName,
+            _employeeId: e.id,
             code: e.employee_code,
             employee: e.full_name,
             department: e.department || 'General',
@@ -1107,6 +1216,8 @@ export class ReportsService implements IReportsService {
 
     interface LopItem {
       date: string;
+      /** For the standard identity columns — see reports.identity. */
+      _employeeId: number;
       day: string;
       code: string;
       employee: string;
@@ -1140,6 +1251,7 @@ export class ReportsService implements IReportsService {
           itemsMap.set(key, {
             date: formatDisplayDate(d.date),
             day: d.dayName,
+            _employeeId: e.id,
             code: e.employee_code,
             employee: e.full_name,
             department: e.department || 'General',
@@ -1161,6 +1273,7 @@ export class ReportsService implements IReportsService {
           itemsMap.set(key, {
             date: formatDisplayDate(d.date),
             day: d.dayName,
+            _employeeId: e.id,
             code: e.employee_code,
             employee: e.full_name,
             department: e.department || 'General',
@@ -1185,6 +1298,7 @@ export class ReportsService implements IReportsService {
           itemsMap.set(key, {
             date: formatDisplayDate(d.date),
             day: d.dayName,
+            _employeeId: e.id,
             code: e.employee_code,
             employee: e.full_name,
             department: e.department || 'General',
@@ -1216,6 +1330,7 @@ export class ReportsService implements IReportsService {
           itemsMap.set(key, {
             date: formatDisplayDate(d.date),
             day: d.dayName,
+            _employeeId: e.id,
             code: e.employee_code,
             employee: e.full_name,
             department: e.department || 'General',
@@ -1237,6 +1352,7 @@ export class ReportsService implements IReportsService {
           itemsMap.set(key, {
             date: formatDisplayDate(d.date),
             day: d.dayName,
+            _employeeId: e.id,
             code: e.employee_code,
             employee: e.full_name,
             department: e.department || 'General',
@@ -1328,6 +1444,7 @@ export class ReportsService implements IReportsService {
         rows.push({
           date: formatDisplayDate(d),
           day: day.dayName,
+          _employeeId: e.id,
           code: e.employee_code,
           employee: e.full_name,
           department: e.department || 'General',
@@ -1418,6 +1535,7 @@ export class ReportsService implements IReportsService {
 
       return {
         month: formatMonthLabel(month),
+        _employeeId: e.id,
         code: e.employee_code,
         employee: e.full_name,
         department: e.department || 'General',
@@ -1505,6 +1623,7 @@ export class ReportsService implements IReportsService {
       sumMonthlyTds += c.monthlyTds;
 
       return {
+        _employeeId: e.id,
         code: e.employee_code,
         employee: e.full_name,
         pan: e.pan || '—',
@@ -1697,6 +1816,7 @@ export class ReportsService implements IReportsService {
 
         const department = String(e.department ?? '').trim();
         return {
+          _employeeId: e.id,
           code: e.employee_code,
           employee: e.full_name,
           department: department && department !== '0' ? department : '—',
@@ -1772,6 +1892,7 @@ export class ReportsService implements IReportsService {
       const empGoals = goalsMap.get(e.id) || [];
       if (empGoals.length === 0) {
         rows.push({
+          _employeeId: e.id,
           code: e.employee_code,
           employee: e.full_name,
           department: e.department || 'General',
@@ -1799,6 +1920,7 @@ export class ReportsService implements IReportsService {
               : `${g.currentValue ?? 0} ${g.unit || ''}`.trim();
 
           rows.push({
+            _employeeId: e.id,
             code: e.employee_code,
             employee: e.full_name,
             department: e.department || 'General',
@@ -1870,6 +1992,7 @@ export class ReportsService implements IReportsService {
       totalGross += gross;
 
       return {
+        _employeeId: e.id,
         code: e.employee_code,
         employee: e.full_name,
         designation: e.designation || 'Associate',
@@ -1943,6 +2066,7 @@ export class ReportsService implements IReportsService {
     const rows = employees.map((e) => {
       const department = String(e.department ?? '').trim();
       return {
+        _employeeId: e.id,
         code: e.employee_code,
         employee: e.full_name,
         department: department && department !== '0' ? department : '—',
@@ -2004,6 +2128,7 @@ export class ReportsService implements IReportsService {
       return [
         {
           date: d.work_date,
+          _employeeId: e.id,
           code: e.employee_code,
           employee: e.full_name,
           manager: e.manager_name || '—',
@@ -2043,6 +2168,7 @@ export class ReportsService implements IReportsService {
     ];
 
     const rows = employees.map((e) => ({
+      _employeeId: e.id,
       empId: e.employee_code,
       empName: e.full_name,
       email: e.work_email,
@@ -2132,6 +2258,7 @@ export class ReportsService implements IReportsService {
 
       return {
         siNo: index + 1,
+        _employeeId: e.id,
         employeeNo: e.employee_code.replace('BAM-', ''),
         name: e.full_name,
         joinDate: e.date_of_joining,
@@ -2241,6 +2368,7 @@ export class ReportsService implements IReportsService {
       return {
         groupBy: loan.work_state || 'Bangalore',
         employeeName: loan.employee_name,
+        _employeeId: loan.employee_id,
         employeeNo: loan.employee_code.replace('BAM-', ''),
         dateOfJoining: loan.date_of_joining,
         openingBalance: opening,
@@ -2331,6 +2459,7 @@ export class ReportsService implements IReportsService {
       const rawAccount = e.account_no || '001234567890';
 
       return {
+        _employeeId: e.id,
         beneficiaryName: e.full_name,
         beneficiaryAccountNo: rawAccount,
         ifscCode: e.ifsc_code || 'HDFC0000128',
@@ -2412,6 +2541,7 @@ export class ReportsService implements IReportsService {
 
       return {
         siNo: index + 1,
+        _employeeId: e.id,
         employeeNo: e.employee_code.replace('BAM-', ''),
         name: e.full_name,
         pfNo: e.pf_number || e.uan || '—',
@@ -2480,6 +2610,7 @@ export class ReportsService implements IReportsService {
 
       return {
         srNo: index + 1,
+        _employeeId: e.id,
         employeeNo: e.employee_code.replace('BAM-', ''),
         name: e.full_name,
         profTaxBasic: gross,
@@ -2539,6 +2670,7 @@ export class ReportsService implements IReportsService {
       }
 
       return {
+        _employeeId: e.id,
         empId: e.employee_code,
         empName: e.full_name,
         doj: e.date_of_joining,
@@ -2609,6 +2741,7 @@ export class ReportsService implements IReportsService {
       }
 
       return {
+        _employeeId: e.id,
         empId: e.employee_code,
         empName: e.full_name,
         doj: e.date_of_joining,
@@ -2706,6 +2839,7 @@ export class ReportsService implements IReportsService {
 
       rows.push({
         name: latest.employee_name,
+        _employeeId: latest.employee_id,
         employeeNo: latest.employee_code.replace('BAM-', ''),
         doj: latest.date_of_joining,
         annualCtc: currentCtc,
@@ -2749,7 +2883,21 @@ export class ReportsService implements IReportsService {
     // name column four different things, so one key would miss most of them.
     const query = (filter.search ?? '').trim().toLowerCase();
     if (query) {
-      const keys = ['employee', 'empName', 'employeeName', 'name', 'code', 'manager'];
+      // The six standard columns every report now starts with, plus the older
+      // names a few cells still use.
+      const keys = [
+        'stdEmpId',
+        'stdEmpName',
+        'stdManager',
+        'stdDepartment',
+        'stdHeadOfDepartment',
+        'employee',
+        'empName',
+        'employeeName',
+        'name',
+        'code',
+        'manager',
+      ];
       report.rows = report.rows.filter((row) =>
         keys.some((key) => String(row[key] ?? '').toLowerCase().includes(query)),
       );

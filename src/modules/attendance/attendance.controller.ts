@@ -1,5 +1,5 @@
-import { RequestHandler } from 'express';
-import { IAttendanceService } from './attendance.service.interface';
+import { Request, RequestHandler } from 'express';
+import { BreakPunch, IAttendanceService } from './attendance.service.interface';
 import { AuthenticatedRequest } from '../../middlewares/auth.middleware';
 import { ApiError } from '../../utils/api-error';
 import { asyncHandler } from '../../utils/async-handler';
@@ -16,7 +16,26 @@ export class AttendanceController {
 
   getToday: RequestHandler = asyncHandler(async (req, res) => {
     const { employeeId } = req as AuthenticatedRequest;
-    res.json({ success: true, data: await this.attendanceService.getToday(employeeId) });
+    res.json({
+      success: true,
+      data: await this.attendanceService.getToday(employeeId, this.readDevice(req)),
+    });
+  });
+
+  startBreak: RequestHandler = asyncHandler(async (req, res) => {
+    const { employeeId } = req as AuthenticatedRequest;
+    res.status(201).json({
+      success: true,
+      data: await this.attendanceService.startBreak(employeeId, this.breakPunch(req)),
+    });
+  });
+
+  endBreak: RequestHandler = asyncHandler(async (req, res) => {
+    const { employeeId } = req as AuthenticatedRequest;
+    res.json({
+      success: true,
+      data: await this.attendanceService.endBreak(employeeId, this.breakPunch(req)),
+    });
   });
 
   getWeek: RequestHandler = asyncHandler(async (req, res) => {
@@ -153,6 +172,20 @@ export class AttendanceController {
       data: await this.attendanceService.checkOut(employeeId, parseDeviceFix(req.body)),
     });
   });
+
+  /** The browser's own random id, sent as X-Device-Id. Checked in the service. */
+  private readDevice(req: Request): string | null {
+    const raw = req.get('x-device-id');
+    return raw ? raw.slice(0, 64) : null;
+  }
+
+  private breakPunch(req: Request): BreakPunch {
+    return {
+      fix: parseDeviceFix(req.body),
+      deviceId: this.readDevice(req),
+      userAgent: req.get('user-agent') ?? null,
+    };
+  }
 
   private readId(raw: unknown): number {
     const id = Number(raw);

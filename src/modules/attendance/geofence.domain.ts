@@ -87,9 +87,10 @@ export interface GeofencePolicy {
 
 /** The company-wide settings, from env. */
 export interface GeofenceConfig {
-  office: GeoPoint & { radiusM: number };
+  /** `graceM` here is the office's own margin; without it the shared one applies. */
+  office: GeoPoint & { radiusM: number; graceM?: number };
   homeRadiusM: number;
-  /** Hidden margin added to every zone's radius — see GeofenceZone.graceM. */
+  /** Hidden margin added to home and second zones — see GeofenceZone.graceM. */
   graceM: number;
   maxAccuracyM: number;
 }
@@ -168,7 +169,7 @@ export function policyFor(
 
   let zones: GeofenceZone[];
   if (workMode === 'WFO') {
-    zones = [{ kind: 'office', ...config.office, graceM: config.graceM }, ...places];
+    zones = [{ kind: 'office', ...config.office, graceM: config.office.graceM ?? config.graceM }, ...places];
   } else if (workMode === 'WFH') {
     if (places.length === 0) {
       // Home switched on but never saved: blocked until it is. Both switched

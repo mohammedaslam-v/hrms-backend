@@ -7,6 +7,7 @@ import {
   eachDay,
   formatDecisionNote,
   formatMonthRange,
+  isAdminOnlyLeave,
   isSpecialSeniorApprover,
   isTwoLevelLeave,
   LeaveLedger,
@@ -327,6 +328,11 @@ export class LeaveService implements ILeaveService {
       );
     }
 
+    // Admin-only people's leave never sits in a manager's queue — only HR decides it.
+    if (!isAdmin) {
+      pendingRequests = pendingRequests.filter((req) => !isAdminOnlyLeave(req.employeeId));
+    }
+
     // The ledger for each report, plus any applicant whose request is pending,
     // so the queue can show the consequence of a decision and the balances table can be built.
     const ledgers = new Map<number, Awaited<ReturnType<LeaveService['resolve']>>>();
@@ -492,6 +498,13 @@ export class LeaveService implements ILeaveService {
     }
 
     const isTwoLevel = isTwoLevelLeave(request);
+
+    // Some people's own leave is HR's alone (see ADMIN_ONLY_LEAVE_EMPLOYEE_IDS):
+    // their reporting manager cannot decide it. Same response as a missing
+    // request, as below, so it cannot be used to probe.
+    if (isAdminOnlyLeave(request.employeeId) && !isAdmin) {
+      throw ApiError.notFound('That request could not be found.');
+    }
 
     // Scope check: the request must belong to someone in this manager's tree, unless viewer is admin,
     // OR viewer is a special senior approver (e.g. Rhea Diwan) deciding a 2-level leave request.

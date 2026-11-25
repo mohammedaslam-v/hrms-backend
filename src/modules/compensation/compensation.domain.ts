@@ -44,6 +44,26 @@ export function compensationOn(
 export const vestedUnits = (record: CompensationRecord): number =>
   Math.round((record.esopUnits * record.esopVestedPct) / 100);
 
+/** '2026-10' → '2026-10-31'. Null when the month is not a real YYYY-MM. */
+export function lastDayOfMonth(month: string): string | null {
+  const m = /^(\d{4})-(\d{2})$/.exec(month);
+  if (!m) return null;
+  const year = Number(m[1]);
+  const mon = Number(m[2]);
+  if (mon < 1 || mon > 12) return null;
+  // Day 0 of the next month is the last day of this one; UTC, so no timezone shift.
+  const day = new Date(Date.UTC(year, mon, 0)).getUTCDate();
+  return `${month}-${String(day).padStart(2, '0')}`;
+}
+
+/**
+ * The pay a cost report may count for a month, or null when it must not
+ * count anything: no salary had started by then, or the one that applies is a
+ * placeholder — dummy pay must never be reported as what someone costs.
+ */
+export const countablePay = (record: CompensationRecord | null | undefined): CompensationRecord | null =>
+  record && !record.isPlaceholder ? record : null;
+
 /**
  * What the encrypted `payload_enc` is bound to. It names the employee, so a
  * payload copied onto someone else's row fails to decrypt instead of giving

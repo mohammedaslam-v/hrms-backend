@@ -67,6 +67,7 @@ import { IProjectsService } from './modules/projects/projects.service.interface'
 import { IPolicyService } from './modules/policy/policy.service.interface';
 import { IProfileService } from './modules/profile/profile.service.interface';
 import { IOtpService } from './modules/auth/otp.service.interface';
+import { BreakRepository } from './modules/attendance/break.repository';
 import { AttendanceRepository } from './modules/attendance/attendance.repository';
 import { AccessService } from './modules/access/access.service';
 import { AuthRepository } from './modules/auth/auth.repository';
@@ -123,6 +124,8 @@ import { InternalAttendanceRepository } from './modules/internal/internal-attend
 import { InternalAttendanceController } from './modules/internal/internal-attendance.controller';
 import { InternalPresenceController } from './modules/internal/internal-presence.controller';
 import { FieldCipher, IFieldCipher } from './shared/field-cipher';
+import { InternalCompensationController } from './modules/internal/internal-compensation.controller';
+import { InternalCompensationRepository } from './modules/internal/internal-compensation.repository';
 
 
 export const createContainer = () => {
@@ -212,12 +215,13 @@ export const createContainer = () => {
     leaveService,
     env.geofence.enabled
       ? {
-          office: { lat: env.geofence.lat, lng: env.geofence.lng, radiusM: env.geofence.radiusM },
+          office: { lat: env.geofence.lat, lng: env.geofence.lng, radiusM: env.geofence.radiusM, graceM: env.geofence.officeGraceM },
           homeRadiusM: env.geofence.homeRadiusM,
           graceM: env.geofence.graceM,
           maxAccuracyM: env.geofence.maxAccuracyM,
         }
       : null,
+    new BreakRepository(pool),
   );
   const attendanceController = new AttendanceController(attendanceService);
 
@@ -356,6 +360,12 @@ export const createContainer = () => {
   );
   // ...and its header "who is active" list, built by the same board as HRMS.
   const internalPresenceController = new InternalPresenceController(presenceService);
+  // ...and salary cost for its Sales Pulse page. HRMS decrypts; the key never leaves here.
+  const internalCompensationController = new InternalCompensationController(
+    compensationService,
+    new InternalCompensationRepository(pool),
+    clock,
+  );
 
 
 
@@ -384,6 +394,7 @@ export const createContainer = () => {
     workActivityController,
     internalAttendanceController,
     internalPresenceController,
+    internalCompensationController,
     productivityController,
     productivityService,
     companyPolicyService,

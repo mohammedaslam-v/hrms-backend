@@ -29,7 +29,21 @@ import {
   punchOf,
 } from './attendance.domain';
 import { IAttendanceRepository } from './attendance.repository.interface';
-import { IAttendanceService } from './attendance.service.interface';
+import { BreakPunch, IAttendanceService } from './attendance.service.interface';
+import { IBreakRepository } from './break.repository.interface';
+import {
+  BREAK_ALLOWANCE_MINUTES,
+  clockOf,
+  deviceLabel,
+  effectiveEnd,
+  endVerdict,
+  isDeviceId,
+  runningBreak,
+  shiftBounds,
+  startVerdict,
+  usedMinutes,
+  type BreakRecord,
+} from './break.domain';
 import { isActivityMeasured } from './attendance.config';
 import { IAccessService } from '../access/access.service.interface';
 import { IPolicyService } from '../policy/policy.service.interface';
@@ -37,6 +51,7 @@ import {
   AttendanceRangeDto,
   AttendanceRangeRow,
   AttendanceRecord,
+  BreakView,
   CalendarView,
   DAY_EDIT_STATUSES,
   EditDayDto,
@@ -127,6 +142,8 @@ export class AttendanceService implements IAttendanceService {
     // The office and home radius for fenced punching. Null switches the fence
     // off — the test doubles, and OFFICE_GEOFENCE_ENABLED=false.
     private readonly geofenceConfig: GeofenceConfig | null = null,
+    // The break hour. Null switches breaks off (the test doubles).
+    private readonly breakRepository: IBreakRepository | null = null,
   ) {}
 
   /**
@@ -384,7 +401,7 @@ export class AttendanceService implements IAttendanceService {
     };
   }
 
-  async getToday(employeeId: number): Promise<TodayView> {
+  async getToday(employeeId: number, deviceId: string | null = null): Promise<TodayView> {
     const now = await this.attendanceRepository.now();
     const schedule = await this.requireSchedule(employeeId, now.date);
 
@@ -456,7 +473,144 @@ export class AttendanceService implements IAttendanceService {
         (!stored?.loginAt || Boolean(stored?.logoutAt)),
       canCheckOut: Boolean(stored?.loginAt && !stored.logoutAt),
       geofence: this.fenceFor(schedule),
+      break: stored?.loginAt
+        ? await this.breakViewFor(employeeId, shiftDate, schedule, now, Boolean(!stored.logoutAt), deviceId)
+        : null,
     };
+  }
+
+  /** The card's break line. Writes nothing: a lapsed break is read as ended at its endsBy. */
+  private async breakViewFor(
+    employeeId: number,
+    shiftDate: string,
+    schedule: WorkSchedule,
+    now: { date: string; time: string },
+    checkedIn: boolean,
+    deviceId: string | null,
+  ): Promise<BreakView | null> {
+    if (!this.breakRepository) return null;
+    const at = `${now.date} ${now.time}`;
+    // The Today card must load even if the breaks table is missing (deployed
+    // before the CREATE TABLE ran): no break line rather than no card.
+    let breaks: BreakRecord[];
+    try {
+      breaks = await this.breakRepository.findForShift(employeeId, shiftDate);
+    } catch (err) {
+      console.error('[Attendance] Could not read breaks:', err);
+      return null;
+    }
+    const running = runningBreak(breaks, at);
+    const verdict = startVerdict({
+      checkedIn,
+      now: at,
+      shift: shiftBounds(shiftDate, schedule.shiftStart, schedule.shiftEnd),
+      breaks,
+    });
+    return {
+      allowanceMinutes: BREAK_ALLOWANCE_MINUTES,
+      usedMinutes: usedMinutes(breaks, at),
+      runningSince: running ? clockOf(running.startedAt) : null,
+      endsBy: running ? clockOf(running.endsBy) : null,
+      startedOn: running?.startDeviceLabel ?? null,
+      onThisDevice: Boolean(running && deviceId && running.startDevice === deviceId),
+      canStart: verdict.ok,
+      startBlockedReason: !verdict.ok && !running ? verdict.message : null,
+    };
+  }
+
+  async startBreak(employeeId: number, punch: BreakPunch): Promise<TodayView> {
+    const breaks = this.requireBreaks();
+    if (!isDeviceId(punch.deviceId)) {
+      throw ApiError.badRequest('This browser did not identify itself. Reload the page and try again.');
+    }
+    const now = await this.attendanceRepository.now();
+    const at = `${now.date} ${now.time}`;
+    const schedule = await this.requireSchedule(employeeId, now.date);
+    const location = this.requireInsideZone(schedule, { onBehalf: false, fix: punch.fix });
+
+    const open = await this.attendanceRepository.findOpenPunch(employeeId);
+    if (
+      !open?.loginAt ||
+      isPunchExpired(open.date, schedule.shiftStart, schedule.shiftEnd, now.date, now.time, CHECKOUT_GRACE_MINUTES)
+    ) {
+      throw ApiError.badRequest('Check in first to start a break.');
+    }
+
+    // A break from an earlier shift that lapsed and was never tidied: store
+    // the end it already had, so the one-open-break key lets a new one in.
+    const stale = await breaks.findOpen(employeeId);
+    const staleEnd = stale ? effectiveEnd(stale, at) : null;
+    if (stale && staleEnd) {
+      await breaks.end({ id: stale.id, endedAt: staleEnd, reason: 'auto', device: null, zone: null });
+    }
+
+    const verdict = startVerdict({
+      checkedIn: true,
+      now: at,
+      shift: shiftBounds(open.date, schedule.shiftStart, schedule.shiftEnd),
+      breaks: await breaks.findForShift(employeeId, open.date),
+    });
+    if (!verdict.ok) throw ApiError.badRequest(verdict.message);
+
+    const label = deviceLabel(punch.userAgent);
+    const id = await breaks.start({
+      employeeId,
+      attendanceId: open.id,
+      workDate: open.date,
+      startedAt: at,
+      endsBy: verdict.endsBy,
+      device: punch.deviceId,
+      deviceLabel: label,
+      zone: location?.zone ?? null,
+    });
+    if (id === null) throw ApiError.badRequest('You are already on a break.');
+
+    await this.attendanceRepository.recordAudit(employeeId, 'attendance.breakStart', open.id, null, {
+      breakId: id,
+      date: open.date,
+      startedAt: now.time,
+      endsBy: clockOf(verdict.endsBy),
+      device: label,
+      location,
+    });
+    return this.getToday(employeeId, punch.deviceId);
+  }
+
+  async endBreak(employeeId: number, punch: BreakPunch): Promise<TodayView> {
+    const breaks = this.requireBreaks();
+    const now = await this.attendanceRepository.now();
+    const at = `${now.date} ${now.time}`;
+
+    const open = await breaks.findOpen(employeeId);
+    const running = open && effectiveEnd(open, at) === null ? open : null;
+    if (!running) throw ApiError.badRequest('You are not on a break — it may have already ended by itself.');
+
+    // Device first: from the wrong device the location is beside the point.
+    const deviceId = isDeviceId(punch.deviceId) ? punch.deviceId : null;
+    const sameDevice = endVerdict({ running, deviceId, zone: null });
+    if (!sameDevice.ok) throw ApiError.forbidden(sameDevice.message);
+
+    const schedule = await this.attendanceRepository.findSchedule(employeeId);
+    const location = this.requireInsideZone(schedule, { onBehalf: false, fix: punch.fix });
+    const samePlace = endVerdict({ running, deviceId, zone: location?.zone ?? null });
+    if (!samePlace.ok) throw ApiError.forbidden(samePlace.message);
+
+    if (await breaks.end({ id: running.id, endedAt: at, reason: 'self', device: deviceId, zone: location?.zone ?? null })) {
+      await this.attendanceRepository.recordAudit(employeeId, 'attendance.breakEnd', null, null, {
+        breakId: running.id,
+        date: open!.workDate,
+        startedAt: clockOf(running.startedAt),
+        endedAt: now.time,
+        device: deviceLabel(punch.userAgent),
+        location,
+      });
+    }
+    return this.getToday(employeeId, deviceId);
+  }
+
+  private requireBreaks(): IBreakRepository {
+    if (!this.breakRepository) throw ApiError.badRequest('Breaks are not available.');
+    return this.breakRepository;
   }
 
   async checkIn(employeeId: number, fix: DeviceFix | null = null): Promise<TodayView> {
@@ -686,6 +840,21 @@ export class AttendanceService implements IAttendanceService {
       // Lost a race with another tab that checked out first. The day is closed
       // either way, so report the state rather than an error.
       return;
+    }
+
+    // Checking out ends a running break then and there. One that already
+    // lapsed keeps the end it had.
+    const openBreak = this.breakRepository ? await this.breakRepository.findOpen(employeeId) : null;
+    if (openBreak) {
+      const at = `${now.date} ${now.time}`;
+      const lapsed = effectiveEnd(openBreak, at);
+      await this.breakRepository!.end({
+        id: openBreak.id,
+        endedAt: lapsed ?? at,
+        reason: lapsed ? 'auto' : 'checkout',
+        device: null,
+        zone: location?.zone ?? null,
+      });
     }
 
     await this.attendanceRepository.recordAudit(

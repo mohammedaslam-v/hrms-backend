@@ -22,6 +22,7 @@ import { createPresenceRouter } from './modules/presence/presence.routes';
 import { createWorkActivityRouter } from './modules/work-activity/work-activity.routes';
 import { createInternalAttendanceRouter } from './modules/internal/internal-attendance.routes';
 import { createInternalPresenceRouter } from './modules/internal/internal-presence.routes';
+import { createInternalCompensationRouter } from './modules/internal/internal-compensation.routes';
 import { createPresenceTrackerRouter } from './modules/presence/presence.tracker.routes';
 import { createProductivityRouter } from './modules/productivity/productivity.routes';
 
@@ -51,6 +52,7 @@ export const createApiRouter = (container: Container): Router => {
   router.use('/work-activities', createWorkActivityRouter(container.workActivityController));
   router.use('/internal/attendance', createInternalAttendanceRouter(container.internalAttendanceController));
   router.use('/internal/presence', createInternalPresenceRouter(container.internalPresenceController));
+  router.use('/internal/compensation', createInternalCompensationRouter(container.internalCompensationController));
   router.use('/productivity', createProductivityRouter(container.productivityController));
 
   return router;
