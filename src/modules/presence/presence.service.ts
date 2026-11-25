@@ -1,6 +1,7 @@
 import { IAccessService } from '../access/access.service.interface';
 import { IAttendanceRepository } from '../attendance/attendance.repository.interface';
 import { addDays, crossesMidnight, eachDate } from '../attendance/attendance.domain';
+import { WorkSchedule } from '../attendance/attendance.model';
 import { IAuthService } from '../auth/auth.service.interface';
 import { IOrgRepository } from '../org/org.repository.interface';
 import { ApiError } from '../../utils/api-error';
@@ -157,8 +158,9 @@ export class PresenceService implements IPresenceService {
       // Today and yesterday totals on the panel, so night shifts spanning two calendar days don't reset at midnight.
       this.repository.findDaysForMany([...adminIds, ...unlinked.map((u) => u.admin_id)], yesterday, now.date),
     ]);
+    const shiftDays = await this.withNightShifts(adminOf, yesterday, now.date, days, schedules);
     const activeSecondsOf = new Map<number, Map<string, number>>();
-    for (const [adminId, list] of days) {
+    for (const [adminId, list] of shiftDays) {
       const byDate = new Map<string, number>();
       for (const d of list) {
         byDate.set(d.date, d.activeSeconds);
@@ -274,9 +276,10 @@ export class PresenceService implements IPresenceService {
     from: string,
     to: string,
     days: Map<number, AdminPanelDay[]>,
+    schedulesMap?: Map<number, WorkSchedule>,
   ): Promise<Map<number, AdminPanelDay[]>> {
     if (to < HOURLY_PANEL_FROM || adminOf.size === 0) return days;
-    const schedules = await this.attendanceRepository.findSchedulesFor([...adminOf.keys()]);
+    const schedules = schedulesMap ?? (await this.attendanceRepository.findSchedulesFor([...adminOf.keys()]));
     const night = [...adminOf].filter(([employeeId]) => {
       const s = schedules.get(employeeId);
       return s ? crossesMidnight(s.shiftStart, s.shiftEnd) : false;

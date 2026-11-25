@@ -152,7 +152,7 @@ test("today's admin-panel time is carried per person; no account or no row reads
   assert.equal(of(4).activeTodaySeconds, 0, 'no admin account');
 });
 
-test('night shift active time does not reset at midnight when crossing into next day', () => {
+test('night shift active time follows shift window: 6h before start until 4h after end', () => {
   const nightMember = {
     employeeId: 6,
     name: 'Mirnal',
@@ -166,7 +166,7 @@ test('night shift active time does not reset at midnight when crossing into next
   ]);
 
   // At 02:00 (during the night shift, after midnight on 2026-10-18):
-  // Yesterday (2026-10-17) + today (2026-10-18) active time are combined
+  // 02:00 is before next shift window start (15:00 = 6h before 21:00), so it belongs to 2026-10-17 shift
   const nightInput = input({
     today: '2026-10-18',
     time: '02:00',
@@ -175,9 +175,9 @@ test('night shift active time does not reset at midnight when crossing into next
     activeSecondsOf: activeMap,
   });
   const atNight = buildBoard(nightInput).groups[0].people[0];
-  assert.equal(atNight.activeTodaySeconds, 10800, 'active time should not reset at midnight');
+  assert.equal(atNight.activeTodaySeconds, 7200, 'active time should not reset at midnight; shows shift from 2026-10-17');
 
-  // At 11:30 (during daytime before the next 21:00 shift begins):
+  // At 11:30 (during daytime before the next 21:00 shift window begins at 15:00):
   const daytimeInput = input({
     today: '2026-10-18',
     time: '11:30',
@@ -186,9 +186,9 @@ test('night shift active time does not reset at midnight when crossing into next
     activeSecondsOf: activeMap,
   });
   const atDaytime = buildBoard(daytimeInput).groups[0].people[0];
-  assert.equal(atDaytime.activeTodaySeconds, 10800, 'carries combined shift active time until next shift starts');
+  assert.equal(atDaytime.activeTodaySeconds, 7200, 'carries shift active time until next shift window starts at 15:00');
 
-  // At 21:30 (after the new shift has started):
+  // At 21:30 (after the new shift window started at 15:00):
   const nextShiftInput = input({
     today: '2026-10-18',
     time: '21:30',
@@ -197,7 +197,50 @@ test('night shift active time does not reset at midnight when crossing into next
     activeSecondsOf: activeMap,
   });
   const atNextShift = buildBoard(nextShiftInput).groups[0].people[0];
-  assert.equal(atNextShift.activeTodaySeconds, 3600, 'new shift resets to today only');
+  assert.equal(atNextShift.activeTodaySeconds, 3600, 'new shift window resets to today shift only');
+
+  // 16:00–02:00 shift (e.g. Vinit): shift cycle window starts at 10:00 (6h before 16:00)
+  const vinitMember = {
+    employeeId: 7,
+    name: 'Vinit',
+    designation: 'Ops',
+    department: 'Teacher Ops',
+    shiftStart: '16:00',
+    shiftEnd: '02:00',
+  };
+  const vinitMap = new Map([
+    [107, new Map([['2026-11-23', 25980], ['2026-11-24', 1200]])], // 25980 = 7h 13m
+  ]);
+
+  // At 23:42 on 2026-11-23 (evening of shift):
+  const vinitEvening = buildBoard(input({
+    today: '2026-11-23',
+    time: '23:42',
+    members: [vinitMember],
+    adminOf: new Map([[7, 107]]),
+    activeSecondsOf: vinitMap,
+  })).groups[0].people[0];
+  assert.equal(vinitEvening.activeTodaySeconds, 25980, 'shows 7h 13m on Monday evening');
+
+  // At 01:30 on 2026-11-24 (after midnight, before 10:00 AM window):
+  const vinitLateNight = buildBoard(input({
+    today: '2026-11-24',
+    time: '01:30',
+    members: [vinitMember],
+    adminOf: new Map([[7, 107]]),
+    activeSecondsOf: vinitMap,
+  })).groups[0].people[0];
+  assert.equal(vinitLateNight.activeTodaySeconds, 25980, 'still shows Monday shift after midnight');
+
+  // At 10:30 on 2026-11-24 (after 10:00 AM window start):
+  const vinitNextCycle = buildBoard(input({
+    today: '2026-11-24',
+    time: '10:30',
+    members: [vinitMember],
+    adminOf: new Map([[7, 107]]),
+    activeSecondsOf: vinitMap,
+  })).groups[0].people[0];
+  assert.equal(vinitNextCycle.activeTodaySeconds, 1200, 'switches to Tuesday shift at 10:00 AM');
 });
 
 test('night shift shows weekly off between shift end and next shift start', () => {

@@ -298,7 +298,8 @@ export const isLate = (lateByMinutes: number, lateGraceMinutes: number): boolean
 
 /**
  * A check-in 25 minutes or more past shift start is treated as Half day.
- * It triggers a 0.5 day leave deduction (or 0.5 day LOP if leave balance is exhausted).
+ * It is a penalty: 0.5 day unpaid (LOP), never drawn from the earned-leave
+ * balance (rule from 25 Nov 2026; before that EL was deducted when available).
  */
 export const LATE_HALF_DAY_MINUTES = 25;
 
