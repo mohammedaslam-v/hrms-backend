@@ -326,19 +326,12 @@ export class AttendanceService implements IAttendanceService {
           if (isLop) {
             leaveType = 'Unpaid';
           } else if (dto.status === 'Half earned leave') {
+            // HR chose earned leave by hand; honour it.
             leaveType = 'Earned';
           } else {
-            // Check employee leave balance
-            let hasBalance = false;
-            if (this.leaveService) {
-              try {
-                const leaveData = await this.leaveService.getMyLeave(subjectId);
-                hasBalance = (leaveData.ledger?.available ?? 0) >= 0.5;
-              } catch {
-                hasBalance = false;
-              }
-            }
-            leaveType = hasBalance ? 'Earned' : 'Unpaid';
+            // HR saved a present day whose check-in is 25+ min late: the same
+            // penalty as the live check-in, always unpaid, never from balance.
+            leaveType = 'Unpaid';
           }
           leaveChoice = { leaveType, isHalfDay: true, halfDaySession: 'first' };
         } else if (isLate(lateBy, policy.lateGraceMinutes)) {
@@ -730,17 +723,10 @@ export class AttendanceService implements IAttendanceService {
     if (!isRecheckIn && isWorkingShift && isHalfDayLate(lateByMinutes)) {
       status = 'Half day';
 
-      let hasBalance = false;
-      if (this.leaveService) {
-        try {
-          const leaveData = await this.leaveService.getMyLeave(employeeId);
-          hasBalance = (leaveData.ledger?.available ?? 0) >= 0.5;
-        } catch {
-          hasBalance = false;
-        }
-      }
-
-      leaveType = hasBalance ? 'Earned' : 'Unpaid';
+      // A late half day is a penalty, so it is always unpaid (0.5 LOP). It never
+      // draws from the earned-leave balance, however much balance there is
+      // (rule from 25 Nov 2026; before that EL was deducted when available).
+      leaveType = 'Unpaid';
 
       if (this.leaveService) {
         try {
@@ -749,7 +735,7 @@ export class AttendanceService implements IAttendanceService {
             employeeId,
             shiftDate,
             { leaveType, isHalfDay: true, halfDaySession: 'first' },
-            `Late check-in by ${lateByMinutes}m (${hasBalance ? '0.5 Earned leave deducted' : '0.5 Unpaid LOP'})`,
+            `Late check-in by ${lateByMinutes}m (0.5 Unpaid LOP)`,
           );
         } catch (err) {
           console.error('[Attendance] Failed to record late half-day leave:', err);
