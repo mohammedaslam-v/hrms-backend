@@ -2,7 +2,7 @@ import http from 'http';
 import { createApp } from './app';
 import { closePool, getPool } from './config/database';
 import { env, isProduction } from './config/env';
-import { isMailConfigured } from './utils/mailer';
+import { isMailConfigured, mailProvider } from './utils/mailer';
 import { isWhatsappConfigured } from './utils/whatsapp';
 
 const app = createApp();
@@ -28,7 +28,7 @@ const reportDeliveryChannels = (): void => {
   const email = isMailConfigured();
   const whatsapp = isWhatsappConfigured();
 
-  console.log(`OTP delivery — email: ${email ? `on (${env.mail.from})` : 'OFF'}` +
+  console.log(`OTP delivery — email: ${email ? `on (${mailProvider()}, ${env.mail.from})` : `OFF (${mailProvider()} not configured)`}` +
     ` · whatsapp: ${whatsapp ? 'on' : 'OFF'}`);
 
   if (!email && !whatsapp) {

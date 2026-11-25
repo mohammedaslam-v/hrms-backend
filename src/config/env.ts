@@ -33,11 +33,32 @@ export const env = {
     resendCooldownSeconds: Number.parseInt(required('OTP_RESEND_COOLDOWN_SECONDS', '60'), 10),
   },
   mail: {
-    // Postmark over HTTPS, matching admin-backend — the production host blocks
-    // outbound SMTP, so port 587 is not an option.
-    postmarkToken: process.env.POSTMARK_TOKEN ?? '',
-    from: process.env.EMAIL_FROM ?? '',
-    fromName: process.env.MAIL_NAME ?? 'Bambinos HRMS',
+    /**
+     * Two providers, both over HTTPS (the production host blocks outbound SMTP):
+     * Amazon SES (the default since Nov 2026, same AWS account as faculty/admin)
+     * and Postmark, kept as the emergency switch. EMAIL_PROVIDER picks one; it is
+     * read by utils/mailer at send time, not here, so a Cloud Run env change is
+     * enough to flip it — no code change, no new image.
+     *
+     * Both spellings of the from/token keys are accepted so the same values the
+     * faculty backend uses (MAIL_FROM, POSTMARK_API_TOKEN) work here unchanged.
+     */
+    from: process.env.MAIL_FROM ?? process.env.EMAIL_FROM ?? '',
+    // Product name as employees see it (the app is Bconnect at bconnect.bambinos.live).
+    // Also used inside the OTP email subject/body, so the rename lives here only.
+    fromName: process.env.MAIL_NAME ?? 'Bambinos Bconnect',
+    postmarkToken: process.env.POSTMARK_TOKEN ?? process.env.POSTMARK_API_TOKEN ?? '',
+    ses: {
+      // Dedicated SES_* names, never the generic AWS_* ones, so no other AWS
+      // client in this process (GCS is Google, but still) picks them up by accident.
+      region: process.env.SES_AWS_REGION ?? 'ap-southeast-2',
+      accessKeyId: process.env.SES_AWS_ACCESS_KEY_ID ?? '',
+      secretAccessKey: process.env.SES_AWS_SECRET_ACCESS_KEY ?? '',
+      // Optional: the configuration set whose event destination reports bounces.
+      configurationSet: process.env.SES_CONFIGURATION_SET ?? '',
+      // "source" tag on every email so a bounce says which backend sent it.
+      source: process.env.EMAIL_SOURCE ?? 'hrms',
+    },
   },
   whatsapp: {
     // Second OTP channel. Email stays the guaranteed one, so a stale or missing
