@@ -1,6 +1,7 @@
 import { nowFrom } from './presence.domain';
 
 import { addDays, crossesMidnight, isWeeklyOff, minutesOf } from '../attendance/attendance.domain';
+import { windowFor } from '../productivity/productivity.domain';
 import {
   BoardGroup,
   BoardPerson,
@@ -97,12 +98,13 @@ const byActivity = (a: BoardPerson, b: BoardPerson): number => {
 /**
  * Seconds active on the admin panel for this person's shift cycle.
  *
- * For a standard day shift (or unlinked admin): today's active seconds.
- * For a night shift that crosses midnight (e.g. 21:00–07:00):
- *   - While before today's shift starts (time < shiftStart), the shift cycle
- *     started yesterday. If yesterday was a working shift, yesterday's active
- *     time is combined with today's so the total does not reset to 0 at midnight.
- *   - Once today's shift starts (time >= shiftStart), it tracks today's new shift.
+ * For a standard day shift (or unlinked admin): today's active seconds (resets at calendar midnight).
+ * For a night shift that crosses midnight (e.g. 16:00–02:00 or 21:00–07:00):
+ *   - The shift cycle window runs from 6 hours before shift start until 4 hours after shift end.
+ *   - While before today's shift window begins (time < shiftStart - 6h), the person is still
+ *     in yesterday's shift cycle (activeSecondsOf for yesterday).
+ *   - Once today's shift window begins (time >= shiftStart - 6h), it tracks today's shift cycle
+ *     (activeSecondsOf for today).
  */
 function activeSecondsFor(
   adminId: number | null,
@@ -110,7 +112,6 @@ function activeSecondsFor(
   shiftEnd: string | null,
   today: string,
   time: string | undefined,
-  isYesterdayOff: boolean,
   activeSecondsOf?: Map<number, number | Map<string, number>>,
 ): number {
   if (!adminId || !activeSecondsOf) return 0;
@@ -123,12 +124,11 @@ function activeSecondsFor(
     return todaySec;
   }
 
-  const nowMin = minutesOf(time);
-  const startMin = minutesOf(shiftStart);
-  if (nowMin < startMin && !isYesterdayOff) {
+  const nowStamp = `${today} ${time.slice(0, 5)}`;
+  const windowToday = windowFor(today, shiftStart, shiftEnd);
+  if (nowStamp < windowToday.from) {
     const yesterday = addDays(today, -1);
-    const yesterdaySec = entry.get(yesterday) ?? 0;
-    return yesterdaySec + todaySec;
+    return entry.get(yesterday) ?? 0;
   }
 
   return todaySec;
@@ -206,14 +206,12 @@ export function buildBoard(input: BoardInput): PresenceBoard {
         ? 'Holiday'
         : null;
 
-    const isYesterdayOff = isWeeklyOff(addDays(input.today, -1), weeklyOffs);
     const activeTodaySeconds = activeSecondsFor(
       adminId,
       m.shiftStart,
       m.shiftEnd,
       input.today,
       input.time,
-      isYesterdayOff,
       input.activeSecondsOf,
     );
 
@@ -267,7 +265,6 @@ export function buildBoard(input: BoardInput): PresenceBoard {
           null,
           input.today,
           input.time,
-          false,
           input.activeSecondsOf,
         ),
         presence: nowFrom(u),
