@@ -60,12 +60,6 @@ export const env = {
       source: process.env.EMAIL_SOURCE ?? 'hrms',
     },
   },
-  whatsapp: {
-    // Second OTP channel. Email stays the guaranteed one, so a stale or missing
-    // mobile can never lock anyone out — and vice versa.
-    apiKey: process.env.HELTAR_API_KEY ?? '',
-    enabled: (process.env.HELTAR_ENABLED ?? 'true') !== 'false',
-  },
   razorpay: {
     key: process.env.RAZORPAY_KEY ?? '',
     secret: process.env.RAZORPAY_SECRET ?? '',

@@ -3,7 +3,6 @@ import { createApp } from './app';
 import { closePool, getPool } from './config/database';
 import { env, isProduction } from './config/env';
 import { isMailConfigured, mailProvider } from './utils/mailer';
-import { isWhatsappConfigured } from './utils/whatsapp';
 
 const app = createApp();
 const server = http.createServer(app);
@@ -26,12 +25,10 @@ const checkDatabaseConnection = async (): Promise<void> => {
  */
 const reportDeliveryChannels = (): void => {
   const email = isMailConfigured();
-  const whatsapp = isWhatsappConfigured();
 
-  console.log(`OTP delivery — email: ${email ? `on (${mailProvider()}, ${env.mail.from})` : `OFF (${mailProvider()} not configured)`}` +
-    ` · whatsapp: ${whatsapp ? 'on' : 'OFF'}`);
+  console.log(`OTP delivery — email: ${email ? `on (${mailProvider()}, ${env.mail.from})` : `OFF (${mailProvider()} not configured)`}`);
 
-  if (!email && !whatsapp) {
+  if (!email) {
     console.warn(
       isProduction
         ? '  !! No delivery channel configured. Nobody can sign in.'

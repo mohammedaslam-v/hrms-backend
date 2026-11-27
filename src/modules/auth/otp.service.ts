@@ -5,12 +5,6 @@ import { IOtpService } from './otp.service.interface';
 import { maskEmail, OtpChallenge, OtpPurpose } from './auth.model';
 import { ApiError } from '../../utils/api-error';
 import { buildOtpEmail, deliverOtpFallback, isMailConfigured, sendMail } from '../../utils/mailer';
-import {
-  isPlausibleMobile,
-  isWhatsappConfigured,
-  sendOtpWhatsapp,
-  toWhatsappNumber,
-} from '../../utils/whatsapp';
 
 const OTP_LENGTH = 6;
 
@@ -147,43 +141,27 @@ export class OtpService implements IOtpService {
   }
 
   /**
-   * Both channels are attempted independently, so one failing does not stop the
-   * other. A suppressed email address or a stale mobile number should never be
-   * enough on its own to lock someone out.
+   * Email is the only OTP channel. WhatsApp (Heltar) was dropped on 26 Nov 2026:
+   * the work email is the identity HR controls, and a code on a personal phone
+   * number read from `admins.mobile` was never what the sign-in promised.
    */
   private async deliver(
-    employeeId: number,
+    _employeeId: number,
     to: string,
     code: string,
     purpose: OtpPurpose,
   ): Promise<void> {
-    const targets = await this.authRepository.findDeliveryTargets(employeeId);
-    const mobile = targets?.mobile ?? null;
-
-// Real OTP is always delivered via email/WhatsApp
-
-    if (!isMailConfigured() && !isWhatsappConfigured()) {
+    if (!isMailConfigured()) {
       deliverOtpFallback(to, code, purpose);
       return;
     }
 
-    // Fire-and-forget on both: the code is already stored, so the HTTP response
-    // should not wait on either provider. Failures are logged; the user can resend.
-    if (isMailConfigured()) {
-      const mailPurpose = purpose === 'forgot_password' ? 'forgot_password' : purpose === 'step_up' ? 'step_up' : 'login';
-      const { subject, html, text } = buildOtpEmail(code, mailPurpose, env.otp.ttlMinutes);
-      void sendMail({ to, subject, html, text })
-        .then(() => console.log(`[OTP] ${purpose} code emailed to ${maskEmail(to)}`))
-        .catch((err: Error) => console.error(`[OTP] Email failed for ${maskEmail(to)}:`, err.message));
-    }
-
-    if (isWhatsappConfigured() && isPlausibleMobile(mobile)) {
-      const number = toWhatsappNumber(mobile);
-      void sendOtpWhatsapp(number, code)
-        .then(() => console.log(`[OTP] ${purpose} code sent on WhatsApp to ${number.slice(-4).padStart(number.length, '•')}`))
-        .catch((err: Error) => console.error('[OTP] WhatsApp failed:', err.message));
-    } else if (isWhatsappConfigured()) {
-      console.warn(`[OTP] No usable mobile on file for employee ${employeeId} — email only.`);
-    }
+    // Fire-and-forget: the code is already stored, so the HTTP response should
+    // not wait on the provider. Failures are logged; the user can resend.
+    const mailPurpose = purpose === 'forgot_password' ? 'forgot_password' : purpose === 'step_up' ? 'step_up' : 'login';
+    const { subject, html, text } = buildOtpEmail(code, mailPurpose, env.otp.ttlMinutes);
+    void sendMail({ to, subject, html, text })
+      .then(() => console.log(`[OTP] ${purpose} code emailed to ${maskEmail(to)}`))
+      .catch((err: Error) => console.error(`[OTP] Email failed for ${maskEmail(to)}:`, err.message));
   }
 }
