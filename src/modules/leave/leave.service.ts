@@ -12,10 +12,12 @@ import {
   isTwoLevelLeave,
   LeaveLedger,
   LeaveType,
+  LedgerRow,
   monthKeyOf,
   parseApprovalProgress,
   projectRequest,
   round1,
+  settleAhead,
   workingDaysBetween,
 } from './leave.domain';
 import { IOrgRepository } from '../org/org.repository.interface';
@@ -1055,6 +1057,22 @@ export class LeaveService implements ILeaveService {
     return out;
   }
 
+  async ledgerRowsThrough(employeeId: number, from: string, to: string): Promise<LedgerRow[]> {
+    const resolved = await this.resolve(employeeId, to);
+    const { ledgerInput, year } = resolved;
+
+    // Walk as far as the window asks, so a month that has not arrived is
+    // settled with the leave already approved in it — never past the year.
+    const yearEnd = monthKeyOf(year.endDate);
+    const wanted = monthKeyOf(to) > yearEnd ? yearEnd : monthKeyOf(to);
+    const upto = wanted > ledgerInput.uptoMonth ? wanted : ledgerInput.uptoMonth;
+    const ledger =
+      upto === ledgerInput.uptoMonth ? resolved.ledger : computeLedger({ ...ledgerInput, uptoMonth: upto });
+
+    const fromMonth = monthKeyOf(from);
+    return ledger.rows.filter((r) => r.month >= fromMonth && r.month <= wanted);
+  }
+
   // ---------------------------------------------------------------- internals
 
   /**
@@ -1098,7 +1116,9 @@ export class LeaveService implements ILeaveService {
       requests,
       adjustments,
     };
-    const ledger = computeLedger(ledgerInput);
+    // As of today, with `available` and `upcomingLop` looking through the
+    // months that already have approved leave in them.
+    const ledger = settleAhead(ledgerInput, year.endDate);
 
     return {
       context,
