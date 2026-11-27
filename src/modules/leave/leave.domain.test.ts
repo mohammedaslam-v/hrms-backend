@@ -16,6 +16,8 @@ import {
   SPECIAL_SENIOR_APPROVER_EMAILS,
   SPECIAL_SENIOR_APPROVER_IDS,
   workingDaysBetween,
+  settleAhead,
+  settlementMonth,
 } from './leave.domain';
 
 /** The leave year runs January–December, unlike the financial year. */
@@ -478,5 +480,71 @@ describe('leave on a weekly off made a working day by hand', () => {
       days: 1, unpaidDays: 0, status: 'Approved',
     } as LeaveRequestRecord;
     assert.deepEqual([...daysByMonth(request, ['Tue'], new Set())], [['2026-11', 1]]);
+  });
+});
+
+describe('settleAhead — approved leave in months ahead is settled now', () => {
+  // Shubham, 27 Nov 2026: joined October, one missed check-out in October
+  // (Unpaid), 7 and 9 Nov Earned, and a 13-day wedding leave 30 Nov–16 Dec.
+  const request = (
+    id: number,
+    leaveType: 'Earned' | 'Unpaid',
+    fromDate: string,
+    toDate: string,
+    days: number,
+    status: 'Approved' | 'Pending' = 'Approved',
+  ) => ({ id, ref: `LV-${id}`, leaveType, fromDate, toDate, days, unpaidDays: 0, status });
+
+  const base = {
+    openingLeave: 0,
+    carryCap: 30,
+    weeklyOff: ['Sat', 'Sun'],
+    holidays: NO_HOLIDAYS,
+    dateOfJoining: '2026-10-01',
+    dateOfLeaving: null,
+    yearStart: '2026-01-01',
+    leavePerMonth: 2,
+    uptoMonth: '2026-11',
+    adjustments: 0,
+    requests: [
+      request(205, 'Unpaid', '2026-10-20', '2026-10-20', 1),
+      request(1302, 'Earned', '2026-11-07', '2026-11-07', 1),
+      request(772, 'Earned', '2026-11-09', '2026-11-09', 1),
+      request(1197, 'Earned', '2026-11-30', '2026-12-16', 13),
+    ],
+  };
+
+  it('keeps today’s figures and looks ahead only for available and upcoming LOP', () => {
+    const l = settleAhead(base, '2026-12-31');
+    assert.equal(l.credited, 4);
+    assert.equal(l.taken, 3); // 7 Nov, 9 Nov, 30 Nov — December is not settled yet
+    assert.equal(l.lop, 1);
+    assert.equal(l.balance, 1);
+    assert.deepEqual(l.rows.map((r) => r.month), ['2026-10', '2026-11']);
+    // December: 1 carried + 2 credited = 3 paid, 9 of the 12 December days unpaid.
+    assert.equal(l.available, 0);
+    assert.equal(l.upcomingLop, 9);
+  });
+
+  it('is the plain ledger when nothing is approved ahead', () => {
+    // Without the wedding leave, 30 Nov is not taken either: 4 credited, 2 taken.
+    const l = settleAhead({ ...base, requests: base.requests.slice(0, 3) }, '2026-12-31');
+    assert.equal(l.available, 2);
+    assert.equal(l.balance, 2);
+    assert.equal(l.upcomingLop, 0);
+  });
+
+  it('pending requests are not settled ahead, but still reduce available', () => {
+    const pending = request(2000, 'Earned', '2026-12-21', '2026-12-21', 1, 'Pending');
+    const l = settleAhead({ ...base, requests: [...base.requests, pending] }, '2026-12-31');
+    assert.equal(l.upcomingLop, 9);
+    assert.equal(l.available, 0); // 0 - 1 pending, floored
+  });
+
+  it('never walks past the leave year', () => {
+    assert.equal(settlementMonth(base.requests, '2026-11', '2026-12-31'), '2026-12');
+    const next = request(3000, 'Earned', '2027-01-04', '2027-01-04', 1);
+    assert.equal(settlementMonth([...base.requests, next], '2026-11', '2026-12-31'), '2026-12');
+    assert.equal(settlementMonth([], '2026-11', '2026-12-31'), '2026-11');
   });
 });

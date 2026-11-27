@@ -202,8 +202,11 @@ export class AttendanceService implements IAttendanceService {
       this.getDays(subjectId, from, to),
       isSelf ? Promise.resolve(null) : this.authService.getCurrentEmployee(viewerId),
       this.attendanceRepository.findRange(subjectId, from, to),
-      // The subject's own ledger: which months the balance fell short in.
-      this.leaveService ? this.leaveService.getMyLeave(subjectId) : Promise.resolve(null),
+      // The leave ledger for these months, settled ahead for a month that has
+      // not arrived. A year with no leave policy yet simply shows no shortfall.
+      this.leaveService
+        ? this.leaveService.ledgerRowsThrough(subjectId, from, to).catch(() => [])
+        : Promise.resolve([]),
     ]);
 
     // Why a day was set by hand — an admin's edit, an auto-closed check-out, or
@@ -223,7 +226,7 @@ export class AttendanceService implements IAttendanceService {
       canEdit: Boolean(viewer?.tiers.includes('admin')),
       // Paid leave the balance could not cover is LOP on the payslip, so it is
       // LOP on the calendar too — the same figure the leave page shows.
-      days: applyBalanceShortfall(bars, leave?.ledger.rows ?? []),
+      days: applyBalanceShortfall(bars, leave),
     };
   }
 

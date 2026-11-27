@@ -190,8 +190,17 @@ export interface LeaveLedger {
   pending: number;
   adjustments: number;
   balance: number;
-  /** What can actually be applied for — pending requests are not yet deducted. */
+  /**
+   * What can actually be applied for: the balance after everything already
+   * approved, including leave in months that have not arrived, minus requests
+   * still pending. See settleAhead.
+   */
   available: number;
+  /**
+   * Loss of pay already decided for months ahead — approved leave the balance
+   * will not cover when those months are settled. Not yet in `lop`.
+   */
+  upcomingLop: number;
   rows: LedgerRow[];
   lastLeaveOn: string | null;
 }
@@ -398,8 +407,54 @@ export function computeLedger(input: LedgerInput): LeaveLedger {
     adjustments: input.adjustments,
     balance: running,
     available: round1(running - pending),
+    upcomingLop: 0,
     rows,
     lastLeaveOn,
+  };
+}
+
+/**
+ * The last month the ledger has to walk for every approved paid request to be
+ * settled: the later of `uptoMonth` and the month the furthest such request
+ * ends in, never past the leave year.
+ */
+export function settlementMonth(
+  requests: LeaveRequestRecord[],
+  uptoMonth: string,
+  yearEnd: string,
+): string {
+  let last = uptoMonth;
+  for (const r of requests) {
+    if (r.status !== 'Approved' || r.leaveType === 'Unpaid') continue;
+    const month = monthKeyOf(r.toDate);
+    if (month > last) last = month;
+  }
+  const end = monthKeyOf(yearEnd);
+  return last > end ? end : last;
+}
+
+/**
+ * The ledger as of today, with what is already approved for the months ahead
+ * settled as well.
+ *
+ * Leave is approved whether or not the balance can pay for it — the approver
+ * is shown the cost — and each month is settled when it arrives. So a person
+ * with one day in hand and twelve approved for next month would otherwise read
+ * "1 day available" until the month turned. `credited`, `taken`, `lop`,
+ * `balance` and `rows` stay as of today, since those months' credits have not
+ * been posted; only `available` and `upcomingLop` look ahead, using the same
+ * simulation the apply form's cost preview uses.
+ */
+export function settleAhead(input: LedgerInput, yearEnd: string): LeaveLedger {
+  const ledger = computeLedger(input);
+  const through = settlementMonth(input.requests, input.uptoMonth, yearEnd);
+  if (through === input.uptoMonth) return ledger;
+
+  const ahead = computeLedger({ ...input, uptoMonth: through });
+  return {
+    ...ledger,
+    available: round1(Math.max(0, ahead.balance - ahead.pending)),
+    upcomingLop: round1(ahead.lop - ledger.lop),
   };
 }
 

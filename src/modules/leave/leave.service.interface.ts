@@ -1,4 +1,4 @@
-import { HalfDaySession, LeaveType } from './leave.domain';
+import { HalfDaySession, LeaveType, LedgerRow } from './leave.domain';
 import {
   ApplyLeaveDto,
   ApprovalsView,
@@ -65,6 +65,14 @@ export interface ILeaveService {
    * Salary reads it.
    */
   lopDaysByMonth(employeeId: number, months: string[]): Promise<Map<string, number>>;
+
+  /**
+   * The ledger's month rows for the window `from`..`to` (dates), walked as far
+   * as `to` even when that month has not arrived, so leave already approved
+   * there is settled too. The attendance calendar reads it to show paid leave
+   * the balance will not cover as loss of pay.
+   */
+  ledgerRowsThrough(employeeId: number, from: string, to: string): Promise<LedgerRow[]>;
 
   // ---------------------------------------------------------------- approvals
 
