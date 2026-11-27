@@ -1,6 +1,7 @@
 import {
   activeHours,
   addDays,
+  applyBalanceShortfall,
   attendanceOf,
   calendarWeek,
   crossesMidnight,
@@ -196,11 +197,13 @@ export class AttendanceService implements IAttendanceService {
     const isSelf = viewerId === subjectId;
     if (!isSelf) await this.accessService.require(viewerId, subjectId);
 
-    const [now, days, viewer, stored] = await Promise.all([
+    const [now, days, viewer, stored, leave] = await Promise.all([
       this.attendanceRepository.now(),
       this.getDays(subjectId, from, to),
       isSelf ? Promise.resolve(null) : this.authService.getCurrentEmployee(viewerId),
       this.attendanceRepository.findRange(subjectId, from, to),
+      // The subject's own ledger: which months the balance fell short in.
+      this.leaveService ? this.leaveService.getMyLeave(subjectId) : Promise.resolve(null),
     ]);
 
     // Why a day was set by hand — an admin's edit, an auto-closed check-out, or
@@ -211,12 +214,16 @@ export class AttendanceService implements IAttendanceService {
         .map((r) => [r.date, r.editNote as string]),
     );
 
+    const bars = dayBars(days, now.date).map((bar) => ({ ...bar, note: notes.get(bar.date) ?? null }));
+
     return {
       from,
       to,
       today: now.date,
       canEdit: Boolean(viewer?.tiers.includes('admin')),
-      days: dayBars(days, now.date).map((bar) => ({ ...bar, note: notes.get(bar.date) ?? null })),
+      // Paid leave the balance could not cover is LOP on the payslip, so it is
+      // LOP on the calendar too — the same figure the leave page shows.
+      days: applyBalanceShortfall(bars, leave?.ledger.rows ?? []),
     };
   }
 

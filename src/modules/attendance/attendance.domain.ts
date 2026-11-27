@@ -719,3 +719,61 @@ export function dayBars(days: DayAttendance[], today: string): WeekBar[] {
     recheckInAt: day.recheckInAt,
   }));
 }
+
+/** One month of the leave ledger, as the calendar needs it. */
+export interface MonthSettlement {
+  /** 'YYYY-MM'. */
+  month: string;
+  /** Paid-type leave days taken in the month. */
+  taken: number;
+  /** Days explicitly requested as Unpaid. */
+  unpaid: number;
+  /** Loss of pay for the month: the unpaid days plus whatever the balance could not cover. */
+  lop: number;
+}
+
+/** The note on a leave day the balance could not pay for. */
+export const BALANCE_SHORTFALL_NOTE = 'Leave balance exhausted · loss of pay';
+
+/**
+ * Shows paid leave the balance could not cover as loss of pay.
+ *
+ * A request is approved as Earned whether or not the balance can pay for it;
+ * the ledger settles that month by month, and whatever the balance falls short
+ * by is deducted from salary. Until now the calendar painted every such day EL,
+ * so a month with 4.5 days of LOP on the payslip could show one LOP tile.
+ *
+ * The balance pays the earlier days first. Within a month, the paid-type leave
+ * days are walked in date order, a half day counting as 0.5; the first `taken -
+ * shortfall` days keep their type and the rest are shown as Unpaid. Display
+ * only: the request itself is not touched, and the leave page still says what
+ * was applied for.
+ *
+ * A month the ledger has not settled (a future month, or another leave year)
+ * has no row here and is left as it is.
+ */
+export function applyBalanceShortfall(bars: WeekBar[], months: MonthSettlement[]): WeekBar[] {
+  const out = bars.map((bar) => ({ ...bar }));
+
+  for (const row of months) {
+    const shortfall = Math.round((row.lop - row.unpaid) * 10) / 10;
+    if (shortfall <= 0) continue;
+    let covered = Math.round((row.taken - shortfall) * 10) / 10;
+
+    for (const bar of out) {
+      if (!bar.date.startsWith(row.month)) continue;
+      if (bar.leaveType === null || bar.leaveType === 'Unpaid') continue;
+      if (bar.status !== 'Leave' && bar.status !== 'Half day') continue;
+
+      const weight = bar.status === 'Half day' ? 0.5 : 1;
+      if (covered >= weight) {
+        covered = Math.round((covered - weight) * 10) / 10;
+        continue;
+      }
+      bar.leaveType = 'Unpaid';
+      bar.note = bar.note ?? BALANCE_SHORTFALL_NOTE;
+    }
+  }
+
+  return out;
+}

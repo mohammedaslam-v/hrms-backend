@@ -20,8 +20,11 @@ import {
   isPunchExpired,
   CHECKOUT_GRACE_MINUTES,
   weekBars,
+  applyBalanceShortfall,
+  BALANCE_SHORTFALL_NOTE,
   type DayAttendance,
   type DayFacts,
+  type WeekBar,
 } from './attendance.domain';
 
 const GRACE = 15;
@@ -609,5 +612,76 @@ describe('a shift change does not re-judge past days', () => {
   it('re-measures only a row with no measured lateness', () => {
     const punch = punchOf({ loginAt: '10:02', logoutAt: '19:05', lateByMinutes: 0, source: 'import' });
     assert.equal(resolveDayStatus({ ...facts, punch }), 'Half day');
+  });
+});
+
+describe('applyBalanceShortfall — paid leave the balance could not cover shows as LOP', () => {
+  const bar = (date: string, status: WeekBar['status'], leaveType: WeekBar['leaveType']): WeekBar => ({
+    date,
+    dayName: dayNameOf(date),
+    status,
+    hours: 0,
+    percent: 0,
+    isToday: false,
+    segments: [],
+    source: 'punch',
+    leaveType,
+    note: null,
+  });
+
+  // Priyal Rathi, Nov 2026: 3.5 days to spend, 7.0 Earned days taken, 1 day
+  // auto-closed as Unpaid. The ledger says LOP 4.5 for the month.
+  const november = [
+    bar('2026-11-03', 'Half day', 'Earned'),
+    bar('2026-11-04', 'Leave', 'Unpaid'),
+    bar('2026-11-06', 'Half day', 'Earned'),
+    bar('2026-11-07', 'Leave', 'Earned'),
+    bar('2026-11-09', 'Leave', 'Earned'),
+    bar('2026-11-11', 'Half day', 'Earned'),
+    bar('2026-11-20', 'Half day', 'Earned'),
+    bar('2026-11-23', 'Leave', 'Earned'),
+    bar('2026-11-24', 'Leave', 'Earned'),
+    bar('2026-11-25', 'Leave', 'Earned'),
+  ];
+  const settled = [{ month: '2026-11', taken: 7, unpaid: 1, lop: 4.5 }];
+
+  it('pays the earlier days and shows the last 3.5 days as unpaid', () => {
+    const out = applyBalanceShortfall(november, settled);
+    const unpaid = out.filter((b) => b.leaveType === 'Unpaid').map((b) => b.date);
+    assert.deepEqual(unpaid, ['2026-11-04', '2026-11-20', '2026-11-23', '2026-11-24', '2026-11-25']);
+    assert.equal(out.find((b) => b.date === '2026-11-11')?.leaveType, 'Earned');
+  });
+
+  it('notes why, without overwriting a note the day already has', () => {
+    const noted = november.map((b) => (b.date === '2026-11-25' ? { ...b, note: 'HR: travel' } : b));
+    const out = applyBalanceShortfall(noted, settled);
+    assert.equal(out.find((b) => b.date === '2026-11-24')?.note, BALANCE_SHORTFALL_NOTE);
+    assert.equal(out.find((b) => b.date === '2026-11-25')?.note, 'HR: travel');
+    assert.equal(out.find((b) => b.date === '2026-11-09')?.note, null);
+  });
+
+  it('leaves a month alone when the balance covered everything', () => {
+    const out = applyBalanceShortfall(november, [{ month: '2026-11', taken: 7, unpaid: 1, lop: 1 }]);
+    assert.deepEqual(out, november);
+  });
+
+  it('ignores months the ledger has not settled and days with no paid leave', () => {
+    const mixed = [
+      bar('2026-12-01', 'Leave', 'Earned'),
+      bar('2026-11-27', 'Late', null),
+      bar('2026-11-28', 'Weekly off', null),
+      bar('2026-11-30', 'Leave', 'Earned'),
+    ];
+    const out = applyBalanceShortfall(mixed, [{ month: '2026-11', taken: 1, unpaid: 0, lop: 1 }]);
+    assert.equal(out[0].leaveType, 'Earned');
+    assert.equal(out[1].leaveType, null);
+    assert.equal(out[2].leaveType, null);
+    assert.equal(out[3].leaveType, 'Unpaid');
+  });
+
+  it('does not mutate the bars it was given', () => {
+    const copy = november.map((b) => ({ ...b }));
+    applyBalanceShortfall(november, settled);
+    assert.deepEqual(november, copy);
   });
 });
